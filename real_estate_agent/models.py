@@ -86,6 +86,7 @@ class CustomerRequirement:
     keywords: list[str] = field(default_factory=list)  # 남향, 계곡, IC 인근 ...
     excluded_keywords: list[str] = field(default_factory=list)
     raw_text: str = ""
+    notes: list[str] = field(default_factory=list)  # 해석 중 참고사항 (예: 취급하지 않는 매물 종류)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -128,6 +129,7 @@ class ScoredListing:
     score: float
     reasons: list[str] = field(default_factory=list)
     penalties: list[str] = field(default_factory=list)
+    factors: dict[str, float] = field(default_factory=dict)  # 항목별 충족도 0~1 (학습에 사용)
 
 
 def format_price(manwon: Optional[int]) -> str:

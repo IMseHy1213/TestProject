@@ -42,6 +42,16 @@ FEATURE_KEYWORDS = [
     "개발", "택지", "도로확장", "역", "고속도로", "관공서", "조용",
 ]
 
+# 같은 뜻의 표현 -> 대표 키워드 (매물 설명과 비교할 때는 preference.FEATURE_SYNONYMS 로 다시 넓혀 찾음)
+FEATURE_ALIASES = {
+    "채광": "채광", "햇빛": "채광", "햇볕": "채광", "일조": "채광", "해가 잘": "채광", "해 잘": "채광",
+    "볕이 잘": "채광", "볕 잘": "채광", "양지": "채광", "밝은": "채광",
+    "뷰": "조망", "경치": "조망", "평탄": "평지", "개울": "계곡", "나들목": "IC", "한적": "조용",
+}
+
+# 이 프로그램은 토지 전용. 다른 매물 종류를 찾으면 안내 문구를 남김
+NON_LAND_TYPES = ["아파트", "빌라", "오피스텔", "원룸", "투룸", "쓰리룸", "다세대", "연립", "상가건물", "전세", "월세"]
+
 SYSTEM_PROMPT = f"""당신은 한국 토지 매물 중개 보조 AI 입니다.
 손님의 문의 문장에서 토지 검색 조건을 추출합니다.
 
@@ -51,10 +61,11 @@ SYSTEM_PROMPT = f"""당신은 한국 토지 매물 중개 보조 AI 입니다.
 - jimok: 원하는 지목 목록. 다음 중에서만: {", ".join(JIMOK_TYPES)}
 - zoning: 원하는 용도지역 목록. 다음 중에서만: {", ".join(ZONING_TYPES)}
 - budget_min, budget_max: 예산 (단위: 만원, 정수). "3억 정도"는 budget_max 를 약 15% 여유있게(34500) 잡으세요.
+  "2억원대"는 2억 이상 3억 미만 (budget_min 20000, budget_max 29999), "5천만원대"는 5000~5999 입니다.
 - area_min_m2, area_max_m2: 면적 (㎡). 1평 = 3.305785㎡. "300평 정도"는 ±20%.
 - purpose: 다음 중 하나 또는 "": {", ".join(PURPOSE_KEYWORDS)}
 - need_road: 도로에 접한 땅이 필요하면 true (맹지 제외). 주택/창고/공장/근린생활 목적이면 기본 true.
-- keywords: 원하는 특징 (남향, 계곡, IC 인근 등)
+- keywords: 원하는 특징 (남향, 계곡, IC 인근 등). "채광 좋은/햇빛 잘 드는"은 "채광", 경치는 "조망"으로 쓰세요.
 - excluded_keywords: 원하지 않는 것 (예: "묘지", "고압선", "임야" 등)
 
 모르는 값은 null 또는 빈 목록으로 두고, 추측하지 마세요."""
@@ -79,6 +90,7 @@ class RequirementParser:
         if req is None:
             req = parse_rule_based(text, self.known_regions)
         req.raw_text = text
+        req.notes = non_land_notes(text)
         if customer_name:
             req.customer_name = customer_name
         return sanitize(req)
@@ -146,7 +158,8 @@ _PARTICLE_END = r"(?=\s|,|·|/|$|이나|나|이랑|랑|과|와|도|이|가|은|�
 _REGION_END = r"(?=\s|,|·|/|$|이나|나|이랑|랑|과|와|도|쪽|근처|인근|일대|에|으로|로|권)"
 
 _NOT_REGION = {"혹시", "역시", "다시", "도시", "당시", "수시", "즉시", "항시", "동시", "표시", "무시", "지시",
-               "개시", "게시", "감시", "전시", "평시", "일시", "상시", "아군", "대군", "우리군"}
+               "개시", "게시", "감시", "전시", "평시", "일시", "상시", "아군", "대군", "우리군", "여러군", "몇군", "한군",
+               "두군", "세군"}
 
 _MONEY = r"(\d[\d,.]*\s*억(?:\s*\d[\d,.]*\s*(?:천)?)?(?:\s*만)?|\d[\d,.]*\s*천\s*만?|\d[\d,.]*\s*만)\s*원?"
 _AREA = r"(\d[\d,.]*)\s*(평|㎡|m2|m²|제곱미터)"
@@ -166,7 +179,10 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
 
     # --- 예산 ---
     m = re.search(_MONEY + r"\s*(?:~|-|에서|부터)\s*" + _MONEY, t)
-    if m:
+    band = _price_band(t)  # '2억원대', '5천만원대'
+    if band:
+        req.budget_min, req.budget_max = band
+    elif m:
         req.budget_min, req.budget_max = _money(m.group(1)), _money(m.group(2))
     else:
         m = re.search(_MONEY + r"\s*(이하|이내|까지|안쪽|미만|밑|아래)", t)
@@ -184,9 +200,15 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
                     req.budget_min = int(v * 0.6)
 
     # --- 면적 ---
-    m = re.search(_AREA.replace(r"\s*(평|㎡|m2|m²|제곱미터)", r"\s*(평|㎡|m2|m²|제곱미터)?")
+    area_band = re.search(r"(\d[\d,]*)\s*(평|㎡|m2)\s*대(?![가-힣])", t)  # '200평대' = 200~299평
+    m = None if area_band else re.search(_AREA.replace(r"\s*(평|㎡|m2|m²|제곱미터)", r"\s*(평|㎡|m2|m²|제곱미터)?")
                   + r"\s*(?:~|-|에서)\s*" + _AREA, t)
-    if m:
+    if area_band:
+        n = float(area_band.group(1).replace(",", ""))
+        step = 10 ** max(len(str(int(n))) - 1, 1)  # 200평대 -> 100 단위, 50평대 -> 10 단위
+        req.area_min_m2 = _pyeong_or_m2(n, area_band.group(2))
+        req.area_max_m2 = _pyeong_or_m2(n + step - 1, area_band.group(2))
+    elif m:
         unit = m.group(4)
         req.area_min_m2 = _pyeong_or_m2(float(m.group(1).replace(",", "")), m.group(2) or unit)
         req.area_max_m2 = _pyeong_or_m2(float(m.group(3).replace(",", "")), unit)
@@ -258,6 +280,11 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
         if w in _NOT_REGION or any(w in x or x in w for x in regions):
             continue
         regions.append(w)
+    # '음성군채광이' 처럼 띄어쓰기 없이 붙여 쓴 '○○군' (군으로 끝나는 일반 단어는 드묾)
+    for m in re.finditer(r"(?<![가-힣])([가-힣]{1,3}군)(?=[가-힣])", t):
+        w = m.group(1)
+        if w not in _NOT_REGION and not any(w in x or x in w for x in regions):
+            regions.append(w)
     req.regions = regions
 
     # --- 특징 키워드 ---
@@ -266,7 +293,34 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
             if len(k) == 1 and not re.search(rf"(?<![가-힣]){k}(?![가-힣])", t):
                 continue
             req.keywords.append(k)
+    for phrase, k in FEATURE_ALIASES.items():
+        if phrase in t and k not in req.keywords:
+            req.keywords.append(k)
     return req
+
+
+def _price_band(t: str) -> Optional[tuple[int, int]]:
+    """'2억원대' -> (20000, 29999), '2억 5천만원대' -> (25000, 25999), '5천만원대' -> (5000, 5999)."""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*억\s*(?:(\d+)\s*천)?\s*(?:만)?\s*원?\s*대(?![가-힣])", t)
+    if m:
+        eok = float(m.group(1))
+        if m.group(2):
+            lo = int(eok * 10000 + int(m.group(2)) * 1000)
+            return lo, lo + 999
+        lo = int(eok * 10000)
+        return lo, lo + 9999
+    m = re.search(r"(\d+)\s*천\s*(?:만)?\s*원?\s*대(?![가-힣])", t)
+    if m:
+        lo = int(m.group(1)) * 1000
+        return lo, lo + 999
+    return None
+
+
+def non_land_notes(text: str) -> list[str]:
+    found = [w for w in NON_LAND_TYPES if w in text]
+    if not found:
+        return []
+    return [f"'{', '.join(found)}'은(는) 취급 범위(토지) 밖이라, 토지 매물 중에서 나머지 조건으로 찾습니다."]
 
 
 def apply_feedback_rule_based(req: CustomerRequirement, feedback: str,

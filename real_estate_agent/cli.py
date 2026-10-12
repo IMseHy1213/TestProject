@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 from typing import Optional
 
@@ -20,12 +21,20 @@ from .agent import ProactiveAlert, RealEstateAgent, SyncReport
 from .config import get_settings
 from .models import CustomerRequirement, ScoredListing, format_price
 from .recommender import RecommendationSession
+from .requirement_parser import parse_rule_based
 
 LINE = "─" * 78
 
-HELP = """명령:  [Enter]/n 다음 매물 · p 이전 · t 상위 5개 · d 상세 · l 마음에 듦
-       f <피드백>  조건 수정 (예: f 좀 더 싼 걸로, f 도로 붙은 땅, f 여주 쪽도)
-       c 현재 조건 · s 손님 조건 저장(새 매물 선제 알림) · q 종료"""
+HELP = """명령:  [Enter]/n 다음 순위 매물 · p 이전 · t 상위 5개 · d 상세 · l 마음에 듦
+       그냥 말로 입력해도 됩니다:
+         '마음에 안 들어요', '너무 비싸요', '채광이 별로'  -> 다음 순위 매물 (사유를 학습)
+         '좀 더 싼 걸로', '여주 쪽도', '300평 이상으로'   -> 조건을 바꿔 다시 추천
+       w 학습한 손님 취향 · c 현재 조건 · s 손님 조건 저장(새 매물 선제 알림) · q 종료"""
+
+# '이 매물이 별로' 라는 평가 (-> 다음 순위)
+_DISLIKE = r"(별로|싫|마음에\s*안|맘에\s*안|안\s*좋|아니|비싸|좁|작아|멀|어둡|그늘|불편|애매|글쎄|패스|다른\s*(거|것|매물))"
+# 조건을 바꾸려는 말인지 (아니면 단순히 '이건 별로' 인지) 판단하는 단서
+_CONDITION_CUES = r"(더\s|좀\s*더|으로|로\s*(해|바꿔|보여)|바꿔|말고|쪽|이상|이하|이내|평|억|만원|지역|도로\s*(있|접|붙))"
 
 
 def _setup_console() -> None:
@@ -71,6 +80,10 @@ def show_current(agent: RealEstateAgent, session: RecommendationSession, explain
         if session.filter_stats:
             print(" (제외 사유: " + ", ".join(f"{k} {v}건" for k, v in session.filter_stats.items()) + ")")
         return
+    if session.last_learning:
+        print(f" 🧠 [학습] {', '.join(session.last_learning)}"
+              + (" → 순위를 다시 매겼습니다" if session.reordered else ""))
+        session.last_learning = []
     print_listing(session.cursor + 1, cur, session.total)
     if explain:
         print(" 💬 " + agent.explain(session.req, cur))
@@ -78,7 +91,11 @@ def show_current(agent: RealEstateAgent, session: RecommendationSession, explain
 
 def run_session(agent: RealEstateAgent, req: CustomerRequirement, interactive: bool = True) -> None:
     print(f"\n[이해한 조건] {req.describe()}   (분석: {agent.llm.last_used})")
+    for note in req.notes:
+        print(f"[안내] {note}")
     session = agent.recommend(req)
+    if session.opt.pref is not None and session.opt.pref.n_feedback:
+        print(f"[학습된 취향 적용] {session.opt.pref.describe(session.opt.prior)}")
     if session.relaxed:
         print(f"[에이전트] 조건에 맞는 매물이 적어 조건을 완화했습니다: {' → '.join(session.relaxed)}")
     print(f"[후보] {session.total}건")
@@ -123,6 +140,8 @@ def run_session(agent: RealEstateAgent, req: CustomerRequirement, interactive: b
             show_current(agent, session)
         elif cmd == "c":
             print(" " + session.req.describe())
+        elif cmd == "w":
+            print(" " + session.opt.pref.describe(session.opt.prior).replace("\n", "\n "))
         elif cmd == "s":
             if not session.req.customer_name:
                 name = input(" 손님 이름: ").strip()
@@ -131,6 +150,17 @@ def run_session(agent: RealEstateAgent, req: CustomerRequirement, interactive: b
                 session.req.customer_name = name
             agent.save_customer(session)
             print(f" 💾 '{session.req.customer_name}' 님 조건 저장 - 새 매물이 들어오면 먼저 알려드립니다.")
+        elif len(cmd) >= 2:
+            dislike_only = re.search(_DISLIKE, cmd) and not re.search(_CONDITION_CUES, cmd)
+            if not dislike_only and (re.search(_CONDITION_CUES, cmd)
+                                     or parse_rule_based(cmd).describe() != "(조건 없음)"):
+                cmd = "f " + cmd
+                new_req = agent.refine(session, cmd[2:])
+                print(f"[조건 수정] {new_req.describe()}   (분석: {agent.llm.last_used})")
+                print(f"[후보] {session.total}건")
+            else:  # '마음에 안 들어요', '너무 비싸요' -> 다음 순위
+                agent.reject(session, cmd)
+            show_current(agent, session)
         else:
             print(HELP)
 

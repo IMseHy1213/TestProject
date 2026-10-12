@@ -28,7 +28,8 @@ from .llm import LLMRouter, LLMUnavailable
 from .models import CustomerRequirement, LandListing, ScoredListing, format_price
 from .recommender import RecommendationSession, RecommendOptions, score_listing, hard_filter
 from .requirement_parser import RequirementParser
-from .storage import Storage
+from .preference import PreferenceModel
+from .storage import OFFICE_MODEL, Storage
 
 log = logging.getLogger(__name__)
 
@@ -133,32 +134,47 @@ class RealEstateAgent:
     def understand(self, inquiry: str, customer_name: str = "") -> CustomerRequirement:
         return self.parser().parse(inquiry, customer_name)
 
+    def _options(self, customer: str) -> RecommendOptions:
+        """손님별 학습 모델 + 사무실 공통 모델을 불러와 추천 옵션 구성."""
+        pref = self.storage.load_preference(customer) if customer else PreferenceModel()
+        prior = self.storage.load_preference(OFFICE_MODEL)
+        return RecommendOptions(market_price_per_m2=self.market_price, pref=pref, prior=prior)
+
+    def _save_learning(self, session: RecommendationSession) -> None:
+        if session.opt.prior is not None:
+            self.storage.save_preference(OFFICE_MODEL, session.opt.prior)
+        if session.req.customer_name and session.opt.pref is not None:
+            self.storage.save_preference(session.req.customer_name, session.opt.pref)
+
     def recommend(self, req: CustomerRequirement) -> RecommendationSession:
         exclude = self.storage.rejected_ids(req.customer_name)
-        opt = RecommendOptions(market_price_per_m2=self.market_price)
-        return RecommendationSession(self.listings(), req, opt, exclude_ids=exclude)
+        return RecommendationSession(self.listings(), req, self._options(req.customer_name), exclude_ids=exclude)
 
     def reject(self, session: RecommendationSession, reason: str = "") -> Optional[ScoredListing]:
-        """현재 매물이 마음에 안 들 때: 거절 기록 후 다음 순위 매물."""
+        """현재 매물이 마음에 안 들 때: 거절 기록 + 취향 학습 후 다음 순위 매물."""
         cur = session.current()
         if cur:
             self.storage.add_feedback(session.req.customer_name, cur.listing.listing_id, "reject", reason)
-        return session.next(reason)
+        nxt = session.next(reason)
+        self._save_learning(session)
+        return nxt
 
     def refine(self, session: RecommendationSession, feedback: str) -> CustomerRequirement:
-        """피드백을 조건에 반영 후 재순위 (현재 매물도 거절 처리)."""
+        """피드백을 조건에 반영 후 재순위 (현재 매물도 거절·학습 처리)."""
         cur = session.current()
         if cur:
-            session.rejected[cur.listing.listing_id] = feedback
             self.storage.add_feedback(session.req.customer_name, cur.listing.listing_id, "reject", feedback)
+        session.reject_current(feedback)
         new_req = self.parser().apply_feedback(session.req, feedback)
         session.update_requirement(new_req)
+        self._save_learning(session)
         return new_req
 
     def save_customer(self, session: RecommendationSession) -> None:
         """손님 조건을 저장(선제 알림 대상)하고, 이름이 정해지기 전에 거절한 매물도 그 손님 기록으로 옮김."""
         name = session.req.customer_name
         self.storage.save_customer(session.req)
+        self._save_learning(session)  # 이름 없이 상담하며 학습한 취향도 이 손님 것으로 저장
         already = self.storage.rejected_ids(name)
         for listing_id, reason in session.rejected.items():
             if listing_id not in already:
@@ -168,6 +184,8 @@ class RealEstateAgent:
         cur = session.current()
         if cur:
             self.storage.add_feedback(session.req.customer_name, cur.listing.listing_id, "like")
+        session.like()
+        self._save_learning(session)
 
     def explain(self, req: CustomerRequirement, s: ScoredListing, use_llm: bool = True) -> str:
         if use_llm and self.llm.available:
@@ -195,8 +213,8 @@ class RealEstateAgent:
         threshold = self.settings.proactive_threshold if threshold is None else threshold
         candidates = self.listings() if candidates is None else candidates
         alerts = []
-        opt = RecommendOptions(market_price_per_m2=self.market_price)
         for req in self.storage.customers():
+            opt = self._options(req.customer_name)
             rejected = self.storage.rejected_ids(req.customer_name)
             for l in candidates:
                 if l.listing_id in rejected or self.storage.was_notified(req.customer_name, l.listing_id):

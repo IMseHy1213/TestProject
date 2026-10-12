@@ -71,7 +71,7 @@
       "id": "inquiry",
       "type": "promptString",
       "description": "손님 문의 내용",
-      "default": "양평 쪽 전원주택 지을 땅 200평 정도, 3억 이하, 맹지 제외"
+      "default": "음성군 채광이 좋은 2억원대 땅"
     }
   ]
 }

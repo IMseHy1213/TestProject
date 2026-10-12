@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import CustomerRequirement, LandListing
+from .preference import PreferenceModel
+
+OFFICE_MODEL = "__office__"  # 사무실 전체 피드백으로 학습한 공통 모델
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS listings (
@@ -34,6 +37,11 @@ CREATE TABLE IF NOT EXISTS notifications (
     message TEXT,
     created TEXT NOT NULL,
     PRIMARY KEY (customer, listing_id)
+);
+CREATE TABLE IF NOT EXISTS preferences (
+    name TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,3 +152,16 @@ class Storage:
             return set()
         rows = self.conn.execute("SELECT listing_id FROM feedback WHERE customer=? AND action='reject'", (customer,))
         return {r["listing_id"] for r in rows}
+
+    # ---------------- 학습 모델 ----------------
+    def load_preference(self, name: str) -> PreferenceModel:
+        r = self.conn.execute("SELECT data FROM preferences WHERE name=?", (name,)).fetchone()
+        return PreferenceModel.from_dict(json.loads(r["data"])) if r else PreferenceModel()
+
+    def save_preference(self, name: str, model: PreferenceModel) -> None:
+        self.conn.execute(
+            "INSERT INTO preferences VALUES (?,?,?) ON CONFLICT(name) DO UPDATE SET data=excluded.data,"
+            " updated=excluded.updated",
+            (name, json.dumps(model.to_dict(), ensure_ascii=False), _now()),
+        )
+        self.conn.commit()

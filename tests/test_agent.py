@@ -216,3 +216,84 @@ def test_storage_detects_changes(tmp_path):
     diff = st.upsert_listings([a])
     assert len(diff["changed"]) == 1 and not diff["new"]
     assert st.upsert_listings([])["removed_ids"] == ["A"]
+
+
+# ---------------- '2억원대' / '채광' / 토지 외 매물 ----------------
+def test_parse_price_band_and_sunlight():
+    p = RequirementParser(None, ["음성군", "금왕읍"])
+    req = p.parse("음성군채광이 좋은 2억원대 아파트를 보여줘")
+    assert req.regions == ["음성군"]
+    assert (req.budget_min, req.budget_max) == (20000, 29999)
+    assert "채광" in req.keywords
+    assert req.notes and "아파트" in req.notes[0]
+    # 보유 매물에 없는 군도 붙여쓰기로 인식
+    assert parse_rule_based("괴산군햇빛 잘 드는 밭").regions == ["괴산군"]
+    req = parse_rule_based("200평대 1억 5천만원대")
+    assert (req.budget_min, req.budget_max) == (15000, 15999)
+    assert req.area_min_m2 == pytest.approx(200 * 3.305785)
+    assert req.area_max_m2 == pytest.approx(299 * 3.305785)
+
+
+def test_sunlight_synonyms_match_listing():
+    req = CustomerRequirement(keywords=["채광"])
+    sunny = L("S", "충북 음성군 a리 1", 661, 20000, description="남동향 완경사, 햇빛 잘 듦")
+    shady = L("N", "충북 음성군 a리 2", 661, 20000, description="북향, 오후 그늘")
+    ranked, _, _ = rank([shady, sunny], req, today=TODAY)
+    assert ranked[0].listing.listing_id == "S"
+    assert ranked[0].factors["keyword"] == 1.0 and ranked[1].factors["keyword"] == 0.0
+
+
+# ---------------- 피드백 학습 ----------------
+from real_estate_agent.preference import PreferenceModel  # noqa: E402
+
+
+def test_reason_raises_weight():
+    m = PreferenceModel()
+    before = m.weights()["price"]
+    changes = m.learn("reject", {"price": 0.8}, [], reason="너무 비싸요")
+    assert m.weights()["price"] > before
+    assert "가격 중요도 ↑" in changes
+
+
+def test_requested_attribute_is_not_disliked():
+    m = PreferenceModel()
+    m.learn("reject", {}, [], jimok="대", text="채광 우수", protected={"채광"})
+    assert "채광" not in m.attrs["feature"]  # 손님이 원한 특징은 비선호로 배우지 않음
+    assert m.attrs["jimok"]["대"] == [0.0, 0.5]  # 이유 모르는 거절은 약하게
+    m.learn("reject", {}, [], jimok="대", text="", reason="너무 비싸요")
+    assert m.attrs["jimok"]["대"] == [0.0, 0.5]  # 가격 때문이면 지목은 탓하지 않음
+
+
+def test_learning_changes_next_rank():
+    """싸지만 좁은 매물을 계속 거절하면 면적 중요도가 올라 넓은 매물이 먼저 나온다."""
+    listings = [
+        L("cheap1", "경기도 양평군 a리 1", 490, 9000, road_access="도로"),
+        L("cheap2", "경기도 양평군 a리 2", 485, 9500, road_access="도로"),
+        L("cheap3", "경기도 양평군 a리 3", 480, 9800, road_access="도로"),
+        L("wide", "경기도 양평군 a리 4", 700, 19500, road_access="도로"),
+    ]
+    req = CustomerRequirement(budget_max=20000, area_min_m2=500)
+    plain = RecommendationSession(listings, req, RecommendOptions(min_candidates=1))
+    learn = RecommendationSession(listings, req, RecommendOptions(min_candidates=1, pref=PreferenceModel()))
+    assert plain.current().listing.listing_id == learn.current().listing.listing_id == "cheap1"
+    assert plain.next("너무 좁아요").listing.listing_id == "cheap2"  # 학습 없으면 원래 2순위
+    assert learn.next("너무 좁아요").listing.listing_id == "wide"  # 학습하면 넓은 매물이 2순위로
+    assert learn.cursor == 1 and learn.reordered
+    assert any("면적" in c for c in learn.last_learning)
+
+
+def test_learning_persists_for_customer(tmp_path):
+    settings = Settings(data_dir=SAMPLE, db_path=tmp_path / "p.db", log_dir=tmp_path / "logs", llm_providers=["rule"])
+    agent = RealEstateAgent(settings)
+    agent.sync()
+    req = agent.understand("음성군 채광 좋은 2억원대 땅", "최지우")
+    sess = agent.recommend(req)
+    agent.reject(sess, "너무 비싸요")
+    agent.like(sess)
+    saved = agent.storage.load_preference("최지우")
+    assert saved.n_feedback == 2
+    assert saved.weights()["price"] > 25
+    assert agent.storage.load_preference("__office__").n_feedback == 2
+    # 다음 상담에서 학습한 취향이 그대로 적용됨
+    sess2 = agent.recommend(agent.understand("음성군 땅", "최지우"))
+    assert sess2.opt.pref.n_feedback == 2

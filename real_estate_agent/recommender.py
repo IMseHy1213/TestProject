@@ -2,6 +2,7 @@
 
 점수(100점 만점) = 지역 15 + 가격 25 + 면적 20 + 지목 15 + 용도지역 10 + 도로 5 + 키워드 5 + 최신성 5
    (+ 공공 실거래가 대비 저렴하면 가점 최대 5, 상한 100)
+   손님 피드백을 학습하면 위 비율이 손님마다 달라지고, 선호 속성에 ±6점 가감됩니다 (preference.py).
 손님이 지정하지 않은 항목은 중립 점수(70%)를 줍니다.
 
 필수 조건(예산 초과·면적 크게 벗어남·맹지·제외 키워드·지역 불일치·계약완료)은 후보에서 제외하되,
@@ -13,13 +14,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Optional
+from typing import Any, Optional
 
 from .models import CustomerRequirement, LandListing, ScoredListing, format_price
-
-WEIGHTS = {
-    "region": 15, "price": 25, "area": 20, "jimok": 15, "zoning": 10, "road": 5, "keyword": 5, "fresh": 5,
-}
+from .preference import BASE_WEIGHTS as WEIGHTS
+from .preference import feature_hit
 NEUTRAL = 0.7
 # 조건 완화와 무관하게 고정된 감점 기울기: 면적 30% 벗어나면 0점, 예산 15% 초과면 0점
 AREA_DECAY = 0.30
@@ -74,6 +73,15 @@ class RecommendOptions:
     strict_region: bool = True
     min_candidates: int = 3
     market_price_per_m2: dict[str, dict[str, float]] = field(default_factory=dict)  # {시군구: {지목: 만원/㎡}}
+    pref: Any = None  # 이 손님의 학습 모델 (PreferenceModel)
+    prior: Any = None  # 사무실 공통 학습 모델 (PreferenceModel)
+
+    def weights(self) -> dict[str, float]:
+        if self.pref is not None:
+            return self.pref.weights(self.prior)
+        if self.prior is not None:
+            return self.prior.weights()
+        return dict(WEIGHTS)
 
 
 def _region_stem(r: str) -> str:
@@ -211,7 +219,7 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
     # 키워드
     if req.keywords:
         blob = _text_blob(l)
-        hits = [k for k in req.keywords if k.lower() in blob.lower()]
+        hits = [k for k in req.keywords if feature_hit(k, blob)]  # '채광' 은 남향·일조 등도 인정
         f["keyword"] = len(hits) / len(req.keywords)
         if hits:
             reasons.append("특징 일치: " + ", ".join(hits))
@@ -227,7 +235,15 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
     else:
         f["fresh"] = 0.6
 
-    score = sum(WEIGHTS[k] * max(0.0, min(1.0, v)) for k, v in f.items())
+    f = {k: max(0.0, min(1.0, v)) for k, v in f.items()}
+    weights = opt.weights()
+    score = sum(weights[k] * v for k, v in f.items())
+
+    # 피드백 학습: 이 손님이 좋아했던/싫어했던 지목·용도지역·특징
+    if opt.pref is not None:
+        bonus, notes = opt.pref.attribute_bonus(l.jimok, l.zoning, _text_blob(l))
+        score += bonus
+        (reasons if bonus > 0 else penalties).extend(notes)
 
     # 공공 실거래가 대비
     market = _market_ppm(l, opt.market_price_per_m2)
@@ -241,7 +257,7 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
             score -= 3
             penalties.append(f"주변 실거래 시세보다 {ratio * 100 - 100:.0f}% 높음")
 
-    return ScoredListing(l, round(max(0.0, min(100.0, score)), 1), reasons, penalties)
+    return ScoredListing(l, round(max(0.0, min(100.0, score)), 1), reasons, penalties, f)
 
 
 def _market_ppm(l: LandListing, market: dict[str, dict[str, float]]) -> Optional[float]:
@@ -293,8 +309,34 @@ def rank(listings: list[LandListing], req: CustomerRequirement, opt: Optional[Re
     return result, relaxed, stats
 
 
+def requested_criteria(req: CustomerRequirement) -> set[str]:
+    """손님이 직접 말한 조건 항목."""
+    out = set()
+    if req.regions:
+        out.add("region")
+    if req.budget_min or req.budget_max:
+        out.add("price")
+    if req.area_min_m2 or req.area_max_m2:
+        out.add("area")
+    if req.jimok or req.purpose:
+        out.add("jimok")
+    if req.zoning or req.purpose:
+        out.add("zoning")
+    if req.need_road:
+        out.add("road")
+    if req.keywords:
+        out.add("keyword")
+    return out
+
+
 class RecommendationSession:
-    """한 손님에 대한 추천 세션. 마음에 안 들면 next() 로 다음 순위 매물을 보여줍니다."""
+    """한 손님에 대한 추천 세션.
+
+    current() 가 지금 보여줄 1순위 매물입니다. 손님이 마음에 안 들어하면 next() 를 부르면
+      1) 그 매물을 거절 목록에 넣고
+      2) 거절에서 손님 취향을 학습한 뒤 (opt.pref 가 있을 때)
+      3) 남은 매물을 다시 순위 매겨 그 다음 순위(2순위, 3순위 ...) 매물을 보여줍니다.
+    """
 
     def __init__(self, listings: list[LandListing], req: CustomerRequirement,
                  opt: Optional[RecommendOptions] = None, exclude_ids: set[str] | None = None):
@@ -302,37 +344,82 @@ class RecommendationSession:
         self.req = req
         self.opt = opt or RecommendOptions()
         self.rejected: dict[str, str] = {}  # listing_id -> 사유
+        self.history: list[str] = []  # 이번 상담에서 넘긴 매물 (순서대로)
         self.base_exclude = set(exclude_ids or set())
-        self.cursor = 0
+        self.last_learning: list[str] = []  # 직전 피드백으로 배운 내용
+        self.reordered = False  # 학습 때문에 원래 2순위가 아닌 매물이 올라왔는지
         self._rerank()
 
     def _rerank(self) -> None:
-        opt = RecommendOptions(**{**self.opt.__dict__})
+        opt = RecommendOptions(**{**self.opt.__dict__})  # 조건 완화가 원본 옵션을 바꾸지 않도록 복사
         self.ranked, self.relaxed, self.filter_stats = rank(
             self.listings, self.req, opt, exclude_ids=self.base_exclude | set(self.rejected)
         )
-        self.cursor = 0
+
+    def _learn(self, action: str, cur: ScoredListing, reason: str = "") -> None:
+        self.last_learning = []
+        if self.opt.pref is None:
+            return
+        others = [s.factors for s in self.ranked if s is not cur][:8]
+        l = cur.listing
+        kw = dict(jimok=l.jimok, zoning=l.zoning, text=_text_blob(l), reason=reason,
+                  requested=requested_criteria(self.req),
+                  protected=set(self.req.keywords) | set(self.req.jimok) | set(self.req.zoning))
+        self.last_learning = self.opt.pref.learn(action, cur.factors, others, **kw)
+        if self.opt.prior is not None:  # 사무실 공통 모델도 함께 학습
+            self.opt.prior.learn(action, cur.factors, others, **kw)
+
+    @property
+    def cursor(self) -> int:
+        """지금까지 넘긴 매물 수 (현재 매물의 순위 = cursor + 1)."""
+        return len(self.history)
 
     @property
     def total(self) -> int:
-        return len(self.ranked)
+        return len(self.ranked) + len(self.history)
 
     def current(self) -> Optional[ScoredListing]:
-        return self.ranked[self.cursor] if self.cursor < len(self.ranked) else None
+        return self.ranked[0] if self.ranked else None
 
     def next(self, reason: str = "") -> Optional[ScoredListing]:
-        """현재 매물을 거절하고 다음 순위로."""
+        """현재 매물이 마음에 안 들 때: 거절 + 학습 후 다음 순위 매물."""
         cur = self.current()
-        if cur:
-            self.rejected[cur.listing.listing_id] = reason or "마음에 들지 않음"
-        self.cursor += 1
-        return self.current()
+        if cur is None:
+            return None
+        expected = self.ranked[1].listing.listing_id if len(self.ranked) > 1 else None
+        self._learn("reject", cur, reason)
+        self.rejected[cur.listing.listing_id] = reason or "마음에 들지 않음"
+        self.history.append(cur.listing.listing_id)
+        self._rerank()
+        nxt = self.current()
+        self.reordered = bool(nxt and expected and nxt.listing.listing_id != expected)
+        return nxt
+
+    def like(self) -> None:
+        """관심 표시: 학습만 하고 현재 매물은 그대로 보여줌."""
+        cur = self.current()
+        if cur is None:
+            return
+        self._learn("like", cur)
+        self._rerank()
+        self._bring_to_front(cur.listing.listing_id)
 
     def previous(self) -> Optional[ScoredListing]:
-        if self.cursor > 0:
-            self.cursor -= 1
-            self.rejected.pop(self.ranked[self.cursor].listing.listing_id, None)
+        """직전에 넘긴 매물로 돌아가기 (학습 내용은 유지)."""
+        if self.history:
+            listing_id = self.history.pop()
+            self.rejected.pop(listing_id, None)
+            self._rerank()
+            self._bring_to_front(listing_id)
         return self.current()
+
+    def reject_current(self, reason: str) -> None:
+        """피드백으로 조건을 바꾸기 전에 현재 매물을 거절·학습 (재순위는 update_requirement 에서)."""
+        cur = self.current()
+        if cur:
+            self._learn("reject", cur, reason)
+            self.rejected[cur.listing.listing_id] = reason
+            self.history.append(cur.listing.listing_id)
 
     def update_requirement(self, req: CustomerRequirement) -> None:
         """피드백으로 조건이 바뀌면 이미 거절한 매물은 빼고 다시 순위를 매김."""
@@ -340,4 +427,10 @@ class RecommendationSession:
         self._rerank()
 
     def top(self, n: int = 5) -> list[ScoredListing]:
-        return self.ranked[self.cursor:self.cursor + n]
+        return self.ranked[:n]
+
+    def _bring_to_front(self, listing_id: str) -> None:
+        for i, s in enumerate(self.ranked):
+            if s.listing.listing_id == listing_id:
+                self.ranked.insert(0, self.ranked.pop(i))
+                return
