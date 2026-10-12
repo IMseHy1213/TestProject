@@ -112,7 +112,11 @@
 <article class="card empty">
   <h2>더 보여드릴 매물이 없습니다</h2>
   <p>조건을 조금 바꿔서 다시 찾아보시거나, 아래에 원하시는 변경 사항을 적어주세요.</p>
-  {% if stats %}<p class="meta">제외된 매물: {% for k, v in stats.items() %}{{ k }} {{ v }}건{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% if listing_count == 0 %}
+    <p class="notice warn">등록된 매물이 하나도 없습니다. 관리자 화면에서 매물 파일을 올리거나 매물 폴더 위치를 확인해 주세요.</p>
+  {% elif stats %}<p class="meta">보유 매물 {{ listing_count }}건 중 제외된 매물: {% for k, v in stats.items() %}{{ k }} {{ v }}건{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% if stats.get("지역 불일치") == listing_count %}<p class="notice">찾으시는 지역의 매물이 아직 없습니다. 다른 지역으로 찾아보시겠어요?</p>{% endif %}
+  {% endif %}
   <div class="row">
     {% if can_prev %}
     <form method="post" action="{{ url_for('action') }}" class="inline">

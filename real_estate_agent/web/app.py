@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import hmac
+import io
 import logging
 import os
 import re
@@ -24,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 
 from ..agent import RealEstateAgent, is_condition_change, mask_address
 from ..collectors.local_folder import SUPPORTED
@@ -215,7 +216,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             item=listing_view(top, admin) if top else None, rank=sess.cursor + 1, total=sess.total,
             relaxed=sess.relaxed, stats=sess.filter_stats, notes=sess.req.notes, others=others,
             learning=learning, reordered=reordered, quick_reasons=QUICK_REASONS,
-            can_prev=bool(sess.history), pref=sess.opt.pref,
+            can_prev=bool(sess.history), pref=sess.opt.pref, listing_count=len(agent.listings()),
         )
 
     @app.post("/action")
@@ -301,6 +302,15 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             do_sync()
         session["admin_msg"] = state["sync_error"] or "매물 폴더를 다시 읽었습니다."
         return redirect(url_for("admin"))
+
+    @app.get("/admin/template")
+    def admin_template():
+        if not is_admin():
+            abort(403)
+        from ..template import build_template
+
+        return send_file(io.BytesIO(build_template()), as_attachment=True, download_name="토지매물_입력양식.xlsx",
+                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     @app.post("/admin/upload")
     def admin_upload():

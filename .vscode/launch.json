@@ -30,6 +30,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "📄 매물 입력 양식(엑셀) 만들기",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["template"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "⓪ GPT API 키 저장 (setup-key, 처음 한 번)",
       "type": "debugpy",
       "request": "launch",

@@ -9,6 +9,7 @@
   python main.py proactive                    저장된 손님에게 맞는 매물 선제 탐색
   python main.py watch                        폴더 감시 + 새 매물 선제 알림 (무한 반복)
   python main.py export --out 매물정제.xlsx     정제된 매물을 엑셀로 내보내기
+  python main.py template                     매물 입력 양식(엑셀) 만들기
   python main.py setup-key                    OpenAI API 키 저장 (.env)
   python main.py llm-check                    GPT/Claude 연결 점검
 """
@@ -202,6 +203,9 @@ def build_parser() -> argparse.ArgumentParser:
     wb.add_argument("--port", type=int, default=8000)
     wb.add_argument("--no-browser", action="store_true", help="브라우저 자동 열기 끄기")
 
+    tp = sub.add_parser("template", help="매물 입력 양식(엑셀) 만들기")
+    tp.add_argument("--out", default="토지매물_입력양식.xlsx")
+
     sub.add_parser("setup-key", help="OpenAI API 키를 .env 에 저장 (입력 내용은 화면에 안 보임)")
     sub.add_parser("llm-check", help="GPT/Claude 연결·모델 점검")
 
@@ -215,6 +219,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
+    if args.command == "template":
+        from .template import write_template
+
+        path = write_template(args.out)
+        print(f"매물 입력 양식을 만들었습니다: {path.resolve()}")
+        print("작성 후 매물 폴더에 넣고 웹 관리자 화면의 '매물 폴더 다시 읽기'를 누르세요.")
+        return 0
     if args.command == "setup-key":
         from .setup_tools import setup_key
 

@@ -128,3 +128,11 @@ def test_safe_filename():
     assert safe_filename("../../etc/passwd") == "passwd"
     assert safe_filename("C:\\Users\\x\\매물 목록.xlsx") == "매물 목록.xlsx"
     assert safe_filename('a<b>:"c".csv') == "abc.csv"
+
+
+def test_admin_template_download(make_client):
+    c = make_client("pw1234")
+    assert c.get("/admin/template").status_code == 403
+    c.post("/admin/login", data={"password": "pw1234", "csrf": csrf(c, "/admin")})
+    r = c.get("/admin/template")
+    assert r.status_code == 200 and r.data[:2] == b"PK"  # xlsx(zip)

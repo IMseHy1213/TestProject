@@ -306,3 +306,31 @@ def test_reason_only_blames_mentioned_features():
     assert m.attrs["feature"] == {}  # 남향(채광 동의어)·평지·IC 모두 비선호로 배우지 않음
     m.learn("reject", {}, [], text="계곡 인접, 평지", reason="계곡이 싫어요")
     assert m.attrs["feature"] == {"계곡": [0.0, 1.0]}
+
+
+def test_input_template_roundtrip(tmp_path):
+    import io as _io
+
+    from openpyxl import load_workbook
+
+    from real_estate_agent.template import build_template
+
+    folder = tmp_path / "토지"
+    folder.mkdir()
+    blank = folder / "빈양식.xlsx"
+    blank.write_bytes(build_template())
+    assert LocalFolderCollector(folder).collect() == []  # 작성방법·목록 시트는 매물로 읽지 않음
+
+    wb = load_workbook(_io.BytesIO(build_template()))
+    ws = wb["매물입력"]
+    ws.append(["E-9001", "충청북도 음성군 금왕읍 용계리 77-1", "대", "계획관리지역", 250, "2억 3천만원",
+               "6m 포장도로 접함", "거래가능", "2026-10-12", "정남향, 햇빛 잘 듦", "010-1234-5678"])
+    blank.unlink()
+    wb.save(folder / "새매물.xlsx")
+    result = clean(LocalFolderCollector(folder).collect(), TODAY)
+    assert result.error_count == 0 and len(result.listings) == 1
+    l = result.listings[0]
+    assert l.area_m2 == pytest.approx(250 * 3.305785, rel=1e-3) and l.price_manwon == 23000
+    req = RequirementParser(None, ["음성군"]).parse("음성군 채광이 좋은 2억원대 땅")
+    ranked, _, _ = rank(result.listings, req, today=TODAY)
+    assert ranked[0].listing.listing_id == "E-9001" and ranked[0].factors["keyword"] == 1.0

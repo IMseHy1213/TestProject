@@ -19,6 +19,7 @@
   <div class="panel">
     <h2>매물 파일 올리기</h2>
     <p class="meta">엑셀(.xlsx, .xls)·CSV·JSON·텍스트 메모. 매물 폴더의 '웹업로드' 안에 저장된 뒤 바로 반영됩니다.</p>
+    <p class="meta">처음이라면 <a href="{{ url_for('admin_template') }}">📄 매물 입력 양식(엑셀) 내려받기</a> → 작성 → 여기서 올리기</p>
     <form method="post" action="{{ url_for('admin_upload') }}" enctype="multipart/form-data">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
       <input type="file" name="file" accept=".xlsx,.xlsm,.xls,.csv,.json,.txt" required>
