@@ -17,8 +17,6 @@ import statistics
 import xml.etree.ElementTree as ET
 from typing import Optional
 
-from defusedxml.ElementTree import fromstring as safe_fromstring  # XXE 방지
-
 log = logging.getLogger(__name__)
 
 LAND_TRADE_URL = "https://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade"
@@ -66,6 +64,9 @@ class LandTradePriceClient:
             timeout=self.timeout,
         )
         resp.raise_for_status()
+        # XXE 공격 방지를 위해 defusedxml 로 파싱 (이 기능을 쓸 때만 필요하므로 여기서 import)
+        from defusedxml.ElementTree import fromstring as safe_fromstring
+
         root = safe_fromstring(resp.content)
         out = []
         for item in root.iter("item"):

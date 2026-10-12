@@ -1,0 +1,8 @@
+{
+  // 프로젝트 폴더의 가상환경(.venv)을 기본 파이썬으로 사용
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["tests"],
+  "files.encoding": "utf8"
+}

@@ -10,16 +10,16 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-try:  # python-dotenv 는 선택 사항
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:  # pragma: no cover
-    pass
-
 # 부모님 부동산의 토지 매물 백업 폴더 (Windows)
 DEFAULT_DATA_DIR = r"E:\부동산매물백업\매물폴더\토지"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+try:  # python-dotenv 는 선택 사항. 실행 위치와 상관없이 프로젝트 폴더의 .env 를 읽음
+    from dotenv import load_dotenv
+
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:  # pragma: no cover
+    pass
 
 
 def _env_list(name: str, default: str) -> list[str]:

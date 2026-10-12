@@ -62,18 +62,52 @@
   (`recommender.py` 의 `PURPOSE_PROFILE`). 부모님의 실무 경험에 맞게 숫자를 고치면 됩니다.
 - 예산 10% 넘게 초과, 맹지(도로 필요 시), 제외 조건, 지역 불일치, 계약완료·보류 매물은 후보에서 뺍니다.
 
-## 3. 설치 (Windows)
+## 3. VS Code 에서 설치·실행하기
 
-```powershell
-# 1) 파이썬 3.10 이상 설치 후, 프로젝트 폴더에서
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+### 처음 한 번만 하는 준비
 
-# 2) 설정 파일 만들기
-copy .env.example .env
-#    .env 를 메모장으로 열어 API 키를 넣으세요. (없으면 규칙 기반으로 동작)
-```
+1. **파이썬 설치**: https://www.python.org 에서 Python 3.10 이상 설치
+   (설치 첫 화면에서 **"Add python.exe to PATH" 체크**)
+2. **VS Code 확장 설치**: VS Code 왼쪽 확장(Ctrl+Shift+X)에서 **Python** (Microsoft) 설치
+3. **프로젝트 폴더 열기**: VS Code 메뉴 **파일 → 폴더 열기** → `C:\Users\user\projectISH\Project` 선택
+   (⚠ `main.py` 파일 하나만 열면 안 되고, **폴더 전체**를 열어야 합니다)
+4. **터미널 열기**: 메뉴 **터미널 → 새 터미널** (Ctrl+`)
+   터미널 앞부분이 `PS C:\Users\user\projectISH\Project>` 인지 확인하세요.
+5. **가상환경 만들고 패키지 설치** (터미널에 한 줄씩 입력):
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\activate
+   pip install -r requirements.txt
+   ```
+   > "스크립트를 실행할 수 없습니다" 오류가 나면 먼저
+   > `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 를 실행하고 `Y` 를 입력한 뒤 다시 하세요.
+6. **인터프리터 선택**: Ctrl+Shift+P → `Python: Select Interpreter` → `.venv` 가 들어간 항목 선택
+7. **설정 파일**: `.env.example` 을 복사해 `.env` 로 이름을 바꾸고 API 키를 넣습니다. (키가 없으면 비워둬도 규칙 기반으로 동작)
+
+### 실행
+
+- **가장 쉬운 방법**: 왼쪽 **실행 및 디버그**(Ctrl+Shift+D) → 위쪽 목록에서 항목 선택 → **F5**
+
+  | 항목 | 하는 일 |
+  |---|---|
+  | ① 상담(chat) - 샘플 데이터로 연습 | 가상 샘플 매물로 상담 연습 |
+  | ② 상담(chat) - 실제 매물 폴더 | `E:\부동산매물백업\매물폴더\토지` 매물로 상담 |
+  | ③ 매물 수집·정제 보고서 | 오류·중복 매물 보고서 |
+  | ④ 손님 문의 한 번 추천 | 문의 내용을 입력창에 넣으면 바로 추천 |
+  | ⑤ 선제 제안 / ⑥ 폴더 감시 | 저장된 손님에게 맞는 새 매물 알림 |
+  | ⑦ 테스트 실행 | 자동 테스트 |
+
+  상담 화면은 아래쪽 **터미널** 창에 나타나며, 거기에 문의 내용을 입력하면 됩니다.
+- `main.py` 를 열고 오른쪽 위 **▷ (Run Python File)** 을 눌러도 됩니다. (이때는 실제 매물 폴더로 상담 모드가 시작됩니다)
+- 터미널에서 직접 실행하려면 아래 **4. 사용법** 의 명령을 그대로 입력하세요.
+
+### 자주 나는 오류
+
+| 오류 메시지 | 원인 / 해결 |
+|---|---|
+| `ModuleNotFoundError: No module named '...'` 또는 `[설치 필요]` | VS Code 가 쓰는 파이썬에 패키지가 없음 → 6번(인터프리터 선택)을 확인하고 5번의 `pip install -r requirements.txt` 실행 |
+| `매물 폴더를 찾을 수 없습니다` | E 드라이브(외장하드/USB)가 연결 안 됨, 또는 폴더 이름이 다름 → `.env` 의 `REA_DATA_DIR` 수정 |
+| `No such file ... requirements.txt` | 터미널 위치가 프로젝트 폴더가 아님 → `cd C:\Users\user\projectISH\Project` 후 다시 실행 |
 
 ## 4. 사용법
 
@@ -109,7 +143,7 @@ python main.py export --out 정제된_토지매물.xlsx
 | `c` / `q` | 현재 조건 보기 / 종료 |
 
 LLM 없이 실행: `python main.py --no-llm chat`
-다른 폴더로 테스트: `python main.py --data-dir sample_data\토지 chat`
+샘플 데이터로 연습: `python main.py --data-dir sample_data\토지 chat`
 
 ## 5. 매물 폴더 양식
 

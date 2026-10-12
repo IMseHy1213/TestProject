@@ -1,0 +1,77 @@
+{
+  // VS Code 왼쪽 '실행 및 디버그'(Ctrl+Shift+D) 에서 원하는 항목을 고르고 F5 를 누르세요.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "① 상담(chat) - 샘플 데이터로 연습",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "chat"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "② 상담(chat) - 실제 매물 폴더 (E:\\부동산매물백업\\매물폴더\\토지)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["chat"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "③ 매물 수집·정제 보고서 (sync --report)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["sync", "--report"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "④ 손님 문의 한 번 추천 (recommend)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["recommend", "${input:inquiry}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "⑤ 저장된 손님에게 선제 제안 (proactive)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["proactive"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "⑥ 폴더 감시 + 새 매물 알림 (watch)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["watch"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "⑦ 테스트 실행 (pytest)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-q"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "inquiry",
+      "type": "promptString",
+      "description": "손님 문의 내용",
+      "default": "양평 쪽 전원주택 지을 땅 200평 정도, 3억 이하, 맹지 제외"
+    }
+  ]
+}
