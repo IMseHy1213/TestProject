@@ -31,6 +31,25 @@ _TOTAL_ROW = re.compile(r"^\s*(합\s*계|총\s*계|소\s*계|계|total)\s*$", re
 _MULTI_PARCEL = re.compile(r"외\s*(\d+)\s*필지")
 
 
+_REGION_NAME = re.compile(r"^[가-힣]{1,8}(특별시|광역시|특별자치시|특별자치도|도|시|군|구)$")
+
+
+def is_region_name(name: str) -> bool:
+    """'음성군', '청주시', '충청북도' 는 지역 이름, '기타지역', '2026년', '정리중' 은 아님."""
+    return bool(_REGION_NAME.match(name.strip())) and "기타" not in name
+
+
+def _complete_address(address: str, sheet_address: str) -> str:
+    """폴더 이름 주소('감곡면 문촌리 417-2 외 36필지')에 시/군이 없으면 엑셀 소재지('충북 음성군 감곡면 …')에서 보충."""
+    if not sheet_address or re.search(r"[가-힣]+(시|군|구)(\s|$)", address):
+        return address
+    first = address.split()[0] if address.split() else ""
+    idx = sheet_address.find(first) if first else -1
+    if idx > 0:
+        return f"{sheet_address[:idx].strip()} {address}"
+    return address
+
+
 def looks_like_listing_name(name: str) -> bool:
     return bool(_LISTING_NAME.search(name))
 
@@ -182,10 +201,14 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
     base, tags = split_name(unit_name)
 
     # 주소: 폴더 이름이 주소 모양이면 그것 (여러 필지 묶음을 대표), 아니면 엑셀의 소재지
-    address = base if looks_like_listing_name(base) else _text(kv_val("address")) or base
-    for region in reversed(region_parts):  # '음성군' 폴더 안이면 주소 앞에 지역 보충
+    sheet_address = _text(kv_val("address")) or _text(_value(parcels[0], "address")[1] if parcels else "")
+    address = base if looks_like_listing_name(base) else sheet_address or base
+    address = _complete_address(address, sheet_address)
+    for region in reversed(region_parts):  # '음성군' 폴더 안이면 주소 앞에 지역 보충 ('기타지역' 같은 이름은 제외)
+        if not is_region_name(region):
+            continue
         stem = re.sub(r"(시|군|구)$", "", region)
-        if region and region not in address and not (len(stem) >= 2 and stem in address):
+        if region not in address and not (len(stem) >= 2 and stem in address):
             address = f"{region} {address}"
 
     # 면적: 항목값 -> 합계 줄 -> 필지 합

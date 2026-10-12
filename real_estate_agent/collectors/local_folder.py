@@ -116,13 +116,38 @@ class LocalFolderCollector(Collector):
             source = detect_source(path, self.data_dir)
             try:
                 rows = read_file(path)
+                if not rows and path.suffix.lower() in GRID_FORMATS:
+                    rows = self._as_single_listing(path)  # 표가 아니면 '항목 | 값' 정보지로 다시 읽기
             except Exception as e:  # 파일 하나가 깨져도 전체 수집은 계속
                 self.errors.append(f"{path.name}: 읽기 실패 ({e})")
                 log.warning("파일 읽기 실패 %s: %s", path, e)
                 continue
             self.files_read.append(str(path))
+            if not rows:
+                self.errors.append(f"{path.relative_to(self.data_dir)}: 매물 정보를 찾지 못했습니다 (항목 이름 확인 필요)")
             records.extend(RawRecord(data=r, source=source, source_file=str(path)) for r in rows)
         return records
+
+    def _as_single_listing(self, path: Path) -> list[dict]:
+        grids = read_grids(path)
+        record, _ = build_listing_record(path.stem, list(path.relative_to(self.data_dir).parts[:-1]), grids,
+                                         file_modified_date(path))
+        has_core = record.get("소재지") and record.get("면적(㎡)") and record.get("매매가")
+        return [record] if has_core else []
+
+    def folder_counts(self, listings) -> dict[str, int]:
+        """매물 폴더 바로 아래 폴더별 매물 수 (예: {'음성군': 12, '기타지역': 5, '(최상위)': 3})."""
+        counts: dict[str, int] = {}
+        for l in listings:
+            try:
+                parts = Path(l.source_file).relative_to(self.data_dir).parts
+            except ValueError:
+                continue
+            key = parts[0] if len(parts) > 1 else "(최상위)"
+            counts[key] = counts.get(key, 0) + 1
+        for d in sorted(p.name for p in self.data_dir.iterdir() if p.is_dir()) if self.data_dir.exists() else []:
+            counts.setdefault(d, 0)  # 비어 있는 폴더도 0건으로 보여줌
+        return counts
 
 
 def read_file(path: Path) -> list[dict[str, Any]]:

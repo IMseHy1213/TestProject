@@ -136,3 +136,19 @@ def test_admin_template_download(make_client):
     c.post("/admin/login", data={"password": "pw1234", "csrf": csrf(c, "/admin")})
     r = c.get("/admin/template")
     assert r.status_code == 200 and r.data[:2] == b"PK"  # xlsx(zip)
+
+
+def test_web_too_expensive_shows_cheaper(make_client):
+    c = make_client()
+    html = search(c, "양평 땅").get_data(as_text=True)
+    price = lambda h: re.search(r'class="price">([^<]+)<', h).group(1).strip()
+    from real_estate_agent.normalizer import parse_price_manwon
+    prev = parse_price_manwon(price(html))
+    for _ in range(4):
+        html = act(c, "next", "너무 비싸요").get_data(as_text=True)
+        if "더 보여드릴 매물이 없습니다" in html:
+            assert "더 저렴한 매물만 찾았는데" in html
+            break
+        now = parse_price_manwon(price(html))
+        assert now < prev and "저렴한 매물만 보여드려요" in html
+        prev = now

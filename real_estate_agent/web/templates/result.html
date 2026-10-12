@@ -111,6 +111,11 @@
 {% else %}
 <article class="card empty">
   <h2>더 보여드릴 매물이 없습니다</h2>
+  {% set dir_keys = ["앞서 본 매물보다 비쌈", "앞서 본 매물보다 저렴함", "앞서 본 매물보다 좁음", "앞서 본 매물보다 넓음"] %}
+  {% for k in dir_keys if stats.get(k) %}{% if loop.first %}
+    <p class="notice">말씀하신 대로 {{ "더 저렴한" if k.endswith("비쌈") else "더 비싼" if k.endswith("저렴함") else "더 넓은" if k.endswith("좁음") else "더 좁은" }} 매물만 찾았는데, 조건에 맞는 매물이 더 없습니다.
+      ‘← 이전 매물’로 돌아가 다시 보시거나 아래에 다른 요청을 적어주세요.</p>
+  {% endif %}{% endfor %}
   <p>조건을 조금 바꿔서 다시 찾아보시거나, 아래에 원하시는 변경 사항을 적어주세요.</p>
   {% if listing_count == 0 %}
     <p class="notice warn">등록된 매물이 하나도 없습니다. 관리자 화면에서 매물 파일을 올리거나 매물 폴더 위치를 확인해 주세요.</p>

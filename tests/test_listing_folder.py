@@ -108,3 +108,28 @@ def test_missing_price_is_reported(tmp_path):
     write_xlsx(listing_dir(root) / f"{NAME}.xlsx", rows)
     result = clean(LocalFolderCollector(root).collect(), TODAY)
     assert result.error_count == 1 and "가격" in result.issues[0].message
+
+
+def test_etc_region_folder(tmp_path):
+    """'기타지역' 같은 폴더는 주소 앞에 붙이지 않고, 시/군은 엑셀 소재지에서 보충"""
+    root = tmp_path / "매물"
+    write_xlsx(root / "기타지역" / "문백면 옥성리 123(공장부지)" / "정보.xlsx", [
+        ["소재지", "충청북도 진천군 문백면 옥성리 123", None, None],
+        ["면적", "5,000㎡", "매매가", "12억"],
+        ["지목", "공장용지", None, None],
+    ])
+    write_xlsx(root / "기타지역" / "충주시 앙성면 매물.xlsx", [  # 지번 없는 이름 + 정보지 형태
+        ["소재지", "충청북도 충주시 앙성면 단암리 55"], ["면적(평)", "800"], ["매매가", "4억 5천"],
+    ])
+    write_xlsx(root / "기타지역" / "장부.xlsx", [["소재지", "면적(평)", "매매가"],
+                                               ["경기도 이천시 장호원읍 이황리 7", 500, "3억"]])
+    collector = LocalFolderCollector(root)
+    listings = clean(collector.collect(), TODAY).listings
+    addrs = sorted(l.address for l in listings)
+    assert addrs == ["경기도 이천시 장호원읍 이황리 7", "충청북도 진천군 문백면 옥성리 123",
+                     "충청북도 충주시 앙성면 단암리 55"]
+    assert not any("기타지역" in a for a in addrs)
+    assert collector.folder_counts(listings) == {"기타지역": 3}
+    req = RequirementParser(None, ["진천군", "충주시"]).parse("진천 공장 부지")
+    ranked, _, _ = rank(listings, req, today=TODAY)
+    assert "진천군" in ranked[0].listing.address

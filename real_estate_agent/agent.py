@@ -49,11 +49,14 @@ class SyncReport:
     removed_ids: list[str] = field(default_factory=list)
     file_errors: list[str] = field(default_factory=list)
     files_read: int = 0
+    folder_counts: dict[str, int] = field(default_factory=dict)
 
     def summary(self) -> str:
         return (
             f"파일 {self.files_read}개 읽음 | {self.clean.report().splitlines()[0]}\n"
             f"신규 {len(self.new)}건, 변경 {len(self.changed)}건, 사라진 매물 {len(self.removed_ids)}건"
+            + ("\n폴더별 매물: " + ", ".join(f"{k} {v}건" for k, v in self.folder_counts.items())
+               if self.folder_counts else "")
             + ("".join(f"\n  [FILE] {e}" for e in self.file_errors))
         )
 
@@ -92,7 +95,8 @@ class RealEstateAgent:
         diff = self.storage.upsert_listings(result.listings)
         self._listings = result.listings
         report = SyncReport(clean=result, new=diff["new"], changed=diff["changed"], removed_ids=diff["removed_ids"],
-                            file_errors=list(self.collector.errors), files_read=len(self.collector.files_read))
+                            file_errors=list(self.collector.errors), files_read=len(self.collector.files_read),
+                            folder_counts=self.collector.folder_counts(result.listings))
         self._write_quality_log(report)
         self.last_sync, self.last_sync_at = report, datetime.now()
         return report

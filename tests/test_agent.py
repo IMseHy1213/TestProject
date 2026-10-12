@@ -276,7 +276,7 @@ def test_learning_changes_next_rank():
     plain = RecommendationSession(listings, req, RecommendOptions(min_candidates=1))
     learn = RecommendationSession(listings, req, RecommendOptions(min_candidates=1, pref=PreferenceModel()))
     assert plain.current().listing.listing_id == learn.current().listing.listing_id == "cheap1"
-    assert plain.next("너무 좁아요").listing.listing_id == "cheap2"  # 학습 없으면 원래 2순위
+    assert plain.next().listing.listing_id == "cheap2"  # 이유 없이 넘기면 원래 2순위
     assert learn.next("너무 좁아요").listing.listing_id == "wide"  # 학습하면 넓은 매물이 2순위로
     assert learn.cursor == 1 and learn.reordered
     assert any("면적" in c for c in learn.last_learning)
@@ -358,3 +358,60 @@ def test_prepare_data_folder(tmp_path):
     (folder / TEMPLATE_NAME).write_bytes(b"user data")  # 작성 중인 파일은 덮어쓰지 않음
     assert prepare_data_folder(folder) is False
     assert (folder / TEMPLATE_NAME).read_bytes() == b"user data"
+
+
+# ---------------- '너무 비싸요' / '너무 좁아요' 다음 매물 방향 ----------------
+from real_estate_agent.recommender import direction_from_reason  # noqa: E402
+
+
+@pytest.mark.parametrize("reason,expected", [
+    ("너무 비싸요", {"price": "lower"}), ("가격이 부담돼요", {"price": "lower"}), ("좀 더 싼 걸로", {"price": "lower"}),
+    ("너무 좁아요", {"area": "larger"}), ("더 넓은 땅", {"area": "larger"}), ("면적이 작아요", {"area": "larger"}),
+    ("너무 넓어요", {"area": "smaller"}), ("너무 싸서 불안해요", {"price": "higher"}),
+    ("비싸고 좁아요", {"price": "lower", "area": "larger"}), ("마음에 안 들어요", {}), ("채광이 별로예요", {}),
+])
+def test_direction_from_reason(reason, expected):
+    assert direction_from_reason(reason) == expected
+
+
+KW = ["계곡", "남향", "평지"]
+
+
+def _kw_session(rows):
+    """rows: (id, 면적㎡, 가격만원, 특징). 특징 일치 수로 순위가 정해지도록 구성."""
+    ls = [L(i, f"경기도 양평군 a리 {n}", a, p, jimok="대", road_access="도로", description=d)
+          for n, (i, a, p, d) in enumerate(rows)]
+    return RecommendationSession(ls, CustomerRequirement(regions=["양평군"], keywords=KW),
+                                 RecommendOptions(min_candidates=1))
+
+
+def test_too_expensive_always_shows_cheaper_next():
+    sess = _kw_session([("P1", 900, 30000, "계곡 남향 평지"), ("P2", 900, 20000, "계곡 남향"),
+                        ("P0", 900, 40000, "계곡 남향"), ("P3", 900, 10000, "계곡"), ("P4", 900, 5000, "")])
+    seen = [sess.current().listing.listing_id]
+    while (nxt := sess.next("너무 비싸요")) is not None:
+        seen.append(nxt.listing.listing_id)
+    assert seen == ["P1", "P2", "P3", "P4"]  # 매번 더 저렴한 매물, 더 비싼 P0(40000)은 끝까지 안 나옴
+    assert sess.filter_stats.get("앞서 본 매물보다 비쌈")
+
+
+def test_too_small_always_shows_larger_next_and_previous_undoes():
+    sess = _kw_session([("A1", 500, 9000, "계곡 남향 평지"), ("A2", 1000, 8000, "계곡 남향"),
+                        ("A0", 400, 9500, "계곡 남향"), ("A3", 1500, 7000, "계곡"), ("A4", 2000, 6000, "")])
+    assert sess.current().listing.listing_id == "A1"
+    assert sess.next("너무 좁아요").listing.listing_id == "A2"  # 더 좁은 A0(400㎡)은 건너뜀
+    assert any("넓은 매물만" in m for m in sess.last_learning)
+    assert sess.next("너무 좁아요").listing.listing_id == "A3"
+    sess.previous()  # 되돌리면 'A2 보다 넓은 것만' 조건도 풀림
+    assert sess.current().listing.listing_id == "A2" and sess.opt.area_above == 500
+    nxt = sess.next("너무 비싸요").listing  # 가격 조건 추가, 'A1 보다 넓게' 는 유지
+    assert nxt.listing_id == "A3" and nxt.price_manwon < 8000 and nxt.area_m2 > 500
+
+
+def test_no_cheaper_listing_returns_none_instead_of_pricier():
+    ls = [L("a", "경기도 양평군 a리 1", 600, 10000, road_access="도로"),
+          L("b", "경기도 양평군 a리 2", 600, 30000, road_access="도로")]
+    sess = RecommendationSession(ls, CustomerRequirement(), RecommendOptions(min_candidates=1))
+    assert sess.current().listing.listing_id == "a"  # 가장 싼 매물부터
+    assert sess.next("너무 비싸요") is None  # 더 비싼 b 를 보여주지 않음
+    assert sess.filter_stats.get("앞서 본 매물보다 비쌈") == 1

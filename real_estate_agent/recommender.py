@@ -75,6 +75,11 @@ class RecommendOptions:
     market_price_per_m2: dict[str, dict[str, float]] = field(default_factory=dict)  # {시군구: {지목: 만원/㎡}}
     pref: Any = None  # 이 손님의 학습 모델 (PreferenceModel)
     prior: Any = None  # 사무실 공통 학습 모델 (PreferenceModel)
+    # 손님 반응으로 생긴 '방향' 조건 (예: "너무 비싸요" -> 방금 매물보다 싼 것만). 조건 완화 대상이 아님
+    price_below: Optional[int] = None  # 만원, 이 가격 미만만
+    price_above: Optional[int] = None  # 만원, 이 가격 초과만
+    area_above: Optional[float] = None  # ㎡, 이 면적 초과만
+    area_below: Optional[float] = None  # ㎡, 이 면적 미만만
 
     def weights(self) -> dict[str, float]:
         if self.pref is not None:
@@ -109,6 +114,14 @@ def hard_filter(l: LandListing, req: CustomerRequirement, opt: RecommendOptions)
     """제외 사유를 반환 (통과하면 None)."""
     if l.status in {"계약완료", "보류"}:
         return f"상태 '{l.status}'"
+    if opt.price_below is not None and l.price_manwon >= opt.price_below:
+        return "앞서 본 매물보다 비쌈"
+    if opt.price_above is not None and l.price_manwon <= opt.price_above:
+        return "앞서 본 매물보다 저렴함"
+    if opt.area_above is not None and l.area_m2 <= opt.area_above:
+        return "앞서 본 매물보다 좁음"
+    if opt.area_below is not None and l.area_m2 >= opt.area_below:
+        return "앞서 본 매물보다 넓음"
     if req.budget_max and l.price_manwon > req.budget_max * (1 + opt.budget_tolerance):
         return "예산 초과"
     if req.area_min_m2 and l.area_m2 < req.area_min_m2 * (1 - opt.area_tolerance):
@@ -329,6 +342,34 @@ def requested_criteria(req: CustomerRequirement) -> set[str]:
     return out
 
 
+# 거절 사유 -> 다음 매물이 가야 할 방향
+_TOO_CHEAP = r"너무\s*싸|싸서|더\s*비싼|비싸도\s*(돼|괜찮)"
+_TOO_EXPENSIVE = (r"비싸|비쌈|저렴한|더\s*싼|싼\s*(거|걸|것|매물|땅)|싸게|가격.*(높|부담|내려|낮)|"
+                  r"예산.*(초과|넘)|돈이\s*부족")
+_TOO_BIG = r"너무\s*(넓|커|크)|넓어서|커서|더\s*(작|좁)|작은\s*(거|걸|것|땅|매물)|좁은\s*(거|걸|것|땅|매물)"
+_TOO_SMALL = (r"좁아|좁다|좁네|좁은데|좁고|작아|작다|작네|작은데|작고|너무\s*(좁|작)|더\s*(넓|큰)|"
+              r"넓은\s*(거|걸|것|땅|매물)|큰\s*(거|걸|것|땅|매물)|면적.*(부족|작|좁)|평수.*(부족|작)")
+
+
+def direction_from_reason(reason: str) -> dict[str, str]:
+    """'너무 비싸요' -> {'price': 'lower'}, '너무 좁아요' -> {'area': 'larger'} ..."""
+    d: dict[str, str] = {}
+    if not reason:
+        return d
+    if re.search(_TOO_CHEAP, reason):
+        d["price"] = "higher"
+    elif re.search(_TOO_EXPENSIVE, reason):
+        d["price"] = "lower"
+    if re.search(_TOO_BIG, reason):
+        d["area"] = "smaller"
+    elif re.search(_TOO_SMALL, reason):
+        d["area"] = "larger"
+    return d
+
+
+_DIRECTION_FIELDS = ("price_below", "price_above", "area_above", "area_below")
+
+
 class RecommendationSession:
     """한 손님에 대한 추천 세션.
 
@@ -345,6 +386,7 @@ class RecommendationSession:
         self.opt = opt or RecommendOptions()
         self.rejected: dict[str, str] = {}  # listing_id -> 사유
         self.history: list[str] = []  # 이번 상담에서 넘긴 매물 (순서대로)
+        self._direction_history: list[dict] = []  # 넘길 때마다 직전 방향 조건 (이전 버튼으로 되돌리기용)
         self.base_exclude = set(exclude_ids or set())
         self.last_learning: list[str] = []  # 직전 피드백으로 배운 내용
         self.reordered = False  # 학습 때문에 원래 2순위가 아닌 매물이 올라왔는지
@@ -388,6 +430,7 @@ class RecommendationSession:
             return None
         expected = self.ranked[1].listing.listing_id if len(self.ranked) > 1 else None
         self._learn("reject", cur, reason)
+        self._push_direction(cur, reason)
         self.rejected[cur.listing.listing_id] = reason or "마음에 들지 않음"
         self.history.append(cur.listing.listing_id)
         self._rerank()
@@ -408,6 +451,9 @@ class RecommendationSession:
         """직전에 넘긴 매물로 돌아가기 (학습 내용은 유지)."""
         if self.history:
             listing_id = self.history.pop()
+            if self._direction_history:  # 그 매물을 넘기면서 생긴 '더 싼 것만' 같은 조건도 되돌림
+                for k, v in self._direction_history.pop().items():
+                    setattr(self.opt, k, v)
             self.rejected.pop(listing_id, None)
             self._rerank()
             self._bring_to_front(listing_id)
@@ -418,8 +464,28 @@ class RecommendationSession:
         cur = self.current()
         if cur:
             self._learn("reject", cur, reason)
+            self._push_direction(cur, reason)
             self.rejected[cur.listing.listing_id] = reason
             self.history.append(cur.listing.listing_id)
+
+    def _push_direction(self, cur: ScoredListing, reason: str) -> None:
+        """'너무 비싸요' 면 방금 매물보다 싼 매물만, '너무 좁아요' 면 더 넓은 매물만 보여주도록 조건 추가."""
+        self._direction_history.append({k: getattr(self.opt, k) for k in _DIRECTION_FIELDS})
+        d = direction_from_reason(reason)
+        l = cur.listing
+        o = self.opt
+        if d.get("price") == "lower":
+            o.price_below = min(o.price_below or l.price_manwon, l.price_manwon)
+            self.last_learning.append(f"{format_price(l.price_manwon)}보다 저렴한 매물만 보여드려요")
+        elif d.get("price") == "higher":
+            o.price_above = max(o.price_above or l.price_manwon, l.price_manwon)
+            self.last_learning.append(f"{format_price(l.price_manwon)}보다 비싼 매물도 괜찮은 것으로 보고 찾습니다")
+        if d.get("area") == "larger":
+            o.area_above = max(o.area_above or l.area_m2, l.area_m2)
+            self.last_learning.append(f"{l.area_pyeong:,.0f}평보다 넓은 매물만 보여드려요")
+        elif d.get("area") == "smaller":
+            o.area_below = min(o.area_below or l.area_m2, l.area_m2)
+            self.last_learning.append(f"{l.area_pyeong:,.0f}평보다 좁은 매물만 보여드려요")
 
     def update_requirement(self, req: CustomerRequirement) -> None:
         """피드백으로 조건이 바뀌면 이미 거절한 매물은 빼고 다시 순위를 매김."""
