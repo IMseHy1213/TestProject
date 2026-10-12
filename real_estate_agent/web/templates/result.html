@@ -110,7 +110,8 @@
 
 {% else %}
 <article class="card empty">
-  <h2>더 보여드릴 매물이 없습니다</h2>
+  <h2>해당 매물은 현재 존재하지 않습니다.</h2>
+  {% if rank > 1 %}<p class="meta">앞서 보여드린 {{ rank - 1 }}건 외에는 조건에 맞는 매물이 없습니다.</p>{% endif %}
   {% set dir_keys = ["앞서 본 매물보다 비쌈", "앞서 본 매물보다 저렴함", "앞서 본 매물보다 좁음", "앞서 본 매물보다 넓음"] %}
   {% for k in dir_keys if stats.get(k) %}{% if loop.first %}
     <p class="notice">말씀하신 대로 {{ "더 저렴한" if k.endswith("비쌈") else "더 비싼" if k.endswith("저렴함") else "더 넓은" if k.endswith("좁음") else "더 좁은" }} 매물만 찾았는데, 조건에 맞는 매물이 더 없습니다.
@@ -120,7 +121,7 @@
   {% if listing_count == 0 %}
     <p class="notice warn">등록된 매물이 하나도 없습니다. 관리자 화면에서 매물 파일을 올리거나 매물 폴더 위치를 확인해 주세요.</p>
   {% elif stats %}<p class="meta">보유 매물 {{ listing_count }}건 중 제외된 매물: {% for k, v in stats.items() %}{{ k }} {{ v }}건{% if not loop.last %}, {% endif %}{% endfor %}</p>
-    {% if stats.get("지역 불일치") == listing_count %}<p class="notice">찾으시는 지역의 매물이 아직 없습니다. 다른 지역으로 찾아보시겠어요?</p>{% endif %}
+    {% if stats.get("지역 불일치") == listing_count %}<p class="notice">'{{ req.regions | join(", ") }}' 지역에는 현재 보유 중인 토지 매물이 없습니다. 다른 지역으로 찾아보시겠어요?</p>{% endif %}
   {% endif %}
   <div class="row">
     {% if can_prev %}

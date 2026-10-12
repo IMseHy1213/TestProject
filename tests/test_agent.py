@@ -167,11 +167,30 @@ def test_rank_hard_filters_and_order():
     assert stats["맹지"] == 1 and stats["예산 초과"] == 1
 
 
-def test_auto_relax_when_few_candidates():
+def test_no_auto_relax_and_region_never_widened():
     req = CustomerRequirement(regions=["여주시"], budget_max=30000, purpose="전원주택", need_road=True)
     ranked, relaxed, _ = rank(LISTINGS, req, today=TODAY)
-    assert relaxed and len(ranked) >= 3
-    assert ranked[0].listing.listing_id == "D"  # 지역 일치 매물이 여전히 1위
+    assert [s.listing.listing_id for s in ranked] == ["D"] and not relaxed  # 기본은 조건 완화 없음
+    ranked, relaxed, _ = rank(LISTINGS, req, auto_relax=True, today=TODAY)
+    assert all("여주시" in s.listing.address for s in ranked)  # 완화를 켜도 다른 지역은 절대 안 나옴
+
+
+def test_region_not_in_inventory_returns_nothing():
+    for q in ["부산 땅", "문경시 임야", "경북 땅 2억", "밀양 쪽 전원주택"]:
+        req = RequirementParser(None, ["양평군", "여주시"]).parse(q)
+        assert req.regions, q
+        ranked, _, stats = rank(LISTINGS, req, today=TODAY)
+        assert ranked == [] and stats.get("지역 불일치"), q
+
+
+def test_province_search_matches_cities():
+    ls = [L("K1", "경상북도 문경시 산북면 대하리 12", 3000, 15000), L("K2", "밀양시 산내면 가인리 5", 2000, 9000),
+          L("K3", "봉화군 물야면 오전리 77", 5000, 12000), L("K4", "충청북도 음성군 감곡면 문촌리 1", 900, 9000)]
+    req = RequirementParser(None, []).parse("경북 땅")
+    ids = {s.listing.listing_id for s in rank(ls, req, today=TODAY)[0]}
+    assert ids == {"K1", "K3"}  # 문경시·봉화군은 경북, 밀양시(경남)·음성군(충북)은 제외
+    req = RequirementParser(None, []).parse("밀양 쪽 땅")
+    assert [s.listing.listing_id for s in rank(ls, req, today=TODAY)[0]] == ["K2"]
 
 
 def test_session_next_and_feedback():

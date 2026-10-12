@@ -19,6 +19,7 @@ from typing import Any, Optional
 from .models import CustomerRequirement, LandListing, ScoredListing, format_price
 from .preference import BASE_WEIGHTS as WEIGHTS
 from .preference import feature_hit
+from .regions import address_in_region
 NEUTRAL = 0.7
 # 조건 완화와 무관하게 고정된 감점 기울기: 면적 30% 벗어나면 0점, 예산 15% 초과면 0점
 AREA_DECAY = 0.30
@@ -97,7 +98,7 @@ def region_match(listing: LandListing, regions: list[str]) -> Optional[str]:
     addr = listing.address.replace(" ", "")
     for r in regions:
         rr = r.replace(" ", "")
-        if rr in addr:
+        if rr in addr or address_in_region(listing.address, r):  # '경북' <-> '경상북도/문경시 …'
             return r
         stem = _region_stem(rr)
         if len(stem) >= 2 and re.search(re.escape(stem) + r"(시|군|구|읍|면|동|리)", addr):
@@ -124,6 +125,8 @@ def hard_filter(l: LandListing, req: CustomerRequirement, opt: RecommendOptions)
         return "앞서 본 매물보다 넓음"
     if req.budget_max and l.price_manwon > req.budget_max * (1 + opt.budget_tolerance):
         return "예산 초과"
+    if req.budget_min and l.price_manwon < req.budget_min * (1 - opt.budget_tolerance):
+        return "예산보다 저렴"  # '30억 이상' 을 찾는데 1억짜리를 보여주지 않음
     if req.area_min_m2 and l.area_m2 < req.area_min_m2 * (1 - opt.area_tolerance):
         return "면적 부족"
     if req.area_max_m2 and l.area_m2 > req.area_max_m2 * (1 + opt.area_tolerance * 2):
@@ -280,17 +283,18 @@ def _market_ppm(l: LandListing, market: dict[str, dict[str, float]]) -> Optional
     return None
 
 
+# 자동 조건 완화 (기본은 꺼짐: 조건에 맞는 매물이 없으면 '해당 매물은 현재 존재하지 않습니다' 로 안내).
+# 지역은 어떤 경우에도 넓히지 않음 - 다른 지역 매물을 엉뚱하게 보여주지 않기 위해.
 RELAX_STEPS = [
     ("예산 허용 폭 20%로 확대", {"budget_tolerance": 0.20}),
     ("면적 허용 폭 35%로 확대", {"area_tolerance": 0.35}),
-    ("인근 지역까지 확대 (지역은 점수로만 반영)", {"strict_region": False}),
-    ("면적 허용 폭 60%로 확대", {"area_tolerance": 0.60}),
 ]
+NOT_FOUND_MESSAGE = "해당 매물은 현재 존재하지 않습니다."
 
 
 def rank(listings: list[LandListing], req: CustomerRequirement, opt: Optional[RecommendOptions] = None,
          exclude_ids: set[str] | None = None, today: Optional[date] = None,
-         auto_relax: bool = True) -> tuple[list[ScoredListing], list[str], dict[str, int]]:
+         auto_relax: bool = False) -> tuple[list[ScoredListing], list[str], dict[str, int]]:
     """(순위 목록, 완화된 조건 목록, 제외 사유 통계)"""
     opt = opt or RecommendOptions()
     exclude_ids = exclude_ids or set()

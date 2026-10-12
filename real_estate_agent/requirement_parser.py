@@ -14,6 +14,7 @@ from typing import Iterable, Optional
 from .llm import LLMRouter, LLMUnavailable
 from .models import JIMOK_TYPES, PYEONG_M2, CustomerRequirement
 from .normalizer import JIMOK_ALIASES, parse_price_manwon
+from .regions import find_regions
 
 log = logging.getLogger(__name__)
 
@@ -274,7 +275,11 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
         if (r in t or (len(stem) >= 2 and re.search(rf"{re.escape(stem)}{_REGION_END}", t))) \
                 and not any(r in x for x in regions):
             regions.append(r)
-    # 보유 매물에 없는 지역이라도 '○○시/○○군' 으로 명시하면 지역 조건으로 인정
+    # 전국 시·도 / 시·군 이름표 (보유 매물에 없는 지역도 지역 조건으로 인정 -> '현재 존재하지 않습니다' 안내)
+    for w in find_regions(t):
+        if not any(w in x or x in w for x in regions):
+            regions.append(w)
+    # 이름표에 없더라도 '○○시/○○군' 으로 명시하면 지역 조건으로 인정
     for m in re.finditer(r"(?<![가-힣])([가-힣]{1,3}(?:시|군))" + _REGION_END, t):
         w = m.group(1)
         if w in _NOT_REGION or any(w in x or x in w for x in regions):

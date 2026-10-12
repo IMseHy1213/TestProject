@@ -133,3 +133,34 @@ def test_etc_region_folder(tmp_path):
     req = RequirementParser(None, ["진천군", "충주시"]).parse("진천 공장 부지")
     ranked, _, _ = rank(listings, req, today=TODAY)
     assert "진천군" in ranked[0].listing.address
+
+
+def test_gitajiyeok_cities_are_searchable(tmp_path):
+    """매물/기타지역/ 아래 문경시·밀양시·봉화군 매물 (시 폴더 안 / 바로 아래 폴더 / 파일 하나) 모두 검색"""
+    root = tmp_path / "매물"
+    write_xlsx(root / "기타지역" / "문경시" / "산북면 대하리 12(임야)" / "정보.xlsx",
+               [["면적(평)", 3000], ["매매가", "1억 5천"], ["지목", "임야"]])
+    write_xlsx(root / "기타지역" / "밀양시 산내면 가인리 5(전원주택지)" / "정보.xlsx",
+               [["소재지", "경상남도 밀양시 산내면 가인리 5"], ["면적(평)", 300], ["매매가", "1억 2천"], ["지목", "대"]])
+    write_xlsx(root / "기타지역" / "봉화군 물야면 오전리 77.xlsx",
+               [["면적(평)", 1500], ["매매가", "9천만원"], ["지목", "전"]])
+    write_xlsx(listing_dir(root) / f"{NAME}.xlsx", parcel_list_rows())
+    collector = LocalFolderCollector(root)
+    listings = clean(collector.collect(), TODAY).listings
+    assert collector.folder_counts(listings) == {"기타지역": 3, "음성군": 1}
+    addrs = {l.address for l in listings}
+    assert "문경시 산북면 대하리 12" in addrs  # 시 폴더 이름을 주소 앞에 붙임
+    assert not any(a.startswith("기타지역") for a in addrs)
+    known = sorted({t for l in listings for t in l.address.split() if t[-1] in "시군읍면리"})
+    p = RequirementParser(None, known)
+    expect = {"문경 임야": "문경시", "밀양 쪽 전원주택 땅": "밀양시", "봉화군 농지": "봉화군", "경북 땅": None}
+    for q, city in expect.items():
+        ranked, _, _ = rank(listings, p.parse(q), today=TODAY)
+        assert ranked, q
+        if city:
+            assert all(city in s.listing.address for s in ranked), q
+    # 경북 = 문경시 + 봉화군 (밀양시는 경남, 음성군은 충북)
+    ranked, _, _ = rank(listings, p.parse("경북 땅"), today=TODAY)
+    assert {s.listing.address.split()[0] for s in ranked} == {"문경시", "봉화군"}
+    ranked, _, _ = rank(listings, p.parse("안동 땅"), today=TODAY)  # 매물이 없는 지역
+    assert ranked == []

@@ -25,7 +25,7 @@ from typing import Optional
 from .agent import ProactiveAlert, RealEstateAgent, SyncReport
 from .config import get_settings
 from .models import CustomerRequirement, ScoredListing, format_price
-from .recommender import RecommendationSession
+from .recommender import NOT_FOUND_MESSAGE, RecommendationSession
 
 LINE = "─" * 78
 
@@ -76,7 +76,8 @@ def show_current(agent: RealEstateAgent, session: RecommendationSession, explain
     cur = session.current()
     if cur is None:
         print(LINE)
-        print(" 더 이상 조건에 맞는 매물이 없습니다. 'f <피드백>' 으로 조건을 바꿔보세요.")
+        print(f" {NOT_FOUND_MESSAGE}")
+        print("  ('f <피드백>' 으로 조건을 바꾸거나 새로 검색해 보세요)")
         if session.filter_stats:
             print(" (제외 사유: " + ", ".join(f"{k} {v}건" for k, v in session.filter_stats.items()) + ")")
         return
