@@ -1,7 +1,9 @@
 """명령줄 인터페이스.
 
+  python main.py                              웹 서비스 실행 (브라우저가 자동으로 열림)
+  python main.py web --host 0.0.0.0           같은 와이파이의 휴대폰·다른 PC 에서도 접속
   python main.py sync                         매물 폴더 수집·정제 (오류/중복 보고서)
-  python main.py recommend "문의 내용" --name 홍길동   손님 문의로 추천 (대화형: 다음/피드백)
+  python main.py recommend "찾는 조건"            터미널에서 추천 (대화형: 다음/피드백)
   python main.py chat                         대화형 상담 모드
   python main.py customers                    저장된 손님 목록
   python main.py proactive                    저장된 손님에게 맞는 매물 선제 탐색
@@ -15,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
 from typing import Optional
 
@@ -23,7 +24,6 @@ from .agent import ProactiveAlert, RealEstateAgent, SyncReport
 from .config import get_settings
 from .models import CustomerRequirement, ScoredListing, format_price
 from .recommender import RecommendationSession
-from .requirement_parser import parse_rule_based
 
 LINE = "─" * 78
 
@@ -33,10 +33,6 @@ HELP = """명령:  [Enter]/n 다음 순위 매물 · p 이전 · t 상위 5개 �
          '좀 더 싼 걸로', '여주 쪽도', '300평 이상으로'   -> 조건을 바꿔 다시 추천
        w 학습한 손님 취향 · c 현재 조건 · s 손님 조건 저장(새 매물 선제 알림) · q 종료"""
 
-# '이 매물이 별로' 라는 평가 (-> 다음 순위)
-_DISLIKE = r"(별로|싫|마음에\s*안|맘에\s*안|안\s*좋|아니|비싸|좁|작아|멀|어둡|그늘|불편|애매|글쎄|패스|다른\s*(거|것|매물))"
-# 조건을 바꾸려는 말인지 (아니면 단순히 '이건 별로' 인지) 판단하는 단서
-_CONDITION_CUES = r"(더\s|좀\s*더|으로|로\s*(해|바꿔|보여)|바꿔|말고|쪽|이상|이하|이내|평|억|만원|지역|도로\s*(있|접|붙))"
 
 
 def _setup_console() -> None:
@@ -153,15 +149,10 @@ def run_session(agent: RealEstateAgent, req: CustomerRequirement, interactive: b
             agent.save_customer(session)
             print(f" 💾 '{session.req.customer_name}' 님 조건 저장 - 새 매물이 들어오면 먼저 알려드립니다.")
         elif len(cmd) >= 2:
-            dislike_only = re.search(_DISLIKE, cmd) and not re.search(_CONDITION_CUES, cmd)
-            if not dislike_only and (re.search(_CONDITION_CUES, cmd)
-                                     or parse_rule_based(cmd).describe() != "(조건 없음)"):
-                cmd = "f " + cmd
-                new_req = agent.refine(session, cmd[2:])
-                print(f"[조건 수정] {new_req.describe()}   (분석: {agent.llm.last_used})")
+            # '마음에 안 들어요' -> 다음 순위 / '좀 더 싼 걸로' -> 조건 변경
+            if agent.respond(session, cmd) == "refine":
+                print(f"[조건 수정] {session.req.describe()}   (분석: {agent.llm.last_used})")
                 print(f"[후보] {session.total}건")
-            else:  # '마음에 안 들어요', '너무 비싸요' -> 다음 순위
-                agent.reject(session, cmd)
             show_current(agent, session)
         else:
             print(HELP)
@@ -191,10 +182,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("sync", help="매물 수집·정제")
     s.add_argument("--report", action="store_true", help="오류/중복 상세 출력")
 
-    r = sub.add_parser("recommend", help="손님 문의로 매물 추천")
-    r.add_argument("inquiry", help="손님 문의 내용")
-    r.add_argument("--name", default="", help="손님 이름")
-    r.add_argument("--save", action="store_true", help="손님 조건 저장 (선제 알림 대상)")
+    r = sub.add_parser("recommend", help="찾는 조건으로 매물 추천")
+    r.add_argument("inquiry", help="찾는 땅 조건 (예: 음성군 채광 좋은 2억원대 땅)")
     r.add_argument("--batch", action="store_true", help="대화 없이 상위 5개만 출력")
 
     sub.add_parser("chat", help="대화형 상담")
@@ -207,6 +196,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     w = sub.add_parser("watch", help="폴더 감시 + 선제 알림")
     w.add_argument("--interval", type=int, help="초 단위 (기본 600)")
+
+    wb = sub.add_parser("web", help="웹 서비스 실행 (브라우저로 사용, 기본 명령)")
+    wb.add_argument("--host", default="127.0.0.1", help="0.0.0.0 이면 같은 와이파이의 다른 기기에서도 접속")
+    wb.add_argument("--port", type=int, default=8000)
+    wb.add_argument("--no-browser", action="store_true", help="브라우저 자동 열기 끄기")
 
     sub.add_parser("setup-key", help="OpenAI API 키를 .env 에 저장 (입력 내용은 화면에 안 보임)")
     sub.add_parser("llm-check", help="GPT/Claude 연결·모델 점검")
@@ -228,8 +222,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     settings = get_settings(data_dir=args.data_dir, db_path=args.db)
     if args.no_llm:
         settings.llm_providers = ["rule"]
+    cmd = args.command or "web"  # 아무 명령 없이 실행하면 웹 서비스
+    if cmd == "web":
+        from .web import run
+
+        run(host=getattr(args, "host", "127.0.0.1"), port=getattr(args, "port", 8000),
+            open_browser=not getattr(args, "no_browser", False), settings=settings)
+        return 0
     agent = RealEstateAgent(settings)
-    cmd = args.command or "chat"
 
     print(f"Real Estate Recommendation Agent  |  매물 폴더: {settings.data_dir}")
     if cmd == "llm-check":
@@ -249,15 +249,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("  -> 이전에 저장된 매물 데이터로 계속합니다.")
 
     if cmd == "recommend":
-        req = agent.understand(args.inquiry, args.name)
-        if args.save and req.customer_name:
-            agent.storage.save_customer(req)
+        req = agent.understand(args.inquiry)
         run_session(agent, req, interactive=not args.batch)
     elif cmd == "chat":
-        print("\n손님 문의를 입력하세요. (예: 양평 쪽 전원주택 지을 땅 200평 정도, 3억 이하, 맹지 제외)  종료: q")
+        print("\n찾는 땅 조건을 입력하세요. (예: 음성군 채광이 좋은 2억원대 땅)  종료: q")
         while True:
             try:
-                text = input("\n문의> ").strip()
+                text = input("\n찾는 조건> ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
@@ -265,8 +263,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 break
             if not text:
                 continue
-            name = input("손님 이름(선택)> ").strip()
-            run_session(agent, agent.understand(text, name))
+            run_session(agent, agent.understand(text))
     elif cmd == "customers":
         if args.remove:
             agent.storage.deactivate_customer(args.remove)

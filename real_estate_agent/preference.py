@@ -154,10 +154,12 @@ class PreferenceModel:
             if action == "like":
                 self.attrs.setdefault(kind, {}).setdefault(value, [0.0, 0.0])[0] += 1
                 continue
-            if value in protected:
-                continue
+            if value in protected or (kind == "feature" and _related_to_any(value, protected)):
+                continue  # 손님이 원한 특징과 그 동의어(채광 ↔ 남향)는 비선호로 배우지 않음
             if reason_crits and kind not in blamed:
                 continue  # "너무 비싸요" 로 거절했으면 지목/특징은 탓하지 않음
+            if kind == "feature" and reason_crits and not feature_hit(value, reason):
+                continue  # "채광이 별로" 라면 평지·IC 같은 다른 특징은 탓하지 않음
             self.attrs.setdefault(kind, {}).setdefault(value, [0.0, 0.0])[1] += 1.0 if kind in blamed else 0.5
         self.n_feedback += 1
         return describe_change(before, self.multipliers)
@@ -186,6 +188,11 @@ class PreferenceModel:
             m.attrs[kind] = {k: [float(v[0]), float(v[1])] for k, v in values.items()}
         m.n_feedback = int(d.get("n_feedback", 0))
         return m
+
+
+def _related_to_any(feature: str, keywords: Iterable[str]) -> bool:
+    words = set(FEATURE_SYNONYMS.get(feature, [feature]))
+    return any(words & set(FEATURE_SYNONYMS.get(k, [k])) for k in keywords)
 
 
 def reason_criteria(reason: str) -> list[str]:

@@ -1,7 +1,8 @@
 """Real Estate Recommendation Agent 실행 파일.
 
-VS Code: 이 파일을 열고 F5 (또는 오른쪽 위 ▷ 버튼)
-터미널  : python main.py chat
+VS Code: 이 파일을 열고 F5 (또는 오른쪽 위 ▷ 버튼) -> 브라우저에 웹 화면이 열립니다
+터미널  : python main.py          (웹 서비스)
+          python main.py chat     (터미널 상담)
 """
 
 import importlib
@@ -14,7 +15,8 @@ PROJECT_DIR = Path(__file__).resolve().parent
 # 실행 위치(작업 폴더)와 상관없이 real_estate_agent 패키지를 찾을 수 있도록
 sys.path.insert(0, str(PROJECT_DIR))
 
-REQUIRED = {"pandas": "pandas", "openpyxl": "openpyxl", "dotenv": "python-dotenv", "requests": "requests"}
+REQUIRED = {"pandas": "pandas", "openpyxl": "openpyxl", "dotenv": "python-dotenv", "requests": "requests",
+            "flask": "flask", "waitress": "waitress"}
 
 
 def missing_packages() -> list[str]:

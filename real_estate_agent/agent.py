@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -75,6 +76,9 @@ class RealEstateAgent:
         self.geocoder = VWorldGeocoder(settings.vworld_key)
         self.market_price: dict[str, dict[str, float]] = {}
         self._listings: Optional[list[LandListing]] = None
+        self._office_model: Optional[PreferenceModel] = None
+        self.last_sync: Optional[SyncReport] = None
+        self.last_sync_at: Optional[datetime] = None
 
     # ------------------------------------------------------------------ 1~2. 수집·정제
     def sync(self, today: Optional[date] = None) -> SyncReport:
@@ -86,6 +90,7 @@ class RealEstateAgent:
         report = SyncReport(clean=result, new=diff["new"], changed=diff["changed"], removed_ids=diff["removed_ids"],
                             file_errors=list(self.collector.errors), files_read=len(self.collector.files_read))
         self._write_quality_log(report)
+        self.last_sync, self.last_sync_at = report, datetime.now()
         return report
 
     def _enrich(self, listings: list[LandListing]) -> None:
@@ -134,11 +139,17 @@ class RealEstateAgent:
     def understand(self, inquiry: str, customer_name: str = "") -> CustomerRequirement:
         return self.parser().parse(inquiry, customer_name)
 
+    @property
+    def office_model(self) -> PreferenceModel:
+        """사무실 공통 학습 모델. 여러 상담(웹 접속자)이 같은 객체를 함께 학습시킴."""
+        if self._office_model is None:
+            self._office_model = self.storage.load_preference(OFFICE_MODEL)
+        return self._office_model
+
     def _options(self, customer: str) -> RecommendOptions:
         """손님별 학습 모델 + 사무실 공통 모델을 불러와 추천 옵션 구성."""
         pref = self.storage.load_preference(customer) if customer else PreferenceModel()
-        prior = self.storage.load_preference(OFFICE_MODEL)
-        return RecommendOptions(market_price_per_m2=self.market_price, pref=pref, prior=prior)
+        return RecommendOptions(market_price_per_m2=self.market_price, pref=pref, prior=self.office_model)
 
     def _save_learning(self, session: RecommendationSession) -> None:
         if session.opt.prior is not None:
@@ -187,11 +198,24 @@ class RealEstateAgent:
         session.like()
         self._save_learning(session)
 
-    def explain(self, req: CustomerRequirement, s: ScoredListing, use_llm: bool = True) -> str:
+    def respond(self, session: RecommendationSession, text: str) -> str:
+        """손님이 한 말을 해석해 처리. '마음에 안 들어요/너무 비싸요' -> 'reject' (다음 순위),
+        '좀 더 싼 걸로/여주 쪽도' -> 'refine' (조건 변경 후 재추천)."""
+        text = text.strip()
+        if is_condition_change(text):
+            self.refine(session, text)
+            return "refine"
+        self.reject(session, text)
+        return "reject"
+
+    def explain(self, req: CustomerRequirement, s: ScoredListing, use_llm: bool = True,
+                public: bool = False) -> str:
+        """추천 설명. public=True 면 손님용으로 지번을 가림."""
+        address = mask_address(s.listing.address) if public else s.listing.address
         if use_llm and self.llm.available:
             l = s.listing
             info = {
-                "주소": l.address, "지목": l.jimok, "용도지역": l.zoning, "면적_평": round(l.area_pyeong),
+                "주소": address, "지목": l.jimok, "용도지역": l.zoning, "면적_평": round(l.area_pyeong),
                 "면적_㎡": l.area_m2, "가격": format_price(l.price_manwon), "평당가_만원": round(l.price_per_pyeong),
                 "도로": l.road_access, "특이사항": l.description, "점수": s.score,
                 "장점": s.reasons, "확인필요": s.penalties,
@@ -204,7 +228,7 @@ class RealEstateAgent:
                 ).strip()
             except LLMUnavailable as e:
                 log.info("LLM 설명 생성 실패: %s", e)
-        return template_explanation(s)
+        return template_explanation(s, address)
 
     # ------------------------------------------------------------------ 6. 선제 제안
     def proactive_scan(self, candidates: Optional[list[LandListing]] = None,
@@ -273,9 +297,30 @@ class RealEstateAgent:
             log.warning("알림 로그 저장 실패: %s", e)
 
 
-def template_explanation(s: ScoredListing) -> str:
+# '이 매물이 별로' 라는 평가 (-> 다음 순위)
+_DISLIKE = r"(별로|싫|마음에\s*안|맘에\s*안|안\s*좋|아니|비싸|좁|작아|멀|어둡|그늘|불편|애매|글쎄|패스|다른\s*(거|것|매물))"
+# 조건을 바꾸려는 말인지 판단하는 단서
+_CONDITION_CUES = r"(더\s|좀\s*더|으로|로\s*(해|바꿔|보여)|바꿔|말고|쪽|이상|이하|이내|평|억|만원|지역|도로\s*(있|접|붙))"
+
+
+def is_condition_change(text: str) -> bool:
+    """True: 조건을 바꾸려는 말 / False: 지금 매물이 마음에 안 든다는 말."""
+    from .requirement_parser import parse_rule_based
+
+    if re.search(_DISLIKE, text) and not re.search(_CONDITION_CUES, text):
+        return False
+    return bool(re.search(_CONDITION_CUES, text)) or parse_rule_based(text).describe() != "(조건 없음)"
+
+
+def mask_address(address: str) -> str:
+    """손님용 화면: 정확한 지번은 가리고 리/동까지만 표시. '음성군 금왕읍 무극리 210-3' -> '... 무극리 ***'"""
+    masked = re.sub(r"\s*(산\s*)?\d+(-\d+)?(번지)?\s*$", "", address).strip()
+    return f"{masked} ***" if masked != address.strip() else address
+
+
+def template_explanation(s: ScoredListing, address: Optional[str] = None) -> str:
     l = s.listing
-    text = (f"{l.address}의 {l.jimok or '토지'} {l.area_pyeong:,.0f}평 매물로, "
+    text = (f"{address or l.address}의 {l.jimok or '토지'} {l.area_pyeong:,.0f}평 매물로, "
             f"매매가는 {format_price(l.price_manwon)}(평당 약 {l.price_per_pyeong:,.0f}만원)입니다.")
     if s.reasons:
         text += " 장점: " + ", ".join(s.reasons[:4]) + "."

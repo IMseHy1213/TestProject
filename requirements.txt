@@ -6,4 +6,6 @@ requests>=2.31       # 공공데이터 / VWorld API
 defusedxml>=0.7      # 공공데이터 XML 응답 안전 파싱
 anthropic>=1.0       # Claude (Sonnet 5 / Sonnet 4.6)
 openai>=2.0          # GPT (GPT-5.6 Luna 등)
+flask>=3.0           # 웹 서비스
+waitress>=3.0        # 웹 서버 (Windows 지원)
 pytest>=8.0

@@ -297,3 +297,12 @@ def test_learning_persists_for_customer(tmp_path):
     # 다음 상담에서 학습한 취향이 그대로 적용됨
     sess2 = agent.recommend(agent.understand("음성군 땅", "최지우"))
     assert sess2.opt.pref.n_feedback == 2
+
+
+def test_reason_only_blames_mentioned_features():
+    m = PreferenceModel()
+    m.learn("reject", {}, [], text="정남향 평지, 채광 우수, 금왕IC 5분", reason="채광이 별로예요",
+            protected={"채광"})
+    assert m.attrs["feature"] == {}  # 남향(채광 동의어)·평지·IC 모두 비선호로 배우지 않음
+    m.learn("reject", {}, [], text="계곡 인접, 평지", reason="계곡이 싫어요")
+    assert m.attrs["feature"] == {"계곡": [0.0, 1.0]}

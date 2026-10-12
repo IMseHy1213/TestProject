@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}관리자{% endblock %}
+{% block content %}
+<h1>관리자</h1>
+{% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
+{% if sync_error %}<p class="notice warn">{{ sync_error }}</p>{% endif %}
+
+<section class="grid">
+  <div class="panel">
+    <h2>매물 현황</h2>
+    <p class="big-num">{{ data.count }}<small>건</small></p>
+    <p class="meta">매물 폴더: {{ data_dir }}<br>마지막으로 읽은 시각: {{ data.synced_at }}</p>
+    <form method="post" action="{{ url_for('admin_sync') }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button class="btn primary">매물 폴더 다시 읽기</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>매물 파일 올리기</h2>
+    <p class="meta">엑셀(.xlsx, .xls)·CSV·JSON·텍스트 메모. 매물 폴더의 '웹업로드' 안에 저장된 뒤 바로 반영됩니다.</p>
+    <form method="post" action="{{ url_for('admin_upload') }}" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="file" name="file" accept=".xlsx,.xlsm,.xls,.csv,.json,.txt" required>
+      <button class="btn">올리기</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>AI 연결</h2>
+    <p class="meta">{{ llm_status }}</p>
+    <p class="meta">GPT 키 설정: 터미널에서 <code>python main.py setup-key</code></p>
+  </div>
+
+  <div class="panel">
+    <h2>손님 피드백 학습 현황 (사무실 전체)</h2>
+    <pre class="pre">{{ data.office }}</pre>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>매물 정리 보고서 (오류·중복)</h2>
+  <p class="meta">{{ data.summary }}</p>
+  <pre class="pre tall">{{ data.report }}</pre>
+</section>
+{% endblock %}

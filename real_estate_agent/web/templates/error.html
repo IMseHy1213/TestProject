@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}안내{% endblock %}
+{% block content %}
+<section class="panel narrow">
+  <h1>잠시만요</h1>
+  <p>{{ message }}</p>
+  <a class="btn" href="{{ url_for('index') }}">처음으로</a>
+</section>
+{% endblock %}

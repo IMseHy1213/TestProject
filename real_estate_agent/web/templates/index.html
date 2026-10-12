@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <h1>어떤 땅을 찾으세요?</h1>
+  <p class="lead">원하시는 조건을 편하게 적어주시면, 보유 매물 중에서 가장 잘 맞는 땅부터 차례로 보여드립니다.</p>
+
+  <form method="post" action="{{ url_for('search') }}" class="search">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <label for="q" class="sr-only">찾는 땅 조건</label>
+    <input id="q" name="q" type="search" maxlength="300" required autofocus autocomplete="off"
+           placeholder="예) 음성군 채광이 좋은 2억원대 땅">
+    <button type="submit" class="btn primary">찾아보기</button>
+  </form>
+
+  <div class="examples" aria-label="검색 예시">
+    {% for ex in examples %}
+      <button type="button" class="chip" data-fill="{{ ex }}">{{ ex }}</button>
+    {% endfor %}
+  </div>
+
+  {% if no_data %}
+    <p class="notice warn">아직 등록된 매물이 없습니다. 관리자 화면에서 매물 파일을 올려주세요.</p>
+  {% else %}
+    <p class="meta">보유 토지 매물 <strong>{{ count }}</strong>건 ·
+      {{ "AI(GPT/Claude)가 문장을 이해합니다" if llm_on else "AI 미연결 - 규칙 기반으로 이해합니다" }}</p>
+  {% endif %}
+</section>
+
+<section class="howto">
+  <div><span class="step">1</span><h3>조건을 문장으로</h3><p>지역, 예산("2억원대"), 면적("200평 정도"), 용도(전원주택·창고·농사), 원하는 특징(채광, 도로)을 적어주세요.</p></div>
+  <div><span class="step">2</span><h3>1순위부터 확인</h3><p>가장 잘 맞는 매물부터 이유와 함께 보여드립니다.</p></div>
+  <div><span class="step">3</span><h3>마음에 안 들면 다음</h3><p>"너무 비싸요", "채광이 별로예요"처럼 알려주시면 취향을 배워 다음 순위를 더 잘 골라드립니다.</p></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='app.js') }}"></script>{% endblock %}

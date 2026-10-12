@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}관리자 로그인{% endblock %}
+{% block content %}
+<section class="panel narrow">
+  <h1>관리자 로그인</h1>
+  {% if not configured %}
+    <p class="notice warn">관리자 비밀번호가 설정되지 않았습니다.<br>
+      프로젝트 폴더의 <code>.env</code> 파일에 <code>REA_ADMIN_PASSWORD=원하는비밀번호</code> 를 넣고 다시 실행하세요.</p>
+  {% else %}
+    {% if error %}<p class="notice warn">비밀번호가 맞지 않습니다.</p>{% endif %}
+    <form method="post" action="{{ url_for('admin_login') }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <label for="pw">비밀번호</label>
+      <input id="pw" name="password" type="password" required autofocus autocomplete="current-password">
+      <button class="btn primary">로그인</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

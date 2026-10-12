@@ -3,6 +3,33 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "🌐 웹 서비스 - 샘플 데이터로 연습 (브라우저가 열림)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "web"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🌐 웹 서비스 - 실제 매물 폴더",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["web"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🌐 웹 서비스 - 같은 와이파이의 휴대폰에서도 접속",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["web", "--host", "0.0.0.0"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "⓪ GPT API 키 저장 (setup-key, 처음 한 번)",
       "type": "debugpy",
       "request": "launch",
@@ -21,7 +48,7 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "① 상담(chat) - 샘플 데이터로 연습",
+      "name": "① 터미널 상담(chat) - 샘플 데이터",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
@@ -30,7 +57,7 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "② 상담(chat) - 실제 매물 폴더 (E:\\부동산매물백업\\매물폴더\\토지)",
+      "name": "② 터미널 상담(chat) - 실제 매물 폴더",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
@@ -48,7 +75,7 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "④ 손님 문의 한 번 추천 (recommend)",
+      "name": "④ 터미널에서 한 번 추천 (recommend)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
@@ -88,7 +115,7 @@
     {
       "id": "inquiry",
       "type": "promptString",
-      "description": "손님 문의 내용",
+      "description": "찾는 땅 조건",
       "default": "음성군 채광이 좋은 2억원대 땅"
     }
   ]

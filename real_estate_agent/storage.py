@@ -68,7 +68,8 @@ class Storage:
         self.path = Path(path)
         if str(self.path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.path))
+        # 웹 서버는 여러 스레드에서 접근하므로 check_same_thread=False (동시 접근은 웹 앱이 잠금으로 보호)
+        self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
 
