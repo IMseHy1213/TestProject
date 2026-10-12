@@ -166,3 +166,5 @@ button.link { background: none; border: 0; color: var(--brand); font: inherit; c
 }
 .refine .search, .card.empty .search { max-width: none; }
 .row.left { justify-content: flex-start; }
+.learned.ai { border-style: solid; background: var(--brand-soft); }
+.learned small { color: var(--muted); }

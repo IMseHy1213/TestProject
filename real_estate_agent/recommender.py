@@ -19,6 +19,7 @@ from typing import Any, Optional
 from .models import CustomerRequirement, LandListing, ScoredListing, format_price
 from .preference import BASE_WEIGHTS as WEIGHTS
 from .preference import feature_hit
+from .land_use import check_use
 from .regions import address_in_region
 NEUTRAL = 0.7
 # 조건 완화와 무관하게 고정된 감점 기울기: 면적 30% 벗어나면 0점, 예산 15% 초과면 0점
@@ -131,6 +132,10 @@ def hard_filter(l: LandListing, req: CustomerRequirement, opt: RecommendOptions)
         return "면적 부족"
     if req.area_max_m2 and l.area_m2 > req.area_max_m2 * (1 + opt.area_tolerance * 2):
         return "면적 과다"
+    if req.purpose:  # '창고를 지을 수 있는 토지' -> 창고를 지을 수 없는 땅은 제외
+        use = check_use(l, req.purpose)
+        if use is not None and not use.ok:
+            return f"{req.purpose} 건축 불가"
     if req.need_road and l.is_blind_land:
         return "맹지"
     blob = _text_blob(l)
@@ -191,6 +196,13 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
             penalties.append(f"면적 {'부족' if lo and a < lo else '초과'} ({l.area_pyeong:,.0f}평, {dev * 100:.0f}%)")
     else:
         f["area"] = NEUTRAL
+
+    # 목적(창고/공장/전원주택 …)으로 쓸 수 있는 근거
+    use = check_use(l, req.purpose) if req.purpose else None
+    if use is not None and use.ok:
+        reasons.append(f"{req.purpose} 가능: {use.reason}")
+        if use.caution:
+            penalties.append(use.caution)
 
     # 지목
     if req.jimok:
@@ -283,13 +295,14 @@ def _market_ppm(l: LandListing, market: dict[str, dict[str, float]]) -> Optional
     return None
 
 
-# 자동 조건 완화 (기본은 꺼짐: 조건에 맞는 매물이 없으면 '해당 매물은 현재 존재하지 않습니다' 로 안내).
+# 자동 조건 완화 (기본은 꺼짐: 조건에 맞는 매물이 없으면 NOT_FOUND_MESSAGE 로 안내).
 # 지역은 어떤 경우에도 넓히지 않음 - 다른 지역 매물을 엉뚱하게 보여주지 않기 위해.
 RELAX_STEPS = [
     ("예산 허용 폭 20%로 확대", {"budget_tolerance": 0.20}),
     ("면적 허용 폭 35%로 확대", {"area_tolerance": 0.35}),
 ]
-NOT_FOUND_MESSAGE = "해당 매물은 현재 존재하지 않습니다."
+NOT_FOUND_MESSAGE = "해당 조건에 맞는 매물이 없습니다."  # 처음부터 맞는 매물이 없을 때
+EXHAUSTED_MESSAGE = "해당 조건에 맞는 매물은 더 이상 없습니다."  # 보여주다가 다 떨어졌을 때
 
 
 def rank(listings: list[LandListing], req: CustomerRequirement, opt: Optional[RecommendOptions] = None,
@@ -391,6 +404,8 @@ class RecommendationSession:
         self.rejected: dict[str, str] = {}  # listing_id -> 사유
         self.history: list[str] = []  # 이번 상담에서 넘긴 매물 (순서대로)
         self._direction_history: list[dict] = []  # 넘길 때마다 직전 방향 조건 (이전 버튼으로 되돌리기용)
+        self.events: list[dict] = []  # 손님 반응 기록 (생성형 AI 학습에 사용)
+        self.ai_changes: list[str] = []  # 직전 AI 학습으로 바뀐 내용
         self.base_exclude = set(exclude_ids or set())
         self.last_learning: list[str] = []  # 직전 피드백으로 배운 내용
         self.reordered = False  # 학습 때문에 원래 2순위가 아닌 매물이 올라왔는지
@@ -403,6 +418,9 @@ class RecommendationSession:
         )
 
     def _learn(self, action: str, cur: ScoredListing, reason: str = "") -> None:
+        from .ai_learning import listing_brief
+
+        self.events.append({"action": action, "reason": reason, "listing": listing_brief(cur.listing)})
         self.last_learning = []
         if self.opt.pref is None:
             return
@@ -490,6 +508,10 @@ class RecommendationSession:
         elif d.get("area") == "smaller":
             o.area_below = min(o.area_below or l.area_m2, l.area_m2)
             self.last_learning.append(f"{l.area_pyeong:,.0f}평보다 좁은 매물만 보여드려요")
+
+    def rerank_keep_order_of_seen(self) -> None:
+        """AI 학습 결과(중요도·선호) 반영 후 남은 매물 순위 다시 매김."""
+        self._rerank()
 
     def update_requirement(self, req: CustomerRequirement) -> None:
         """피드백으로 조건이 바뀌면 이미 거절한 매물은 빼고 다시 순위를 매김."""

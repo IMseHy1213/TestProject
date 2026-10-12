@@ -14,6 +14,10 @@
   {% if relaxed %}<p class="notice">조건에 딱 맞는 매물이 적어 범위를 넓혀 찾았습니다: {{ relaxed | join(" → ") }}</p>{% endif %}
 </section>
 
+{% if ai_summary %}
+  <p class="learned ai" role="status">🤖 <strong>AI가 파악한 취향</strong> · {{ ai_summary }}
+    {% if ai_changes %}<br><small>반영: {{ ai_changes | join(", ") }}</small>{% endif %}</p>
+{% endif %}
 {% if learning %}
   <p class="learned" role="status">🧠 말씀하신 내용을 반영했어요: {{ learning | join(", ") }}{% if reordered %} — 순위를 다시 매겼습니다{% endif %}</p>
 {% endif %}
@@ -110,8 +114,12 @@
 
 {% else %}
 <article class="card empty">
-  <h2>해당 매물은 현재 존재하지 않습니다.</h2>
-  {% if rank > 1 %}<p class="meta">앞서 보여드린 {{ rank - 1 }}건 외에는 조건에 맞는 매물이 없습니다.</p>{% endif %}
+  {% if rank > 1 %}
+    <h2>{{ exhausted_message }}</h2>
+    <p class="meta">앞서 {{ rank - 1 }}건을 보여드렸습니다.</p>
+  {% else %}
+    <h2>{{ not_found_message }}</h2>
+  {% endif %}
   {% set dir_keys = ["앞서 본 매물보다 비쌈", "앞서 본 매물보다 저렴함", "앞서 본 매물보다 좁음", "앞서 본 매물보다 넓음"] %}
   {% for k in dir_keys if stats.get(k) %}{% if loop.first %}
     <p class="notice">말씀하신 대로 {{ "더 저렴한" if k.endswith("비쌈") else "더 비싼" if k.endswith("저렴함") else "더 넓은" if k.endswith("좁음") else "더 좁은" }} 매물만 찾았는데, 조건에 맞는 매물이 더 없습니다.

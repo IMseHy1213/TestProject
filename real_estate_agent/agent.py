@@ -169,14 +169,34 @@ class RealEstateAgent:
         exclude = self.storage.rejected_ids(req.customer_name)
         return RecommendationSession(self.listings(), req, self._options(req.customer_name), exclude_ids=exclude)
 
-    def reject(self, session: RecommendationSession, reason: str = "") -> Optional[ScoredListing]:
-        """현재 매물이 마음에 안 들 때: 거절 기록 + 취향 학습 후 다음 순위 매물."""
+    def reject(self, session: RecommendationSession, reason: str = "", ai: bool = True) -> Optional[ScoredListing]:
+        """현재 매물이 마음에 안 들 때: 거절 기록 + 취향 학습(규칙 + 생성형 AI) 후 다음 순위 매물."""
         cur = session.current()
         if cur:
             self.storage.add_feedback(session.req.customer_name, cur.listing.listing_id, "reject", reason)
-        nxt = session.next(reason)
+        session.next(reason)
+        if ai:
+            self.apply_ai_learning(session, self.ai_learn(session))
         self._save_learning(session)
-        return nxt
+        return session.current()
+
+    # ------------------------------------------------------------------ 생성형 AI 학습
+    def ai_learn(self, session: RecommendationSession) -> Optional[dict]:
+        """손님 반응 기록을 GPT/Claude 에 보내 취향을 추론 (느릴 수 있으므로 웹에서는 잠금 밖에서 호출)."""
+        from .ai_learning import ask_ai
+
+        return ask_ai(self.llm, session.req.raw_text or session.req.describe(), session.events)
+
+    def apply_ai_learning(self, session: RecommendationSession, plan: Optional[dict]) -> list[str]:
+        session.ai_changes = []
+        if not plan:
+            return []
+        from .ai_learning import apply_plan
+
+        session.ai_changes = apply_plan(session, plan)
+        session.rerank_keep_order_of_seen()
+        self._save_learning(session)
+        return session.ai_changes
 
     def refine(self, session: RecommendationSession, feedback: str) -> CustomerRequirement:
         """피드백을 조건에 반영 후 재순위 (현재 매물도 거절·학습 처리)."""
@@ -186,8 +206,9 @@ class RealEstateAgent:
         session.reject_current(feedback)
         new_req = self.parser().apply_feedback(session.req, feedback)
         session.update_requirement(new_req)
+        self.apply_ai_learning(session, self.ai_learn(session))
         self._save_learning(session)
-        return new_req
+        return session.req
 
     def save_customer(self, session: RecommendationSession) -> None:
         """손님 조건을 저장(선제 알림 대상)하고, 이름이 정해지기 전에 거절한 매물도 그 손님 기록으로 옮김."""
@@ -199,11 +220,15 @@ class RealEstateAgent:
             if listing_id not in already:
                 self.storage.add_feedback(name, listing_id, "reject", reason)
 
-    def like(self, session: RecommendationSession) -> None:
+    def like(self, session: RecommendationSession, ai: bool = True) -> None:
         cur = session.current()
         if cur:
             self.storage.add_feedback(session.req.customer_name, cur.listing.listing_id, "like")
         session.like()
+        if ai:
+            self.apply_ai_learning(session, self.ai_learn(session))
+            if cur:
+                session._bring_to_front(cur.listing.listing_id)  # 관심 표시한 매물은 계속 보여줌
         self._save_learning(session)
 
     def respond(self, session: RecommendationSession, text: str) -> str:

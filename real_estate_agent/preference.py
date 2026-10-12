@@ -82,6 +82,7 @@ class PreferenceModel:
     attrs: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: {"jimok": {}, "zoning": {}, "feature": {}})
     n_feedback: int = 0
+    ai_summary: str = ""  # 생성형 AI 가 정리한 손님 취향 (ai_learning.py)
 
     # ------------------------------------------------------------ 계산
     def weights(self, prior: Optional["PreferenceModel"] = None) -> dict[str, float]:
@@ -169,6 +170,8 @@ class PreferenceModel:
         w = self.weights(prior)
         parts = [f"{CRITERIA_KO[k]} {w[k]:.0f}%" for k in sorted(w, key=lambda k: -w[k])]
         lines = [f"학습한 피드백 {self.n_feedback}건 | 중요도: " + ", ".join(parts)]
+        if self.ai_summary:
+            lines.append("  AI 분석: " + self.ai_summary)
         likes = [v for kind in self.attrs.values() for v, (l, d) in kind.items() if l - d >= 1]
         dislikes = [v for kind in self.attrs.values() for v, (l, d) in kind.items() if d - l >= 1]
         if likes:
@@ -178,7 +181,8 @@ class PreferenceModel:
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"multipliers": self.multipliers, "attrs": self.attrs, "n_feedback": self.n_feedback}
+        return {"multipliers": self.multipliers, "attrs": self.attrs, "n_feedback": self.n_feedback,
+                "ai_summary": self.ai_summary}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "PreferenceModel":
@@ -187,6 +191,7 @@ class PreferenceModel:
         for kind, values in d.get("attrs", {}).items():
             m.attrs[kind] = {k: [float(v[0]), float(v[1])] for k, v in values.items()}
         m.n_feedback = int(d.get("n_feedback", 0))
+        m.ai_summary = str(d.get("ai_summary", ""))
         return m
 
 

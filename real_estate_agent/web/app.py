@@ -31,7 +31,7 @@ from ..agent import RealEstateAgent, is_condition_change, mask_address
 from ..collectors.local_folder import SUPPORTED
 from ..config import PROJECT_ROOT, Settings, get_settings
 from ..models import format_price
-from ..recommender import RecommendationSession
+from ..recommender import EXHAUSTED_MESSAGE, NOT_FOUND_MESSAGE, RecommendationSession
 
 log = logging.getLogger(__name__)
 
@@ -209,14 +209,19 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             top = sess.current()
             others = [listing_view(s, admin) for s in sess.top(6)[1:]]
             learning = list(sess.last_learning)
+            ai_changes = list(sess.ai_changes)
             reordered = sess.reordered
             sess.last_learning = []
+            sess.ai_changes = []
         return render_template(
             "result.html", query=query, req=sess.req, source=session.get("source", "rule"),
             item=listing_view(top, admin) if top else None, rank=sess.cursor + 1, total=sess.total,
             relaxed=sess.relaxed, stats=sess.filter_stats, notes=sess.req.notes, others=others,
             learning=learning, reordered=reordered, quick_reasons=QUICK_REASONS,
             can_prev=bool(sess.history), pref=sess.opt.pref, listing_count=len(agent.listings()),
+            not_found_message=NOT_FOUND_MESSAGE, exhausted_message=EXHAUSTED_MESSAGE,
+            ai_summary=getattr(sess.opt.pref, "ai_summary", ""), ai_changes=ai_changes,
+            ai_on=agent.llm.available,
         )
 
     @app.post("/action")
@@ -237,14 +242,26 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                     sess.reject_current(text)
                 sess.update_requirement(new_req)
                 agent._save_learning(sess)
+            plan = agent.ai_learn(sess)
+            with lock:
+                agent.apply_ai_learning(sess, plan)
             return redirect(url_for("result"))
         with lock:
             if act in {"next", "refine"}:  # '마음에 안 들어요', '너무 비싸요' -> 다음 순위 (사유 학습)
-                agent.reject(sess, text)
+                agent.reject(sess, text, ai=False)
             elif act == "like":
-                agent.like(sess)
+                agent.like(sess, ai=False)
             elif act == "prev":
                 sess.previous()
+                return redirect(url_for("result"))
+            else:
+                return redirect(url_for("result"))
+            liked = sess.current().listing.listing_id if act == "like" and sess.current() else None
+        plan = agent.ai_learn(sess)  # 생성형 AI 취향 학습 (느릴 수 있어 잠금 밖에서)
+        with lock:
+            agent.apply_ai_learning(sess, plan)
+            if liked:
+                sess._bring_to_front(liked)
         return redirect(url_for("result"))
 
     @app.get("/api/explain")

@@ -25,7 +25,7 @@ from typing import Optional
 from .agent import ProactiveAlert, RealEstateAgent, SyncReport
 from .config import get_settings
 from .models import CustomerRequirement, ScoredListing, format_price
-from .recommender import NOT_FOUND_MESSAGE, RecommendationSession
+from .recommender import EXHAUSTED_MESSAGE, NOT_FOUND_MESSAGE, RecommendationSession
 
 LINE = "─" * 78
 
@@ -76,11 +76,14 @@ def show_current(agent: RealEstateAgent, session: RecommendationSession, explain
     cur = session.current()
     if cur is None:
         print(LINE)
-        print(f" {NOT_FOUND_MESSAGE}")
+        print(f" {EXHAUSTED_MESSAGE if session.cursor else NOT_FOUND_MESSAGE}")
         print("  ('f <피드백>' 으로 조건을 바꾸거나 새로 검색해 보세요)")
         if session.filter_stats:
             print(" (제외 사유: " + ", ".join(f"{k} {v}건" for k, v in session.filter_stats.items()) + ")")
         return
+    if session.ai_changes and session.opt.pref is not None and session.opt.pref.ai_summary:
+        print(f" 🤖 [AI 취향 분석] {session.opt.pref.ai_summary}  (반영: {', '.join(session.ai_changes)})")
+        session.ai_changes = []
     if session.last_learning:
         print(f" 🧠 [학습] {', '.join(session.last_learning)}"
               + (" → 순위를 다시 매겼습니다" if session.reordered else ""))

@@ -72,7 +72,7 @@ def test_refine_changes_condition(make_client):
     html = act(c, "refine", "좀 더 싼 걸로").get_data(as_text=True)
     assert "2억 5,500만원" in html  # 3억 * 0.85
     html = act(c, "refine", "마음에 안 들어요").get_data(as_text=True)
-    assert "순위" in html or "해당 매물은 현재 존재하지 않습니다." in html  # 조건 변경이 아니라 다음 순위
+    assert "순위" in html or "해당 조건에 맞는 매물은 더 이상 없습니다." in html  # 조건 변경이 아니라 다음 순위
 
 
 def test_explain_api_hides_lot_number(make_client):
@@ -146,7 +146,7 @@ def test_web_too_expensive_shows_cheaper(make_client):
     prev = parse_price_manwon(price(html))
     for _ in range(4):
         html = act(c, "next", "너무 비싸요").get_data(as_text=True)
-        if "해당 매물은 현재 존재하지 않습니다." in html:
+        if "해당 조건에 맞는 매물은 더 이상 없습니다." in html:
             assert "더 저렴한 매물만 찾았는데" in html
             break
         now = parse_price_manwon(price(html))
@@ -158,5 +158,5 @@ def test_not_found_message(make_client):
     c = make_client()
     for q in ["부산 땅 보여줘", "문경시 임야", "양평 땅 100억 이상"]:
         html = search(c, q).get_data(as_text=True)
-        assert "해당 매물은 현재 존재하지 않습니다." in html, q
+        assert "해당 조건에 맞는 매물이 없습니다." in html, q
         assert "1순위" not in html, q
