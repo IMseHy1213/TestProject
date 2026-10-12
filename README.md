@@ -138,7 +138,7 @@
 
 | 오류 메시지 | 원인 / 해결 |
 |---|---|
-| `ModuleNotFoundError: No module named '...'` 또는 `[설치 필요]` | VS Code 가 쓰는 파이썬에 패키지가 없음 → 6번(인터프리터 선택)을 확인하고 5번의 `pip install -r requirements.txt` 실행 |
+| `ModuleNotFoundError: No module named '...'` 또는 `[설치 필요]` | VS Code 가 쓰는 파이썬에 패키지가 없음 → "자동으로 설치할까요?" 에서 **Enter** 를 누르면 자동 설치됩니다. 폴더를 새로 받거나 파이썬을 바꾸면 다시 한 번 설치해야 합니다 |
 | `매물 폴더를 찾을 수 없습니다` | E 드라이브(외장하드/USB)가 연결 안 됨, 또는 폴더 이름이 다름 → `.env` 의 `REA_DATA_DIR` 수정 |
 | `No such file ... requirements.txt` | 터미널 위치가 프로젝트 폴더가 아님 → `cd C:\Users\user\projectISH\Project` 후 다시 실행 |
 
