@@ -7,6 +7,8 @@
   python main.py proactive                    저장된 손님에게 맞는 매물 선제 탐색
   python main.py watch                        폴더 감시 + 새 매물 선제 알림 (무한 반복)
   python main.py export --out 매물정제.xlsx     정제된 매물을 엑셀로 내보내기
+  python main.py setup-key                    OpenAI API 키 저장 (.env)
+  python main.py llm-check                    GPT/Claude 연결 점검
 """
 
 from __future__ import annotations
@@ -206,6 +208,9 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="폴더 감시 + 선제 알림")
     w.add_argument("--interval", type=int, help="초 단위 (기본 600)")
 
+    sub.add_parser("setup-key", help="OpenAI API 키를 .env 에 저장 (입력 내용은 화면에 안 보임)")
+    sub.add_parser("llm-check", help="GPT/Claude 연결·모델 점검")
+
     e = sub.add_parser("export", help="정제된 매물 엑셀/CSV 내보내기")
     e.add_argument("--out", default="정제된_토지매물.xlsx")
     return p
@@ -216,6 +221,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
+    if args.command == "setup-key":
+        from .setup_tools import setup_key
+
+        return setup_key()
     settings = get_settings(data_dir=args.data_dir, db_path=args.db)
     if args.no_llm:
         settings.llm_providers = ["rule"]
@@ -223,6 +232,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     cmd = args.command or "chat"
 
     print(f"Real Estate Recommendation Agent  |  매물 폴더: {settings.data_dir}")
+    if cmd == "llm-check":
+        from .setup_tools import llm_check
+
+        return llm_check(agent)
     print(agent.llm.status())
 
     try:

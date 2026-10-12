@@ -3,6 +3,24 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "⓪ GPT API 키 저장 (setup-key, 처음 한 번)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["setup-key"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "⓪ GPT 연결 점검 (llm-check)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "llm-check"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "① 상담(chat) - 샘플 데이터로 연습",
       "type": "debugpy",
       "request": "launch",

@@ -35,7 +35,7 @@ class Settings:
     log_dir: Path = field(default_factory=lambda: Path(os.getenv("REA_LOG_DIR", str(PROJECT_ROOT / "logs"))))
 
     # LLM: 앞에서부터 순서대로 시도하고, 모두 실패하면 규칙 기반(rule)으로 동작합니다.
-    llm_providers: list[str] = field(default_factory=lambda: _env_list("LLM_PROVIDERS", "anthropic,openai,rule"))
+    llm_providers: list[str] = field(default_factory=lambda: _env_list("LLM_PROVIDERS", "openai,anthropic,rule"))
     anthropic_model: str = field(default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5"))
     # OpenAI 모델 ID는 계정에서 실제 사용 가능한 이름으로 바꿔주세요 (예: GPT-5.6 Luna).
     openai_model: str = field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-5.6-luna"))

@@ -96,7 +96,26 @@
    > "스크립트를 실행할 수 없습니다" 오류가 나면 먼저
    > `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 를 실행하고 `Y` 를 입력한 뒤 다시 하세요.
 6. **인터프리터 선택**: Ctrl+Shift+P → `Python: Select Interpreter` → `.venv` 가 들어간 항목 선택
-7. **설정 파일**: `.env.example` 을 복사해 `.env` 로 이름을 바꾸고 API 키를 넣습니다. (키가 없으면 비워둬도 규칙 기반으로 동작)
+7. **API 키**: 아래 **GPT 연동** 순서대로 `setup-key` 를 실행하면 `.env` 가 자동으로 만들어집니다. (키가 없어도 규칙 기반으로 동작)
+
+### GPT 연동 (API 키 설정)
+
+1. VS Code 터미널에서 `python main.py setup-key` 실행 (또는 실행 및 디버그 → **⓪ GPT API 키 저장**)
+2. OpenAI API 키를 붙여넣고 Enter (보안을 위해 화면에 글자가 보이지 않는 게 정상입니다)
+3. 모델 이름은 그냥 Enter (`gpt-5.6-luna`). 계정에 그 이름이 없으면 쓸 수 있는 GPT 모델로 자동 교체됩니다.
+4. `python main.py llm-check` (또는 **⓪ GPT 연결 점검**) 실행 → `✅ 응답 성공` 이 나오면 완료
+   - 상담 화면의 `(분석: openai)` 표시로 GPT 가 문의를 이해했는지 확인할 수 있습니다. `(분석: rule)` 이면 규칙 기반.
+
+| llm-check 결과 | 해결 |
+|---|---|
+| `API 키가 올바르지 않거나 만료` | 키를 새로 발급해 `setup-key` 다시 실행 |
+| `요청 한도 초과 또는 크레딧 부족` | OpenAI 사이트 Billing 에서 결제 수단/크레딧 확인 |
+| `서버에 연결할 수 없습니다` | 인터넷 연결, 회사/학교 방화벽 확인 |
+| `모델 ... 을 찾을 수 없습니다` | `llm-check` 에 나온 모델 목록 중 하나를 `.env` 의 `OPENAI_MODEL` 에 적기 |
+
+> ⚠ **API 키는 비밀번호와 같습니다.** `.env` 파일에만 두고, 코드·카카오톡·GitHub 에 올리지 마세요.
+> `.env` 는 `.gitignore` 에 들어 있어 `git push` 해도 올라가지 않습니다.
+> GPT 가 안 될 때도 프로그램은 멈추지 않고 규칙 기반으로 계속 동작합니다.
 
 ### 실행
 
