@@ -78,7 +78,7 @@ def build_template() -> bytes:
     guide["A1"] = "토지 매물 입력 양식"
     guide["A1"].font = Font(bold=True, size=14)
     guide["A2"] = "1) '매물입력' 시트에 한 줄에 매물 하나씩 적습니다.  2) 주황색 칸(소재지·면적·매매가)은 꼭 채워주세요."
-    guide["A3"] = "3) 저장한 파일을 매물 폴더(E:\\부동산매물백업\\매물폴더\\토지)에 넣거나, 웹 관리자 화면에서 올리세요."
+    guide["A3"] = "3) 프로젝트의 '매물' 폴더에 저장하면 됩니다. (이 양식 파일에 바로 적어 저장해도 되고, 웹 관리자 화면에서 올려도 됩니다)"
     for i, title in enumerate(["항목", "필수", "적는 방법", "예시"], start=1):
         c = guide.cell(row=5, column=i, value=title)
         c.font = Font(bold=True, color="FFFFFF")
@@ -99,3 +99,30 @@ def write_template(path: Optional[Path] = None) -> Path:
     path = Path(path or "토지매물_입력양식.xlsx")
     path.write_bytes(build_template())
     return path
+
+
+TEMPLATE_NAME = "토지매물_입력양식.xlsx"
+FOLDER_GUIDE = """이 폴더에 토지 매물 엑셀 파일(.xlsx)을 넣으면 프로그램이 읽습니다.
+
+1. '토지매물_입력양식.xlsx' 를 열어 '매물입력' 시트에 한 줄에 매물 하나씩 적고 저장하세요.
+   (파일 이름은 바꿔도 되고, 여러 파일로 나눠도 됩니다. 하위 폴더도 읽습니다)
+2. 이미 쓰고 계신 엑셀 장부가 있으면 그 파일을 그대로 넣어도 됩니다.
+3. 웹 관리자 화면의 '매물 폴더 다시 읽기' 를 누르거나 프로그램을 다시 켜면 반영됩니다.
+
+※ 이 폴더의 매물 파일은 소유자 연락처가 들어 있어 GitHub 에 올라가지 않도록 설정되어 있습니다.
+"""
+
+
+def prepare_data_folder(folder: Path) -> bool:
+    """매물 폴더가 없으면 만들고, 매물 파일이 하나도 없으면 입력 양식과 안내문을 넣어 둠. 만들었으면 True."""
+    folder = Path(folder)
+    created = not folder.exists()
+    folder.mkdir(parents=True, exist_ok=True)
+    has_data = any(p.suffix.lower() in {".xlsx", ".xlsm", ".xls", ".csv", ".json"}
+                   for p in folder.rglob("*") if p.is_file() and not p.name.startswith("~$"))
+    if not has_data:
+        (folder / TEMPLATE_NAME).write_bytes(build_template())
+    guide = folder / "README.txt"
+    if not guide.exists():
+        guide.write_text(FOLDER_GUIDE, encoding="utf-8")
+    return created

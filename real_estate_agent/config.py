@@ -10,9 +10,11 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# 부모님 부동산의 토지 매물 백업 폴더 (Windows)
-DEFAULT_DATA_DIR = r"E:\부동산매물백업\매물폴더\토지"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# 매물 자료(.xlsx) 폴더: 프로젝트 폴더 안의 '매물' 폴더
+DEFAULT_DATA_DIR = PROJECT_ROOT / "매물"
+# 예전 버전의 기본값. .env 에 이 값이 남아 있어도 프로젝트의 '매물' 폴더를 사용
+LEGACY_DATA_DIRS = {r"E:\부동산매물백업\매물폴더\토지", "E:/부동산매물백업/매물폴더/토지"}
 
 try:  # python-dotenv 는 선택 사항. 실행 위치와 상관없이 프로젝트 폴더의 .env 를 읽음
     from dotenv import load_dotenv
@@ -22,13 +24,21 @@ except ImportError:  # pragma: no cover
     pass
 
 
+def _data_dir_from_env() -> Path:
+    value = os.getenv("REA_DATA_DIR", "").strip()
+    if not value or value in LEGACY_DATA_DIRS:
+        return DEFAULT_DATA_DIR
+    path = Path(value)
+    return path if path.is_absolute() else PROJECT_ROOT / path  # 상대 경로는 프로젝트 폴더 기준
+
+
 def _env_list(name: str, default: str) -> list[str]:
     return [v.strip() for v in os.getenv(name, default).split(",") if v.strip()]
 
 
 @dataclass
 class Settings:
-    data_dir: Path = field(default_factory=lambda: Path(os.getenv("REA_DATA_DIR", DEFAULT_DATA_DIR)))
+    data_dir: Path = field(default_factory=lambda: _data_dir_from_env())
     db_path: Path = field(
         default_factory=lambda: Path(os.getenv("REA_DB_PATH", str(PROJECT_ROOT / "data" / "agent.db")))
     )

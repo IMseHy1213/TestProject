@@ -1,4 +1,4 @@
-"""부모님 부동산 매물 백업 폴더(E:\\부동산매물백업\\매물폴더\\토지) 수집기.
+"""매물 폴더 수집기 (기본: 프로젝트 폴더 안의 '매물' 폴더).
 
 지원 형식: .xlsx / .xlsm / .xls / .csv / .json / .txt
 - 엑셀은 모든 시트를 읽고, 제목 줄이 위에 있어도 헤더 행을 자동으로 찾습니다.
@@ -58,6 +58,7 @@ class LocalFolderCollector(Collector):
         return sorted(
             p for p in self.data_dir.rglob("*")
             if p.is_file() and p.suffix.lower() in SUPPORTED and not p.name.startswith(("~$", "."))
+            and p.name.lower() != "readme.txt"  # 폴더 안내문은 매물 파일이 아님
         )
 
     def collect(self) -> list[RawRecord]:

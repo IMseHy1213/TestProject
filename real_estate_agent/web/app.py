@@ -303,6 +303,20 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         session["admin_msg"] = state["sync_error"] or "매물 폴더를 다시 읽었습니다."
         return redirect(url_for("admin"))
 
+    @app.post("/admin/open-folder")
+    def admin_open_folder():
+        """서버를 켠 PC 에서 매물 폴더를 탐색기로 열기 (Windows)."""
+        if not is_admin():
+            abort(403)
+        folder = settings.data_dir
+        folder.mkdir(parents=True, exist_ok=True)
+        if hasattr(os, "startfile"):
+            os.startfile(folder)  # type: ignore[attr-defined]
+            session["admin_msg"] = "매물 폴더를 열었습니다. 엑셀 파일을 넣은 뒤 '매물 폴더 다시 읽기'를 누르세요."
+        else:
+            session["admin_msg"] = f"이 컴퓨터에서는 폴더를 자동으로 열 수 없습니다. 위치: {folder}"
+        return redirect(url_for("admin"))
+
     @app.get("/admin/template")
     def admin_template():
         if not is_admin():

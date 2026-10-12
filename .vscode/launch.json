@@ -12,7 +12,7 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "🌐 웹 서비스 - 실제 매물 폴더",
+      "name": "🌐 웹 서비스 - 프로젝트 매물 폴더 (실제 운영)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
@@ -30,7 +30,7 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "📄 매물 입력 양식(엑셀) 만들기",
+      "name": "📄 매물 입력 양식(엑셀) 새로 만들기",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
@@ -66,7 +66,7 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "② 터미널 상담(chat) - 실제 매물 폴더",
+      "name": "② 터미널 상담(chat) - 프로젝트 매물 폴더",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",

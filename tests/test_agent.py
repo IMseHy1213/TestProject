@@ -334,3 +334,27 @@ def test_input_template_roundtrip(tmp_path):
     req = RequirementParser(None, ["음성군"]).parse("음성군 채광이 좋은 2억원대 땅")
     ranked, _, _ = rank(result.listings, req, today=TODAY)
     assert ranked[0].listing.listing_id == "E-9001" and ranked[0].factors["keyword"] == 1.0
+
+
+def test_default_data_folder_is_project_folder(monkeypatch):
+    from real_estate_agent.config import DEFAULT_DATA_DIR, PROJECT_ROOT, get_settings
+
+    assert DEFAULT_DATA_DIR == PROJECT_ROOT / "매물"
+    monkeypatch.delenv("REA_DATA_DIR", raising=False)
+    assert get_settings().data_dir == DEFAULT_DATA_DIR
+    monkeypatch.setenv("REA_DATA_DIR", r"E:\부동산매물백업\매물폴더\토지")  # 예전 .env 값
+    assert get_settings().data_dir == DEFAULT_DATA_DIR
+    monkeypatch.setenv("REA_DATA_DIR", "다른매물")
+    assert get_settings().data_dir == PROJECT_ROOT / "다른매물"
+
+
+def test_prepare_data_folder(tmp_path):
+    from real_estate_agent.template import TEMPLATE_NAME, prepare_data_folder
+
+    folder = tmp_path / "매물"
+    assert prepare_data_folder(folder) is True
+    assert (folder / TEMPLATE_NAME).exists() and (folder / "README.txt").exists()
+    assert LocalFolderCollector(folder).collect() == []  # 빈 양식은 매물 0건, 오류 없음
+    (folder / TEMPLATE_NAME).write_bytes(b"user data")  # 작성 중인 파일은 덮어쓰지 않음
+    assert prepare_data_folder(folder) is False
+    assert (folder / TEMPLATE_NAME).read_bytes() == b"user data"

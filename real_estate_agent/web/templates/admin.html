@@ -10,10 +10,16 @@
     <h2>매물 현황</h2>
     <p class="big-num">{{ data.count }}<small>건</small></p>
     <p class="meta">매물 폴더: {{ data_dir }}<br>마지막으로 읽은 시각: {{ data.synced_at }}</p>
-    <form method="post" action="{{ url_for('admin_sync') }}">
-      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-      <button class="btn primary">매물 폴더 다시 읽기</button>
-    </form>
+    <div class="row left">
+      <form method="post" action="{{ url_for('admin_sync') }}" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <button class="btn primary">매물 폴더 다시 읽기</button>
+      </form>
+      <form method="post" action="{{ url_for('admin_open_folder') }}" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <button class="btn">📂 매물 폴더 열기</button>
+      </form>
+    </div>
   </div>
 
   <div class="panel">

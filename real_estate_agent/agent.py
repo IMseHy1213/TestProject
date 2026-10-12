@@ -24,7 +24,7 @@ from typing import Callable, Optional
 from .cleaner import CleanResult, clean
 from .collectors import LocalFolderCollector
 from .collectors.public_data import LandTradePriceClient, VWorldGeocoder
-from .config import Settings
+from .config import DEFAULT_DATA_DIR, Settings
 from .llm import LLMRouter, LLMUnavailable
 from .models import CustomerRequirement, LandListing, ScoredListing, format_price
 from .recommender import RecommendationSession, RecommendOptions, score_listing, hard_filter
@@ -82,6 +82,10 @@ class RealEstateAgent:
 
     # ------------------------------------------------------------------ 1~2. 수집·정제
     def sync(self, today: Optional[date] = None) -> SyncReport:
+        if self.settings.data_dir.resolve() == DEFAULT_DATA_DIR.resolve():
+            from .template import prepare_data_folder
+
+            prepare_data_folder(self.settings.data_dir)  # 프로젝트 '매물' 폴더는 없으면 자동으로 만듦
         records = self.collector.collect()
         result = clean(records, today)
         self._enrich(result.listings)

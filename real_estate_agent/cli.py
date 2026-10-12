@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
 from typing import Optional
 
 from .agent import ProactiveAlert, RealEstateAgent, SyncReport
@@ -174,7 +175,7 @@ def print_sync(report: SyncReport, verbose: bool = False) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="real-estate-agent", description="Real Estate Recommendation Agent (토지)")
-    p.add_argument("--data-dir", help="매물 폴더 경로 (기본: E:\\부동산매물백업\\매물폴더\\토지)")
+    p.add_argument("--data-dir", help="매물 폴더 경로 (기본: 프로젝트의 '매물' 폴더)")
     p.add_argument("--db", help="SQLite DB 경로")
     p.add_argument("--no-llm", action="store_true", help="LLM 없이 규칙 기반으로만 동작")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -204,7 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
     wb.add_argument("--no-browser", action="store_true", help="브라우저 자동 열기 끄기")
 
     tp = sub.add_parser("template", help="매물 입력 양식(엑셀) 만들기")
-    tp.add_argument("--out", default="토지매물_입력양식.xlsx")
+    tp.add_argument("--out", default="", help="저장 위치 (기본: 매물 폴더 안)")
 
     sub.add_parser("setup-key", help="OpenAI API 키를 .env 에 저장 (입력 내용은 화면에 안 보임)")
     sub.add_parser("llm-check", help="GPT/Claude 연결·모델 점검")
@@ -222,9 +223,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command == "template":
         from .template import write_template
 
-        path = write_template(args.out)
+        out = Path(args.out) if args.out else get_settings(data_dir=args.data_dir).data_dir / "토지매물_입력양식.xlsx"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        n = 1
+        while out.exists() and not args.out:  # 이미 작성 중인 양식은 덮어쓰지 않음
+            n += 1
+            out = out.with_name(f"토지매물_입력양식_{n}.xlsx")
+        path = write_template(out)
         print(f"매물 입력 양식을 만들었습니다: {path.resolve()}")
-        print("작성 후 매물 폴더에 넣고 웹 관리자 화면의 '매물 폴더 다시 읽기'를 누르세요.")
+        print("엑셀로 열어 '매물입력' 시트에 적고 저장한 뒤, 웹 관리자 화면의 '매물 폴더 다시 읽기'를 누르세요.")
         return 0
     if args.command == "setup-key":
         from .setup_tools import setup_key
