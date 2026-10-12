@@ -16,8 +16,13 @@ import re
 from pathlib import Path
 from typing import Any
 
+from typing import Optional
+
 from ..normalizer import map_column
 from .base import Collector, RawRecord
+from .listing_folder import build_listing_record, file_modified_date, looks_like_listing_name, read_grids
+
+GRID_FORMATS = {".xlsx", ".xlsm", ".xls", ".csv"}
 
 log = logging.getLogger(__name__)
 
@@ -61,11 +66,53 @@ class LocalFolderCollector(Collector):
             and p.name.lower() != "readme.txt"  # 폴더 안내문은 매물 파일이 아님
         )
 
+    def listing_unit(self, path: Path) -> Optional[Path]:
+        """'매물 하나 = 폴더 하나' 구조면 그 매물 폴더(또는 파일)를 반환, 일반 장부 파일이면 None."""
+        try:
+            rel_parts = path.relative_to(self.data_dir).parts
+        except ValueError:
+            return None
+        if len(rel_parts) >= 2 and looks_like_listing_name(rel_parts[-2]):
+            return path.parent
+        if looks_like_listing_name(path.stem) and path.suffix.lower() in GRID_FORMATS:
+            return path
+        return None
+
     def collect(self) -> list[RawRecord]:
         self.errors.clear()
         self.files_read.clear()
         records: list[RawRecord] = []
+        units: dict[Path, list[Path]] = {}
+        ledger_files: list[Path] = []
         for path in self.iter_files():
+            unit = self.listing_unit(path)
+            if unit is None:
+                ledger_files.append(path)
+            elif path.suffix.lower() in GRID_FORMATS:
+                units.setdefault(unit, []).append(path)
+
+        # 1) 매물 폴더: 폴더 안 엑셀 전체 -> 매물 1건
+        for unit, files in sorted(units.items()):
+            grids = []
+            for f in files:
+                try:
+                    grids.extend(read_grids(f))
+                    self.files_read.append(str(f))
+                except Exception as e:
+                    self.errors.append(f"{f.name}: 읽기 실패 ({e})")
+                    log.warning("파일 읽기 실패 %s: %s", f, e)
+            if not grids:
+                continue
+            region_parts = list(unit.relative_to(self.data_dir).parts[:-1])
+            name = unit.stem if unit.is_file() else unit.name
+            record, notes = build_listing_record(name, region_parts, grids, file_modified_date(files[0]))
+            for n in notes:
+                self.errors.append(f"{name}: {n}")
+            records.append(RawRecord(data=record, source=detect_source(unit, self.data_dir),
+                                     source_file=str(files[0])))
+
+        # 2) 일반 장부 파일: 표 한 줄 = 매물 1건
+        for path in ledger_files:
             source = detect_source(path, self.data_dir)
             try:
                 rows = read_file(path)

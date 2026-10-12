@@ -102,6 +102,7 @@ def _completeness(l: LandListing) -> int:
 
 
 def _jibun(addr: str) -> str:
+    addr = re.sub(r"외\s*\d+\s*필지.*$", "", addr)  # '417-2 외 36필지' 의 36 은 지번이 아님
     m = re.findall(r"(산?\d+(?:-\d+)?)", addr)
     return m[-1] if m else ""
 

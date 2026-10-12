@@ -318,8 +318,14 @@ def is_condition_change(text: str) -> bool:
 
 def mask_address(address: str) -> str:
     """손님용 화면: 정확한 지번은 가리고 리/동까지만 표시. '음성군 금왕읍 무극리 210-3' -> '... 무극리 ***'"""
-    masked = re.sub(r"\s*(산\s*)?\d+(-\d+)?(번지)?\s*$", "", address).strip()
-    return f"{masked} ***" if masked != address.strip() else address
+    address = address.strip()
+    multi = re.search(r"\s*외\s*\d+\s*필지.*$", address)  # '417-2 외 36필지' -> '*** 외 36필지'
+    tail = multi.group(0).strip() if multi else ""
+    core = address[:multi.start()] if multi else address
+    masked = re.sub(r"\s*(산\s*)?\d+(-\d+)?(번지)?\s*$", "", core).strip()
+    if masked == core.strip():
+        return address
+    return f"{masked} ***" + (f" {tail}" if tail else "")
 
 
 def template_explanation(s: ScoredListing, address: Optional[str] = None) -> str:
