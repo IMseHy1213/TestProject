@@ -50,6 +50,25 @@
   </div>
 
   <div class="panel">
+    <h2>관리자 비밀번호 바꾸기</h2>
+    {% if pw_source == "env" %}
+      <p class="meta">지금 비밀번호는 <code>.env</code> 의 <code>REA_ADMIN_PASSWORD</code> 로 정해져 있습니다.
+        바꾸려면 .env 에서 그 줄을 고치거나 지운 뒤 서버를 다시 켜세요.</p>
+    {% else %}
+      <form method="post" action="{{ url_for('admin_password_change') }}" class="stack">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <label for="cur">지금 비밀번호</label>
+        <input id="cur" name="current" type="password" required autocomplete="current-password">
+        <label for="npw">새 비밀번호 <small class="muted">({{ min_len }}자 이상)</small></label>
+        <input id="npw" name="password" type="password" required minlength="{{ min_len }}" autocomplete="new-password">
+        <label for="npw2">새 비밀번호 한 번 더</label>
+        <input id="npw2" name="confirm" type="password" required minlength="{{ min_len }}" autocomplete="new-password">
+        <button class="btn">비밀번호 바꾸기</button>
+      </form>
+    {% endif %}
+  </div>
+
+  <div class="panel">
     <h2>손님 피드백 학습 현황 (사무실 전체)</h2>
     <pre class="pre">{{ data.office }}</pre>
   </div>

@@ -39,6 +39,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "⓪ 관리자 비밀번호 정하기 / 바꾸기",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["set-admin-password"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "⓪ GPT API 키 저장 (setup-key, 처음 한 번)",
       "type": "debugpy",
       "request": "launch",

@@ -4,7 +4,7 @@
   /                검색창 ("음성군 채광 좋은 2억원대 땅")
   /result          추천 매물 카드 + [마음에 안 들어요 → 다음 순위] / 빠른 사유 / 관심 / 이전 / 조건 변경
   /api/explain     현재 매물 AI 설명 (화면이 먼저 뜬 뒤 불러옴)
-관리자 화면 (비밀번호: .env 의 REA_ADMIN_PASSWORD)
+관리자 화면 (처음 /admin 에 들어가면 비밀번호를 정하는 화면이 나옴 - 서버를 켠 PC 에서만)
   /admin           매물 다시 읽기, 오류·중복 보고서, 매물 파일 업로드, AI 연결 상태, 학습 현황
 
 개인정보: 손님 화면에는 소유자 연락처·원본 파일·정확한 지번을 보여주지 않습니다. (관리자 로그인 시에만 표시)
@@ -27,6 +27,8 @@ from typing import Optional
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 
+from ..admin_auth import MIN_LENGTH as MIN_PASSWORD_LEN
+from ..admin_auth import AdminAuth, auth_file
 from ..agent import RealEstateAgent, is_condition_change, mask_address
 from ..collectors.local_folder import SUPPORTED
 from ..config import PROJECT_ROOT, Settings, get_settings
@@ -294,12 +296,35 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         return jsonify(text=text, source=source)
 
     # ------------------------------------------------------------ 관리자 화면
-    admin_password = os.getenv("REA_ADMIN_PASSWORD", "")
+    auth = AdminAuth(auth_file(settings))
+    app.config["ADMIN_AUTH"] = auth  # 테스트용
+
+    def is_local_request() -> bool:
+        """서버를 켠 PC 에서 직접 접속했는지 (처음 비밀번호 정하기는 이 경우에만 허용)."""
+        if request.headers.get("X-Forwarded-For") or request.headers.get("Forwarded"):
+            return False  # 프록시(인터넷 공개) 뒤에서 들어온 요청
+        return request.remote_addr in {"127.0.0.1", "::1"}
+
+    def login_page(status: int = 200, **kw):
+        return render_template("login.html", configured=auth.configured, local=is_local_request(),
+                               min_len=MIN_PASSWORD_LEN, **kw), status
+
+    def start_admin_session() -> None:
+        """로그인 성공: 세션 고정 공격을 막도록 쿠키 내용을 새로 만들고 (추천 상담은 이어지게) 관리자 표시."""
+        sid = session.get("sid")
+        source = session.get("source")
+        session.clear()
+        if sid:
+            session["sid"] = sid
+        if source:
+            session["source"] = source
+        session["admin"] = True
+        session["csrf"] = secrets.token_urlsafe(24)
 
     @app.get("/admin")
     def admin():
         if not is_admin():
-            return render_template("login.html", configured=bool(admin_password))
+            return login_page()
         with lock:
             report = agent.last_sync
             data = {
@@ -311,16 +336,55 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             }
         return render_template("admin.html", data=data, data_dir=str(settings.data_dir),
                                llm_status=agent.llm.status(), sync_error=state["sync_error"],
-                               message=session.pop("admin_msg", ""))
+                               message=session.pop("admin_msg", ""), pw_source=auth.source,
+                               min_len=MIN_PASSWORD_LEN)
 
     @app.post("/admin/login")
     def admin_login():
+        who = request.remote_addr or "?"
+        wait = auth.locked_for(who)
+        if wait:
+            return login_page(429, error=f"비밀번호를 여러 번 틀려 잠시 잠겼습니다. 약 {wait // 60 + 1}분 뒤 다시 시도하세요.")
+        if not auth.configured:
+            return login_page(400)
         pw = request.form.get("password", "")
-        if admin_password and hmac.compare_digest(pw.encode(), admin_password.encode()):
-            session["admin"] = True
+        if auth.check(pw):
+            auth.clear_failures(who)
+            start_admin_session()
             return redirect(url_for("admin"))
+        auth.record_failure(who)
         time.sleep(1)  # 무차별 대입 지연
-        return render_template("login.html", configured=bool(admin_password), error=True), 401
+        return login_page(401, error="비밀번호가 맞지 않습니다.")
+
+    @app.post("/admin/setup")
+    def admin_setup():
+        """처음 한 번: 관리자 비밀번호 정하기 (비밀번호가 없고, 서버를 켠 PC 에서 접속했을 때만)."""
+        if auth.configured:
+            return redirect(url_for("admin"))
+        if not is_local_request():
+            abort(403)
+        try:
+            auth.set_password(request.form.get("password", ""), request.form.get("confirm", ""))
+        except (ValueError, OSError) as e:
+            return login_page(400, error=str(e))
+        start_admin_session()
+        session["admin_msg"] = "관리자 비밀번호를 정했습니다. 다음부터는 이 비밀번호로 로그인하세요."
+        return redirect(url_for("admin"))
+
+    @app.post("/admin/password")
+    def admin_password_change():
+        if not is_admin():
+            abort(403)
+        if not auth.check(request.form.get("current", "")):
+            time.sleep(1)
+            session["admin_msg"] = "❌ 지금 비밀번호가 맞지 않습니다."
+            return redirect(url_for("admin"))
+        try:
+            auth.set_password(request.form.get("password", ""), request.form.get("confirm", ""))
+            session["admin_msg"] = "✅ 관리자 비밀번호를 바꿨습니다."
+        except (ValueError, OSError) as e:
+            session["admin_msg"] = f"❌ 비밀번호를 바꾸지 못했습니다: {e}"
+        return redirect(url_for("admin"))
 
     @app.post("/admin/logout")
     def admin_logout():

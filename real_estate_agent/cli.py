@@ -213,6 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("setup-key", help="OpenAI API 키를 .env 에 저장 (입력 내용은 화면에 안 보임)")
     sub.add_parser("llm-check", help="GPT/Claude 연결·모델 점검")
+    sub.add_parser("set-admin-password", help="웹 관리자 화면 비밀번호 정하기/바꾸기 (입력 내용은 화면에 안 보임)")
 
     e = sub.add_parser("export", help="정제된 매물 엑셀/CSV 내보내기")
     e.add_argument("--out", default="정제된_토지매물.xlsx")
@@ -242,6 +243,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         return setup_key()
     settings = get_settings(data_dir=args.data_dir, db_path=args.db)
+    if args.command == "set-admin-password":
+        from .admin_auth import set_password_cli
+
+        return set_password_cli(settings)
     if args.no_llm:
         settings.llm_providers = ["rule"]
     cmd = args.command or "web"  # 아무 명령 없이 실행하면 웹 서비스

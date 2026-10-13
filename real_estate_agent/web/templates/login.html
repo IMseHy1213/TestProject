@@ -2,18 +2,37 @@
 {% block title %}관리자 로그인{% endblock %}
 {% block content %}
 <section class="panel narrow">
-  <h1>관리자 로그인</h1>
   {% if not configured %}
-    <p class="notice warn">관리자 비밀번호가 설정되지 않았습니다.<br>
-      프로젝트 폴더의 <code>.env</code> 파일에 <code>REA_ADMIN_PASSWORD=원하는비밀번호</code> 를 넣고 다시 실행하세요.</p>
+    <h1>관리자 비밀번호 정하기</h1>
+    {% if local %}
+      <p class="meta">처음 한 번만 정하면 됩니다. 다음부터는 이 비밀번호로 로그인합니다.</p>
+      {% if error %}<p class="notice warn" role="alert">{{ error }}</p>{% endif %}
+      <form method="post" action="{{ url_for('admin_setup') }}">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <label for="pw">새 비밀번호 <small class="muted">({{ min_len }}자 이상)</small></label>
+        <input id="pw" name="password" type="password" required minlength="{{ min_len }}" autofocus autocomplete="new-password">
+        <label for="pw2">새 비밀번호 한 번 더</label>
+        <input id="pw2" name="confirm" type="password" required minlength="{{ min_len }}" autocomplete="new-password">
+        <button class="btn primary">비밀번호 정하고 로그인</button>
+      </form>
+      <p class="meta small-note">비밀번호는 복원할 수 없는 형태로 프로젝트의 data 폴더에만 저장되고 GitHub 에 올라가지 않습니다.</p>
+    {% else %}
+      <p class="notice warn">아직 관리자 비밀번호가 없습니다.<br>
+        보안을 위해 비밀번호는 <strong>서버를 켠 PC</strong>에서만 정할 수 있습니다.
+        그 PC 의 브라우저에서 <code>http://127.0.0.1:8000/admin</code> 에 들어가 정하거나,
+        VS Code 실행 목록의 <strong>'⓪ 관리자 비밀번호 정하기'</strong>를 실행하세요.</p>
+    {% endif %}
   {% else %}
-    {% if error %}<p class="notice warn">비밀번호가 맞지 않습니다.</p>{% endif %}
+    <h1>관리자 로그인</h1>
+    {% if error %}<p class="notice warn" role="alert">{{ error }}</p>{% endif %}
     <form method="post" action="{{ url_for('admin_login') }}">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
       <label for="pw">비밀번호</label>
       <input id="pw" name="password" type="password" required autofocus autocomplete="current-password">
       <button class="btn primary">로그인</button>
     </form>
+    <p class="meta small-note">비밀번호를 잊었다면: 서버를 켠 PC 에서 프로젝트의 <code>data/admin_password.json</code>
+      파일을 지운 뒤, 그 PC 의 브라우저로 이 화면에 다시 들어와 새로 정하세요.</p>
   {% endif %}
 </section>
 {% endblock %}

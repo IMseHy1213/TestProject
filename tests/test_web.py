@@ -95,10 +95,64 @@ def test_security_headers(make_client):
 
 def test_admin_requires_configured_password(make_client):
     c = make_client()
-    assert "REA_ADMIN_PASSWORD" in c.get("/admin").get_data(as_text=True)
+    assert "관리자 비밀번호 정하기" in c.get("/admin").get_data(as_text=True)  # 처음: 비밀번호 정하는 화면
     r = c.post("/admin/login", data={"password": "", "csrf": csrf(c)})
-    assert r.status_code == 401  # 비밀번호 미설정이면 로그인 불가
+    assert r.status_code == 400  # 비밀번호 미설정이면 로그인 불가
     assert c.post("/admin/sync", data={"csrf": csrf(c)}).status_code == 403
+
+
+def test_first_time_setup_login_change_and_lockout(make_client):
+    c = make_client()
+    r = c.post("/admin/setup", data={"password": "short", "confirm": "short", "csrf": csrf(c, "/admin")})
+    assert r.status_code == 400 and "8자 이상" in r.get_data(as_text=True)
+    r = c.post("/admin/setup", data={"password": "office-pass-1", "confirm": "other-pass-1",
+                                     "csrf": csrf(c, "/admin")})
+    assert "서로 다릅니다" in r.get_data(as_text=True)
+    before = csrf(c, "/admin")
+    r = c.post("/admin/setup", data={"password": "office-pass-1", "confirm": "office-pass-1", "csrf": before},
+               follow_redirects=True)
+    html = r.get_data(as_text=True)
+    assert "매물 현황" in html and "비밀번호를 정했습니다" in html  # 정하고 바로 로그인
+    assert csrf(c, "/admin") != before  # 로그인하면 세션 토큰을 새로 만듦
+
+    auth = c.application.config["ADMIN_AUTH"]
+    stored = auth.path.read_text(encoding="utf-8")
+    assert "office-pass-1" not in stored  # 비밀번호 그대로가 아니라 해시만 저장
+    # 이미 정했으면 다시 '정하기' 로 덮어쓸 수 없음
+    c.post("/admin/setup", data={"password": "hacker-pass-9", "confirm": "hacker-pass-9", "csrf": csrf(c, "/admin")})
+    assert auth.check("office-pass-1") and not auth.check("hacker-pass-9")
+
+    r = c.post("/admin/password", data={"current": "wrong-pass", "password": "new-pass-22", "confirm": "new-pass-22",
+                                        "csrf": csrf(c, "/admin")}, follow_redirects=True)
+    assert "지금 비밀번호가 맞지 않습니다" in r.get_data(as_text=True)
+    r = c.post("/admin/password", data={"current": "office-pass-1", "password": "new-pass-22",
+                                        "confirm": "new-pass-22", "csrf": csrf(c, "/admin")}, follow_redirects=True)
+    assert "비밀번호를 바꿨습니다" in r.get_data(as_text=True) and auth.check("new-pass-22")
+
+    c.post("/admin/logout", data={"csrf": csrf(c, "/admin")})
+    assert "관리자 로그인" in c.get("/admin").get_data(as_text=True)
+    auth._failures.clear()
+    for _ in range(5):
+        auth.record_failure("127.0.0.1")
+    r = c.post("/admin/login", data={"password": "new-pass-22", "csrf": csrf(c, "/admin")})
+    assert r.status_code == 429 and "잠겼습니다" in r.get_data(as_text=True)  # 맞는 비밀번호도 잠시 막힘
+    auth._failures.clear()
+    r = c.post("/admin/login", data={"password": "new-pass-22", "csrf": csrf(c, "/admin")})
+    assert r.status_code == 302
+
+
+def test_first_time_setup_only_from_server_pc(make_client):
+    c = make_client()
+    remote = {"REMOTE_ADDR": "192.168.0.23"}
+    html = c.get("/admin", environ_base=remote).get_data(as_text=True)
+    assert "서버를 켠 PC" in html and 'name="confirm"' not in html
+    token = re.search(r'name="csrf" value="([^"]+)"', c.get("/", environ_base=remote).get_data(as_text=True)).group(1)
+    r = c.post("/admin/setup", data={"password": "office-pass-1", "confirm": "office-pass-1", "csrf": token},
+               environ_base=remote)
+    assert r.status_code == 403 and not c.application.config["ADMIN_AUTH"].configured
+    r = c.post("/admin/setup", data={"password": "office-pass-1", "confirm": "office-pass-1", "csrf": token},
+               headers={"X-Forwarded-For": "1.2.3.4"})  # 인터넷 공개(프록시) 뒤에서 온 요청도 불가
+    assert r.status_code == 403
 
 
 def test_admin_login_upload_and_full_info(make_client):
