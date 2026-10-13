@@ -66,7 +66,9 @@ for _sido, _names in SIGUNGU.items():
     for _n in _names:
         SIGUNGU_TO_SIDO.setdefault(_n, set()).add(_sido)
 
-_END = r"(?=\s|,|·|/|$|이나|나|이랑|랑|과|와|도|쪽|근처|인근|일대|에|으로|로|권|의|지역|땅|토지|[가-힣]{0,2}면|[가-힣]{0,2}읍)"
+# 지역 이름 뒤에 올 수 있는 말: 조사·방향 표현, 그리고 띄어쓰기 없이 붙여 쓴 땅 관련 단어 ('음성창고', '여주토지')
+_END = (r"(?=\s|,|·|/|$|이나|나|이랑|랑|과|와|도|쪽|근처|인근|일대|에|으로|로|권|의|지역|땅|토지|부지|매물|임야|"
+        r"농지|논|밭|대지|창고|공장|전원|주택|물류|카페|상가|축사|태양광|캠핑|[가-힣]{0,2}면|[가-힣]{0,2}읍)")
 
 
 def _stem(name: str) -> str:
@@ -122,3 +124,23 @@ def address_in_region(address: str, region: str) -> bool:
     if r in SIGUNGU_TO_SIDO and len(stem) >= 2:  # '문경시' 요청 <-> 주소 '문경 …' 처럼 시/군을 뺀 표기
         return bool(re.search(re.escape(stem) + r"(시|군)?(?=[가-힣]{1,4}(읍|면|동)|$)", addr))
     return False
+
+
+def canonical_region(name: str) -> str:
+    """'음성' / '음성시'(잘못된 표기) / '음성 군' -> '음성군', '여주' -> '여주시', '경상북도' -> '경북'.
+    시·군 이름표에 없으면(읍·면·리 이름 등) 그대로 둠."""
+    n = re.sub(r"\s+", "", str(name or ""))
+    if not n:
+        return n
+    if n in SIGUNGU_TO_SIDO:
+        return n
+    sido = sido_of(n)
+    if sido:
+        return sido
+    stem = _stem(n)
+    matches = [c for c in ALL_SIGUNGU if _stem(c) == stem]
+    if len(set(matches)) == 1 and len(stem) >= 2:
+        return matches[0]
+    if len(matches) > 1:  # '고성' 처럼 여러 곳 -> 원래 쓴 표기가 정확하면 그것, 아니면 그대로
+        return n
+    return n

@@ -14,7 +14,7 @@ from typing import Iterable, Optional
 from .llm import LLMRouter, LLMUnavailable
 from .models import JIMOK_TYPES, PYEONG_M2, CustomerRequirement
 from .normalizer import JIMOK_ALIASES, parse_price_manwon
-from .regions import find_regions
+from .regions import canonical_region, find_regions
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ SYSTEM_PROMPT = f"""당신은 한국 토지 매물 중개 보조 AI 입니다.
 
 필드:
 - customer_name: 손님 이름 (없으면 "")
-- regions: 선호 지역 이름 목록 (시/군/구/읍/면/리 단위, 예: ["양평군", "양서면"])
+- regions: 선호 지역 이름 목록. 시·군은 정식 이름으로 (예: "음성" -> "음성군", "여주" -> "여주시"), 읍·면·리는 그대로 (예: ["음성군", "감곡면"])
 - jimok: 원하는 지목 목록. 다음 중에서만: {", ".join(JIMOK_TYPES)}
 - zoning: 원하는 용도지역 목록. 다음 중에서만: {", ".join(ZONING_TYPES)}
 - budget_min, budget_max: 예산 (단위: 만원, 정수). "3억 정도"는 budget_max 를 약 15% 여유있게(34500) 잡으세요.
@@ -130,7 +130,13 @@ def sanitize(req: CustomerRequirement) -> CustomerRequirement:
             v = [v]
         return [str(x).strip() for x in v if str(x).strip()]
 
-    req.regions = _list(req.regions)
+    # '음성' -> '음성군', '여주' -> '여주시' (GPT 가 줄여서 돌려줘도 정식 시·군 이름으로)
+    regions: list[str] = []
+    for r in _list(req.regions):
+        c = canonical_region(r)
+        if c and c not in regions:
+            regions.append(c)
+    req.regions = regions
     req.jimok = [JIMOK_ALIASES.get(j, j) for j in _list(req.jimok)]
     req.jimok = [j for j in req.jimok if j in JIMOK_TYPES]
     req.zoning = [z if z.endswith("지역") else z + "지역" for z in _list(req.zoning)]
@@ -271,7 +277,8 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
     # --- 지역 ---
     regions: list[str] = []
     for r in known_regions:
-        stem = re.sub(r"(시|군|구|읍|면|동|리)$", "", r)
+        # 시·군·구는 줄여 써도 인정 ('음성' -> 음성군), 읍·면·동·리는 전체 이름을 써야 인정 ('음성' 이 음성읍이 되지 않도록)
+        stem = re.sub(r"(시|군|구)$", "", r) if r[-1:] in "시군구" else r
         if (r in t or (len(stem) >= 2 and re.search(rf"{re.escape(stem)}{_REGION_END}", t))) \
                 and not any(r in x for x in regions):
             regions.append(r)
@@ -290,7 +297,12 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
         w = m.group(1)
         if w not in _NOT_REGION and not any(w in x or x in w for x in regions):
             regions.append(w)
-    req.regions = regions
+    # '음성읍 땅' 처럼 읍·면을 콕 집었으면 그 읍·면만 (음성군 전체로 넓히지 않음)
+    for big in [x for x in regions if x[-1:] in "시군"]:
+        stem = big[:-1]
+        if big not in t and any(x != big and x[-1:] in "읍면동리" and x.startswith(stem) for x in regions):
+            regions.remove(big)
+    req.regions = [canonical_region(r) for r in regions]
 
     # --- 특징 키워드 ---
     for k in FEATURE_KEYWORDS:

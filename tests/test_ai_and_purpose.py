@@ -151,3 +151,55 @@ def test_web_shows_ai_summary(tmp_path):
     html = c.post("/action", data={"act": "next", "text": "너무 좁아요", "csrf": tok("/result")},
                   follow_redirects=True).get_data(as_text=True)
     assert "AI가 파악한 취향" in html and PLAN["summary"] in html
+
+
+# ---------------- '음성' -> 음성군, '여주' -> 여주시 ----------------
+import pytest  # noqa: E402
+
+from real_estate_agent.regions import canonical_region  # noqa: E402
+
+
+@pytest.mark.parametrize("q,expected", [
+    ("음성", ["음성군"]), ("음성 땅", ["음성군"]), ("음성에 창고", ["음성군"]), ("음성창고", ["음성군"]),
+    ("음성쪽 전원주택", ["음성군"]), ("음성군 땅", ["음성군"]), ("여주", ["여주시"]), ("여주 땅", ["여주시"]),
+    ("여주땅", ["여주시"]), ("여주에 창고 지을 땅", ["여주시"]), ("여주나 양평", ["여주시", "양평군"]),
+])
+def test_short_region_names(q, expected):
+    assert RequirementParser(None, []).parse(q).regions == expected
+
+
+def test_canonical_region():
+    assert canonical_region("음성") == canonical_region("음성시") == canonical_region("음성 군") == "음성군"
+    assert canonical_region("여주") == canonical_region("여주군") == "여주시"
+    assert canonical_region("감곡면") == "감곡면" and canonical_region("경상북도") == "경북"
+
+
+class FakeParserGPT(LLMClient):
+    name = "fake"
+
+    def complete(self, system, user, max_tokens=2000):
+        if "검색 조건을 추출" in system:
+            return '{"regions": ["음성", "여주시", "음성시"], "purpose": "창고"}'
+        raise LLMUnavailable("x")
+
+
+def test_gpt_short_region_is_normalized():
+    req = RequirementParser(router_with(FakeParserGPT()), []).parse("음성이나 여주에 창고 지을 땅")
+    assert req.regions == ["음성군", "여주시"]
+
+
+def test_web_search_short_names(tmp_path):
+    from real_estate_agent.web.app import create_app
+
+    data = tmp_path / "토지"
+    shutil.copytree(SAMPLE, data)
+    settings = Settings(data_dir=data, db_path=tmp_path / "w.db", log_dir=tmp_path / "l", llm_providers=["rule"])
+    c = create_app(settings).test_client()
+
+    def tok():
+        return re.search(r'name="csrf" value="([^"]+)"', c.get("/").get_data(as_text=True)).group(1)
+
+    for q, region in [("음성", "음성군"), ("여주", "여주시"), ("음성창고", "음성군")]:
+        html = c.post("/search", data={"q": q, "csrf": tok()}, follow_redirects=True).get_data(as_text=True)
+        assert f"지역={region}" in html, q
+        assert re.search(r'<h2 id="addr">[^<]*' + region, html), q  # 1순위 매물이 그 지역
