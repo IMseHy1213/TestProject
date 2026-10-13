@@ -61,6 +61,13 @@ class LLMRouter:
             return "off"
         return "ai" if self.ready else "cooling"
 
+    def off_reason(self) -> str:
+        """AI 를 못 쓰는 이유 (화면 안내용, 키 값은 포함하지 않음)."""
+        if self.clients:
+            return ""
+        reasons = [v for k, v in self.unavailable.items() if k in {"openai", "gpt"}] or list(self.unavailable.values())
+        return reasons[0] if reasons else "사용할 AI 가 설정되지 않았습니다 (LLM_PROVIDERS 확인)"
+
     def seconds_until_retry(self) -> int:
         waits = [self._cooling(c) for c in self.clients]
         return int(min(waits)) + 1 if waits else 0

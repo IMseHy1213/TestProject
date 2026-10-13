@@ -16,12 +16,53 @@ DEFAULT_DATA_DIR = PROJECT_ROOT / "매물"
 # 예전 버전의 기본값. .env 에 이 값이 남아 있어도 프로젝트의 '매물' 폴더를 사용
 LEGACY_DATA_DIRS = {r"E:\부동산매물백업\매물폴더\토지", "E:/부동산매물백업/매물폴더/토지"}
 
-try:  # python-dotenv 는 선택 사항. 실행 위치와 상관없이 프로젝트 폴더의 .env 를 읽음
-    from dotenv import load_dotenv
+KEY_FILE = PROJECT_ROOT / "my_api_key.py"  # 코드에 직접 넣는 API 키 (GitHub 에 올라가지 않음)
+KEY_FILE_EXAMPLE = PROJECT_ROOT / "my_api_key.example.py"
+KEY_NAMES = ("OPENAI_API_KEY", "OPENAI_MODEL", "ANTHROPIC_API_KEY")
 
-    load_dotenv(PROJECT_ROOT / ".env")
-except ImportError:  # pragma: no cover
-    pass
+
+def load_keys() -> list[str]:
+    """API 키를 읽어 환경변수에 넣음. 우선순위: my_api_key.py (코드에 넣은 키) > .env > 시스템 환경변수.
+    반환: 키를 찾은 곳 목록 (화면 안내용)."""
+    found = []
+    try:  # python-dotenv 는 선택 사항. 실행 위치와 상관없이 프로젝트 폴더의 .env 를 읽음
+        from dotenv import load_dotenv
+
+        if load_dotenv(PROJECT_ROOT / ".env", override=True):
+            found.append(".env")
+    except ImportError:  # pragma: no cover
+        pass
+    if not KEY_FILE.exists() and KEY_FILE_EXAMPLE.exists():
+        try:  # 처음 실행이면 키를 붙여넣을 빈 파일을 만들어 둠
+            KEY_FILE.write_text(KEY_FILE_EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            pass
+    values = read_key_file()
+    for name, value in values.items():
+        if value:
+            os.environ[name] = value
+    if values.get("OPENAI_API_KEY"):
+        found.append("my_api_key.py")
+    return found
+
+
+def read_key_file() -> dict[str, str]:
+    """my_api_key.py 를 '실행하지 않고' 읽음 (NAME = "값" 줄만). 잘못 적어도 프로그램이 멈추지 않도록."""
+    import re
+
+    out: dict[str, str] = {}
+    try:
+        text = KEY_FILE.read_text(encoding="utf-8-sig")
+    except OSError:
+        return out
+    for name in KEY_NAMES:
+        m = re.search(rf'^\s*{name}\s*=\s*["\']([^"\']*)["\']', text, re.M)
+        if m and m.group(1).strip():
+            out[name] = m.group(1).strip()
+    return out
+
+
+KEY_SOURCES = load_keys()
 
 
 def _data_dir_from_env() -> Path:

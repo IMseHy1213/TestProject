@@ -78,6 +78,7 @@ class RealEstateAgent:
         self.market_client = LandTradePriceClient(settings.data_go_kr_key)
         self.geocoder = VWorldGeocoder(settings.vworld_key)
         self.market_price: dict[str, dict[str, float]] = {}
+        self._llm_built_at = time.time()
         self._listings: Optional[list[LandListing]] = None
         self._office_model: Optional[PreferenceModel] = None
         self.last_sync: Optional[SyncReport] = None
@@ -179,6 +180,38 @@ class RealEstateAgent:
             self.apply_ai_learning(session, self.ai_learn(session))
         self._save_learning(session)
         return session.current()
+
+    # ------------------------------------------------------------------ AI 연결
+    def reconnect_llm(self) -> str:
+        """.env / my_api_key.py 를 다시 읽고 GPT/Claude 연결을 새로 만듦 (서버 재시작 없이 키 변경 반영)."""
+        from .config import load_keys
+
+        load_keys()
+        s = self.settings
+        s.openai_model = os.getenv("OPENAI_MODEL", s.openai_model) or s.openai_model
+        s.anthropic_model = os.getenv("ANTHROPIC_MODEL", s.anthropic_model) or s.anthropic_model
+        self.llm = LLMRouter(s.llm_providers, s.anthropic_model, s.openai_model)
+        self._llm_built_at = time.time()
+        return self.llm.status()
+
+    def maybe_reconnect_llm(self, every_sec: int = 180) -> None:
+        """AI 가 꺼져 있으면 몇 분마다 한 번씩 다시 연결 시도 (키를 고친 뒤 재시작하지 않아도 되도록)."""
+        if self.llm.mode() != "off" or not any(p not in {"rule"} for p in self.settings.llm_providers):
+            return
+        if time.time() - getattr(self, "_llm_built_at", 0) >= every_sec:
+            self.reconnect_llm()
+
+    def test_llm(self) -> tuple[bool, str]:
+        """실제로 한 번 물어봐서 연결 확인."""
+        if not self.llm.available:
+            return False, self.llm.off_reason()
+        try:
+            answer = self.llm.complete("짧게 답하는 도우미입니다.", "연결 확인입니다. '확인' 이라고만 답하세요.",
+                                       max_tokens=200)
+            model = next((getattr(c, "model", "") for c in self.llm.clients if c.name == self.llm.last_used), "")
+            return True, f"{self.llm.last_used}({model}) 응답: {answer.strip()[:40]}"
+        except LLMUnavailable as e:
+            return False, str(e)
 
     # ------------------------------------------------------------------ 생성형 AI 학습
     def ai_learn(self, session: RecommendationSession) -> Optional[dict]:

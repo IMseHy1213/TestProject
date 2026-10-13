@@ -37,20 +37,21 @@ def mask(key: str) -> str:
 
 
 def setup_key() -> int:
-    print("OpenAI API 키를 .env 파일에 저장합니다. (입력하는 글자는 화면에 보이지 않습니다)")
-    print(f"  저장 위치: {ENV_PATH}")
+    from .config import KEY_FILE
+
+    print("OpenAI API 키를 저장합니다. (입력하는 글자는 화면에 보이지 않습니다)")
+    print(f"  저장 위치: {KEY_FILE}  (GitHub 에 올라가지 않는 파일)")
     key = getpass.getpass("  OpenAI API 키 붙여넣기 후 Enter: ").strip()
     if not key:
         print("입력이 없어 취소했습니다.")
         return 1
-    if not key.startswith("sk-"):
-        print("[경고] OpenAI 키는 보통 'sk-' 로 시작합니다. 그래도 저장합니다.")
     model = input("  사용할 GPT 모델 이름 (그냥 Enter = gpt-5.6-luna): ").strip() or "gpt-5.6-luna"
-    values = {"OPENAI_API_KEY": key, "OPENAI_MODEL": model}
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        values["LLM_PROVIDERS"] = "openai,anthropic,rule"  # Claude 키가 없으면 GPT 를 먼저 사용
-    update_env_file(values)
-    print(f"저장했습니다: OPENAI_API_KEY={mask(key)}, OPENAI_MODEL={model}")
+    try:
+        save_key_to_code_file(key, model if model != "gpt-5.6-luna" else "")
+    except ValueError as e:
+        print(f"저장하지 못했습니다: {e}")
+        return 1
+    print(f"저장했습니다: {KEY_FILE.name} 의 OPENAI_API_KEY={mask(key)}, OPENAI_MODEL={model}")
     print("이제 'python main.py llm-check' 로 연결을 확인해 보세요.")
     return 0
 
@@ -87,3 +88,31 @@ def llm_check(agent) -> int:
             ok = False
             print(f"  ❌ 실패: {e}")
     return 0 if ok else 1
+
+
+def save_key_to_code_file(key: str, model: str = "") -> None:
+    """관리자 화면에서 입력한 키를 my_api_key.py 에 저장 (GitHub 에 올라가지 않는 파일)."""
+    import re as _re
+
+    from .config import KEY_FILE, KEY_FILE_EXAMPLE
+
+    key = key.strip()
+    if not _re.fullmatch(r"sk-[A-Za-z0-9_\-]{20,}", key):
+        raise ValueError("OpenAI API 키 형식이 아닙니다 ('sk-' 로 시작하는 긴 문자열)")
+    if model and not _re.fullmatch(r"[A-Za-z0-9._\-]{2,60}", model.strip()):
+        raise ValueError("모델 이름 형식이 올바르지 않습니다")
+    text = (KEY_FILE.read_text(encoding="utf-8") if KEY_FILE.exists()
+            else KEY_FILE_EXAMPLE.read_text(encoding="utf-8") if KEY_FILE_EXAMPLE.exists()
+            else 'OPENAI_API_KEY = ""\nOPENAI_MODEL = ""\n')
+    for name, value in (("OPENAI_API_KEY", key), ("OPENAI_MODEL", model.strip())):
+        if name == "OPENAI_MODEL" and not value:
+            continue
+        line = f'{name} = "{value}"'
+        if _re.search(rf"^\s*{name}\s*=.*$", text, _re.M):
+            text = _re.sub(rf"^\s*{name}\s*=.*$", lambda _m: line, text, count=1, flags=_re.M)
+        else:
+            text += f"\n{line}\n"
+    KEY_FILE.write_text(text, encoding="utf-8")
+    os.environ["OPENAI_API_KEY"] = key
+    if model.strip():
+        os.environ["OPENAI_MODEL"] = model.strip()

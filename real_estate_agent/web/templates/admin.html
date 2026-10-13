@@ -36,7 +36,13 @@
   <div class="panel">
     <h2>AI 연결</h2>
     <p class="meta">{{ llm_status }}</p>
-    <p class="meta">GPT 키 설정: 터미널에서 <code>python main.py setup-key</code></p>
+    <form method="post" action="{{ url_for('admin_ai_key') }}" class="stack">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <label for="key">GPT(OpenAI) API 키 <small class="muted">— 저장 위치: 프로젝트의 my_api_key.py (GitHub 에 안 올라감)</small></label>
+      <input id="key" name="key" type="password" autocomplete="off" placeholder="sk-... (비워두면 지금 키로 연결만 확인)">
+      <input name="model" placeholder="모델 이름 (선택, 비우면 자동)" autocomplete="off">
+      <button class="btn primary">저장하고 연결 확인</button>
+    </form>
   </div>
 
   <div class="panel">

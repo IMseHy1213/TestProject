@@ -12,3 +12,5 @@ logs/
 # 실제 매물 자료(소유자 연락처 포함)는 GitHub 에 올리지 않음
 매물/*
 !매물/README.txt
+# 코드에 넣는 API 키 파일 (절대 GitHub 에 올리지 않음)
+my_api_key.py

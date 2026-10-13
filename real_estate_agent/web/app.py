@@ -182,16 +182,20 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     @app.get("/")
     def index():
         with lock:
+            agent.maybe_reconnect_llm()  # 꺼져 있으면 몇 분마다 자동으로 다시 연결 시도
             count = len(agent.listings())
         return render_template("index.html", examples=EXAMPLES, count=count, llm=agent.llm.last_used,
                                llm_on=agent.llm.available, llm_mode=agent.llm.mode(),
-                               llm_wait=agent.llm.seconds_until_retry(), no_data=count == 0)
+                               llm_wait=agent.llm.seconds_until_retry(), llm_reason=agent.llm.off_reason(),
+                               no_data=count == 0)
 
     @app.post("/search")
     def search():
         q = (request.form.get("q") or "").strip()[:MAX_QUERY_LEN]
         if not q:
             return redirect(url_for("index"))
+        with lock:
+            agent.maybe_reconnect_llm()
         req = agent.understand(q)  # LLM 호출은 잠금 밖에서 (느릴 수 있음)
         with lock:
             sess = agent.recommend(req)
@@ -335,6 +339,27 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             session["admin_msg"] = f"이 컴퓨터에서는 폴더를 자동으로 열 수 없습니다. 위치: {folder}"
         return redirect(url_for("admin"))
 
+    @app.post("/admin/ai-key")
+    def admin_ai_key():
+        """GPT API 키 저장(my_api_key.py) -> 바로 다시 연결 -> 실제로 한 번 물어봐서 확인."""
+        if not is_admin():
+            abort(403)
+        from ..setup_tools import save_key_to_code_file
+
+        key = request.form.get("key", "")
+        model = request.form.get("model", "")
+        if key.strip():
+            try:
+                save_key_to_code_file(key, model)
+            except (ValueError, OSError) as e:
+                session["admin_msg"] = f"저장하지 못했습니다: {e}"
+                return redirect(url_for("admin"))
+        with lock:
+            agent.reconnect_llm()
+        ok, detail = agent.test_llm()
+        session["admin_msg"] = ("✅ GPT 연결 성공 - " if ok else "❌ GPT 연결 실패 - ") + detail
+        return redirect(url_for("admin"))
+
     @app.get("/admin/template")
     def admin_template():
         if not is_admin():
@@ -392,6 +417,12 @@ def run(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True, se
     app = create_app(settings)
     url = f"http://{'localhost' if host in {'127.0.0.1', '0.0.0.0'} else host}:{port}"
     print(f"\n🌐 웹 서비스 시작: {url}   (종료: Ctrl+C)")
+    llm = app.config["AGENT"].llm
+    if llm.mode() == "off":
+        print(f"   ⚠ AI(GPT) 미연결: {llm.off_reason()}")
+        print("     → 프로젝트 폴더의 my_api_key.py 를 열어 OPENAI_API_KEY = \"sk-...\" 에 키를 붙여넣고 저장하세요.")
+    else:
+        print(f"   🤖 {llm.status()}")
     if host == "0.0.0.0":
         print("   같은 와이파이의 다른 기기에서는 http://<이 PC의 IP 주소>:%d 로 접속하세요." % port)
     if not os.getenv("REA_ADMIN_PASSWORD"):
