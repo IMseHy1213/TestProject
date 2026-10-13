@@ -11,12 +11,15 @@ class LLMUnavailable(Exception):
 
     permanent=True   : 키 없음/잘못된 키/모델 없음 등 -> 라우터가 해당 LLM 을 이번 실행 동안 비활성화
     retry_after=초   : 시간 초과/일시적 연결 끊김/요청 한도 등 -> 그 시간 동안만 쉬었다가 자동으로 다시 사용
+    kind             : 화면 안내용 원인 ('rate_limit' 분당 한도, 'quota' 크레딧 부족, 'timeout', 'connection', 'server')
     """
 
-    def __init__(self, message: str = "", permanent: bool = False, retry_after: float | None = None):
+    def __init__(self, message: str = "", permanent: bool = False, retry_after: float | None = None,
+                 kind: str = ""):
         super().__init__(message)
         self.permanent = permanent
         self.retry_after = retry_after
+        self.kind = kind
 
 
 class LLMClient(ABC):

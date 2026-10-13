@@ -187,7 +187,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         return render_template("index.html", examples=EXAMPLES, count=count, llm=agent.llm.last_used,
                                llm_on=agent.llm.available, llm_mode=agent.llm.mode(),
                                llm_wait=agent.llm.seconds_until_retry(), llm_reason=agent.llm.off_reason(),
-                               no_data=count == 0)
+                               llm_cool_reason=agent.llm.cooling_reason(), no_data=count == 0)
 
     @app.post("/search")
     def search():
@@ -275,12 +275,22 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         if cur is None:
             return jsonify(text=""), 404
         sess, _ = cur
+        public = not is_admin()
         with lock:
             top = sess.current()
+            cache = sess.__dict__.setdefault("explain_cache", {})
+            key = (top.listing.listing_id, public, sess.req.raw_text) if top else None
+            cached = cache.get(key) if key else None
         if top is None:
             return jsonify(text="")
-        text = agent.explain(sess.req, top, public=not is_admin())  # LLM 은 잠금 밖에서
-        return jsonify(text=text, source=agent.llm.last_used)
+        if cached:  # '이전'으로 돌아오거나 새로고침해도 GPT 를 다시 부르지 않음
+            return jsonify(text=cached[0], source=cached[1])
+        text = agent.explain(sess.req, top, public=public)  # LLM 은 잠금 밖에서
+        source = agent.llm.last_used
+        if source != "rule":
+            with lock:
+                cache[key] = (text, source)
+        return jsonify(text=text, source=source)
 
     # ------------------------------------------------------------ 관리자 화면
     admin_password = os.getenv("REA_ADMIN_PASSWORD", "")

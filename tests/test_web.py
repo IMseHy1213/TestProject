@@ -160,3 +160,38 @@ def test_not_found_message(make_client):
         html = search(c, q).get_data(as_text=True)
         assert "해당 조건에 맞는 매물이 없습니다." in html, q
         assert "1순위" not in html, q
+
+
+def test_rate_limit_shows_reason_and_explain_is_cached(tmp_path, monkeypatch):
+    from real_estate_agent.agent import RealEstateAgent
+    from real_estate_agent.llm.base import LLMClient, LLMUnavailable
+
+    class RateLimited(LLMClient):
+        name = "openai"
+        model = "fake"
+        calls = 0
+
+        def complete(self, system, user, max_tokens=2000):
+            RateLimited.calls += 1
+            if "추천 설명" in system:
+                return "AI 설명입니다."
+            raise LLMUnavailable("분당 한도", retry_after=30, kind="rate_limit")
+
+    monkeypatch.delenv("REA_ADMIN_PASSWORD", raising=False)
+    data = tmp_path / "토지"
+    shutil.copytree(SAMPLE, data)
+    settings = Settings(data_dir=data, db_path=tmp_path / "w.db", log_dir=tmp_path / "logs", llm_providers=["rule"])
+    agent = RealEstateAgent(settings)
+    agent.llm.clients = [RateLimited()]
+    app = create_app(settings, agent=agent)
+    app.config["TESTING"] = True
+    c = app.test_client()
+    search(c, "음성군 2억원대 땅")  # 조건 추출에서 429 -> 30초 쉼
+    html = c.get("/").get_data(as_text=True)
+    assert "AI 잠시 쉬는 중" in html and "분당 사용 한도" in html
+
+    agent.llm.cooldown_until.clear()
+    first = c.get("/api/explain").get_json()
+    n = RateLimited.calls
+    second = c.get("/api/explain").get_json()  # 같은 매물은 다시 GPT 를 부르지 않음
+    assert first == second and RateLimited.calls == n

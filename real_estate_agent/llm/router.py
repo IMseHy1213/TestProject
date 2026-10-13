@@ -7,7 +7,9 @@ LLM_PROVIDERS=anthropic,openai,rule  ->  Claude 실패 시 GPT, 그것도 실패
 from __future__ import annotations
 
 import logging
+import os
 import time
+from collections import deque
 from typing import Any, Callable
 
 from .base import LLMClient, LLMUnavailable
@@ -40,6 +42,15 @@ class LLMRouter:
         self.last_used: str = "rule"
         self.cooldown_until: dict[str, float] = {}  # 일시적 오류로 잠깐 쉬는 LLM -> 다시 쓸 시각
         self.last_error: dict[str, str] = {}
+        self.last_kind: dict[str, str] = {}
+        # 분당 사용 한도(429) 를 넘지 않도록: 꼭 필요하지 않은 호출(설명 문장, 취향 학습)은
+        # 최근 1분 동안 이 횟수를 넘으면 AI 대신 규칙 기반으로 처리. 검색 문장 이해는 항상 AI 로 시도.
+        try:
+            self.optional_per_min = max(0, int(os.getenv("LLM_OPTIONAL_PER_MIN", "10")))
+        except ValueError:
+            self.optional_per_min = 10
+        self._recent_calls: deque[float] = deque()
+        self.skipped_optional = 0
 
     @property
     def available(self) -> bool:
@@ -68,6 +79,27 @@ class LLMRouter:
         reasons = [v for k, v in self.unavailable.items() if k in {"openai", "gpt"}] or list(self.unavailable.values())
         return reasons[0] if reasons else "사용할 AI 가 설정되지 않았습니다 (LLM_PROVIDERS 확인)"
 
+    def cooling_reason(self) -> str:
+        """잠시 쉬는 이유 (화면 안내용)."""
+        kinds = [self.last_kind.get(c.name, "") for c in self.clients if self._cooling(c)]
+        if "quota" in kinds:
+            return "OpenAI 크레딧(잔액)이 부족합니다 - 관리자가 결제 설정을 확인해야 합니다"
+        if "rate_limit" in kinds:
+            return "짧은 시간에 AI 요청이 몰려 OpenAI 분당 사용 한도에 걸렸습니다"
+        if "timeout" in kinds:
+            return "AI 응답이 늦어지고 있습니다"
+        if "connection" in kinds:
+            return "AI 서버에 연결할 수 없습니다 (인터넷 확인)"
+        if "server" in kinds:
+            return "AI 서버에 일시적인 오류가 있습니다"
+        return "AI 응답이 지연되고 있습니다"
+
+    def _budget_left(self) -> bool:
+        now = time.time()
+        while self._recent_calls and now - self._recent_calls[0] > 60:
+            self._recent_calls.popleft()
+        return len(self._recent_calls) < self.optional_per_min
+
     def seconds_until_retry(self) -> int:
         waits = [self._cooling(c) for c in self.clients]
         return int(min(waits)) + 1 if waits else 0
@@ -84,11 +116,16 @@ class LLMRouter:
         off = "; ".join(f"{k}: {v}" for k, v in self.unavailable.items())
         return f"사용 가능 LLM: {active}" + (f" | 비활성: {off}" if off else "") + " | 최종 대체: 규칙 기반"
 
-    def _try(self, fn_name: str, *args: Any, **kwargs: Any) -> Any:
+    def _try(self, fn_name: str, *args: Any, optional: bool = False, **kwargs: Any) -> Any:
         last_err: Exception | None = None
+        if optional and self.clients and not self._budget_left():
+            self.skipped_optional += 1
+            self.last_used = "rule"
+            raise LLMUnavailable("최근 1분 동안 AI 요청이 많아 이번 설명/학습은 규칙 기반으로 처리")
         for c in list(self.clients):
             if self._cooling(c):  # 일시적 오류 후 쉬는 중 -> 기다리지 않고 다음으로
                 continue
+            self._recent_calls.append(time.time())
             try:
                 result = getattr(c, fn_name)(*args, **kwargs)
                 self.last_used = c.name
@@ -98,6 +135,7 @@ class LLMRouter:
                 log.warning("%s 실패: %s -> 다음 LLM 시도", c.name, e)
                 last_err = e
                 self.last_error[c.name] = str(e)
+                self.last_kind[c.name] = getattr(e, "kind", "")
                 if e.permanent:  # 키 오류 등: 이번 실행 동안 사용 안 함
                     self.clients.remove(c)
                     self.unavailable[c.name] = str(e)
@@ -106,11 +144,13 @@ class LLMRouter:
         self.last_used = "rule"
         raise LLMUnavailable(str(last_err) if last_err else "사용 가능한 LLM 없음")
 
-    def complete(self, system: str, user: str, max_tokens: int = 2000) -> str:
-        return self._try("complete", system, user, max_tokens)
+    def complete(self, system: str, user: str, max_tokens: int = 2000, optional: bool = False) -> str:
+        """optional=True: 없어도 되는 호출(설명 문장 등) - 분당 예산을 넘으면 바로 규칙 기반으로."""
+        return self._try("complete", system, user, max_tokens, optional=optional)
 
-    def complete_json(self, system: str, user: str, max_tokens: int = 2000) -> dict[str, Any]:
-        return self._try("complete_json", system, user, max_tokens)
+    def complete_json(self, system: str, user: str, max_tokens: int = 2000,
+                      optional: bool = False) -> dict[str, Any]:
+        return self._try("complete_json", system, user, max_tokens, optional=optional)
 
 
 def _make_anthropic(model: str) -> LLMClient:

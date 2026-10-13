@@ -290,7 +290,7 @@ class RealEstateAgent:
                 return self.llm.complete(
                     EXPLAIN_SYSTEM,
                     f"손님 조건: {req.describe()}\n원문: {req.raw_text}\n\n매물:\n{json.dumps(info, ensure_ascii=False)}",
-                    max_tokens=600,
+                    max_tokens=600, optional=True,
                 ).strip()
             except LLMUnavailable as e:
                 log.info("LLM 설명 생성 실패: %s", e)

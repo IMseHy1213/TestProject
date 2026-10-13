@@ -69,7 +69,7 @@ def ask_ai(llm: LLMRouter, requirement_text: str, events: list[dict]) -> Optiona
     lines = "\n".join(describe_event(e) for e in events[-MAX_EVENTS:])
     try:
         raw = llm.complete_json(SYSTEM_PROMPT, f"손님 검색 조건: {requirement_text}\n\n손님 반응 기록:\n{lines}",
-                                max_tokens=1200)
+                                max_tokens=1200, optional=True)
     except LLMUnavailable as e:
         log.info("AI 취향 학습 건너뜀: %s", e)
         return None

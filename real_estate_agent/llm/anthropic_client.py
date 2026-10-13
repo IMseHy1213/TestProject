@@ -44,12 +44,12 @@ class AnthropicLLM(LLMClient):
         except a.NotFoundError as e:
             raise LLMUnavailable(f"모델 '{self.model}' 을 찾을 수 없습니다", permanent=True) from e
         except a.RateLimitError as e:
-            raise LLMUnavailable("Anthropic 요청 한도 초과", retry_after=30) from e
+            raise LLMUnavailable("Anthropic 분당 요청 한도 초과", retry_after=30, kind="rate_limit") from e
         except a.APIStatusError as e:
             raise LLMUnavailable(f"Anthropic API 오류 {e.status_code}: {e.message}",
                                  retry_after=20 if e.status_code >= 500 else None) from e
         except a.APIConnectionError as e:
-            raise LLMUnavailable("Anthropic 서버 연결 실패", retry_after=60) from e
+            raise LLMUnavailable("Anthropic 서버 연결 실패", retry_after=60, kind="connection") from e
         except TypeError as e:  # 자격 증명을 찾지 못한 경우 요청 시점에 발생
             raise LLMUnavailable(f"Anthropic 자격 증명 없음: {e}", permanent=True) from e
 

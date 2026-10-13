@@ -52,7 +52,7 @@ def test_json_request_and_parameters():
     assert call["model"] == "gpt-5.1"
     assert call["text"] == {"format": {"type": "json_object"}}
     assert call["reasoning"] == {"effort": "low"}
-    assert call["max_output_tokens"] >= 4000  # 추론 토큰 여유
+    assert 2000 < call["max_output_tokens"] <= 4000  # 추론 여유는 두되 분당 토큰 한도를 아끼도록 작게
 
 
 def test_unknown_model_is_replaced():
@@ -142,3 +142,63 @@ def test_router_permanent_error_disables():
     with pytest.raises(LLMUnavailable):
         r.complete("s", "u")
     assert not r.available and r.mode() == "off" and "openai" in r.unavailable
+
+
+def test_rate_limit_uses_retry_after_header_and_reason():
+    from real_estate_agent.llm.router import LLMRouter
+
+    resp = httpx.Response(429, request=REQ, headers={"retry-after": "7"})
+    err = openai.RateLimitError("Rate limit reached for requests", response=resp, body=None)
+    r = LLMRouter(["rule"])
+    r.clients = [OpenAILLM("gpt-5.1", client=FakeClient([err]))]
+    with pytest.raises(LLMUnavailable):
+        r.complete("s", "u")
+    assert r.mode() == "cooling" and r.seconds_until_retry() <= 8
+    assert "분당" in r.cooling_reason()
+
+
+def test_insufficient_quota_is_reported_as_credit():
+    err = openai.RateLimitError("You exceeded your current quota", response=httpx.Response(429, request=REQ),
+                                body={"code": "insufficient_quota"})
+    llm = OpenAILLM("gpt-5.1", client=FakeClient([err]))
+    with pytest.raises(LLMUnavailable) as e:
+        llm.complete("s", "u")
+    assert e.value.kind == "quota" and e.value.retry_after >= 300 and "크레딧" in str(e.value)
+
+
+def test_truncated_answer_is_retried_with_bigger_limit():
+    class Resp(FakeResponses):
+        def create(self, **kw):
+            self.calls.append(dict(kw))
+            if len(self.calls) == 1:
+                return SimpleNamespace(output_text="", status="incomplete",
+                                       incomplete_details=SimpleNamespace(reason="max_output_tokens"))
+            return SimpleNamespace(output_text="완성된 답", status="completed")
+
+    fake = FakeClient([])
+    fake.responses = Resp([])
+    assert OpenAILLM("gpt-5.1", client=fake).complete("s", "u", max_tokens=600) == "완성된 답"
+    first, second = fake.responses.calls
+    assert second["max_output_tokens"] == first["max_output_tokens"] * 2
+
+
+def test_optional_calls_have_a_per_minute_budget():
+    from real_estate_agent.llm.router import LLMRouter
+
+    class Count(LLMClient):
+        name = "count"
+        n = 0
+
+        def complete(self, system, user, max_tokens=2000):
+            Count.n += 1
+            return "ok"
+
+    r = LLMRouter(["rule"])
+    r.clients = [Count()]
+    r.optional_per_min = 3
+    for _ in range(3):
+        assert r.complete("s", "u", optional=True) == "ok"
+    with pytest.raises(LLMUnavailable):  # 설명·학습 같은 부가 호출은 예산을 넘으면 건너뜀
+        r.complete("s", "u", optional=True)
+    assert r.complete("s", "u") == "ok"  # 검색 문장 이해는 계속 AI 로
+    assert Count.n == 4 and r.mode() == "ai"
