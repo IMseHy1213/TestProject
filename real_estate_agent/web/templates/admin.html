@@ -38,9 +38,13 @@
     <p class="meta">{{ llm_status }}</p>
     <form method="post" action="{{ url_for('admin_ai_key') }}" class="stack">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-      <label for="key">GPT(OpenAI) API 키 <small class="muted">— 저장 위치: 프로젝트의 my_api_key.py (GitHub 에 안 올라감)</small></label>
-      <input id="key" name="key" type="password" autocomplete="off" placeholder="sk-... (비워두면 지금 키로 연결만 확인)">
-      <input name="model" placeholder="모델 이름 (선택, 비우면 자동)" autocomplete="off">
+      <p class="meta small-note">GPT 와 Claude 키를 모두 넣으면 두 AI 를 골고루 번갈아 씁니다. 한쪽이 한도에 걸리거나 늦으면 다른 쪽이 바로 받습니다.
+        저장 위치: 프로젝트의 my_api_key.py (GitHub 에 안 올라감). 비워 둔 칸은 바꾸지 않습니다.</p>
+      <label for="key">GPT(OpenAI) API 키</label>
+      <input id="key" name="key" type="password" autocomplete="off" placeholder="sk-... (비워두면 그대로)">
+      <input name="model" placeholder="GPT 모델 이름 (선택, 비우면 자동)" autocomplete="off">
+      <label for="anthropic_key">Claude(Anthropic) API 키</label>
+      <input id="anthropic_key" name="anthropic_key" type="password" autocomplete="off" placeholder="sk-ant-... (비워두면 그대로)">
       <button class="btn primary">저장하고 연결 확인</button>
     </form>
   </div>

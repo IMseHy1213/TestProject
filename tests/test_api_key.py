@@ -80,12 +80,12 @@ def test_admin_key_form_and_reason(tmp_path, key_file, monkeypatch):
         return re.search(r'name="csrf" value="([^"]+)"', c.get(path).get_data(as_text=True)).group(1)
 
     c.post("/admin/login", data={"password": "pw", "csrf": tok("/admin")})
-    monkeypatch.setattr(type(agent), "test_llm", lambda self: (True, "openai(gpt-test) 응답: 확인"))
+    monkeypatch.setattr(type(agent), "test_llm_each", lambda self: [(True, "GPT(gpt-test) 연결 성공: 확인")])
     r = c.post("/admin/ai-key", data={"key": FAKE_KEY, "model": "", "csrf": tok("/admin")}, follow_redirects=True)
-    assert "GPT 연결 성공" in r.get_data(as_text=True)
+    assert "연결 성공" in r.get_data(as_text=True)
     assert agent.llm.available and agent.llm.mode() == "ai"  # 재시작 없이 연결됨
     assert FAKE_KEY in key_file.read_text(encoding="utf-8")
-    assert "AI(GPT/Claude)가 문장을 이해합니다" in c.get("/").get_data(as_text=True)
+    assert "AI(GPT)가 문장을 이해합니다" in c.get("/").get_data(as_text=True)
     r = c.post("/admin/ai-key", data={"key": "wrong", "csrf": tok("/admin")}, follow_redirects=True)
     assert "저장하지 못했습니다" in r.get_data(as_text=True)
 
@@ -101,3 +101,19 @@ def test_auto_reconnect_when_key_added_later(tmp_path, key_file, monkeypatch):
     agent._llm_built_at -= 1000  # 몇 분 지난 것으로
     agent.maybe_reconnect_llm()
     assert agent.llm.mode() == "ai"
+
+
+def test_save_claude_key_too(key_file, monkeypatch):
+    import os
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # 테스트가 끝나면 원래대로
+    claude = "sk-ant-" + "b" * 40
+    with pytest.raises(ValueError):  # Claude 키를 GPT 칸에 넣은 실수
+        save_key_to_code_file(claude)
+    with pytest.raises(ValueError):
+        save_key_to_code_file("", anthropic_key="sk-ant-short")
+    save_key_to_code_file(FAKE_KEY)
+    save_key_to_code_file("", anthropic_key=claude)  # GPT 키는 그대로 두고 Claude 키만 추가
+    text = key_file.read_text(encoding="utf-8")
+    assert f'OPENAI_API_KEY = "{FAKE_KEY}"' in text and f'ANTHROPIC_API_KEY = "{claude}"' in text
+    assert os.environ["ANTHROPIC_API_KEY"] == claude

@@ -22,8 +22,13 @@ class AnthropicLLM(LLMClient):
         except ImportError as e:
             raise LLMUnavailable("anthropic 패키지가 없습니다 (pip install anthropic)") from e
         self._anthropic = anthropic
+        import os
+
+        if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
+            raise LLMUnavailable("ANTHROPIC_API_KEY 가 없습니다 (my_api_key.py 또는 관리자 화면에서 Claude 키 입력)",
+                                 permanent=True)
         try:
-            self.client = anthropic.Anthropic()
+            self.client = anthropic.Anthropic(timeout=90.0, max_retries=1)
         except Exception as e:  # 자격 증명 없음
             raise LLMUnavailable(f"Anthropic 클라이언트 생성 실패: {e}") from e
         self.model = model

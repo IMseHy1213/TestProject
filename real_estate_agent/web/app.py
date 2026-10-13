@@ -187,7 +187,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         return render_template("index.html", examples=EXAMPLES, count=count, llm=agent.llm.last_used,
                                llm_on=agent.llm.available, llm_mode=agent.llm.mode(),
                                llm_wait=agent.llm.seconds_until_retry(), llm_reason=agent.llm.off_reason(),
-                               llm_cool_reason=agent.llm.cooling_reason(), no_data=count == 0)
+                               llm_cool_reason=agent.llm.cooling_reason(),
+                               llm_names=agent.llm.names(), no_data=count == 0)
 
     @app.post("/search")
     def search():
@@ -351,23 +352,27 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
 
     @app.post("/admin/ai-key")
     def admin_ai_key():
-        """GPT API 키 저장(my_api_key.py) -> 바로 다시 연결 -> 실제로 한 번 물어봐서 확인."""
+        """GPT/Claude API 키 저장(my_api_key.py) -> 바로 다시 연결 -> 실제로 한 번 물어봐서 확인."""
         if not is_admin():
             abort(403)
         from ..setup_tools import save_key_to_code_file
 
         key = request.form.get("key", "")
         model = request.form.get("model", "")
-        if key.strip():
+        anthropic_key = request.form.get("anthropic_key", "")
+        if key.strip() or anthropic_key.strip():
             try:
-                save_key_to_code_file(key, model)
+                save_key_to_code_file(key, model, anthropic_key)
             except (ValueError, OSError) as e:
                 session["admin_msg"] = f"저장하지 못했습니다: {e}"
                 return redirect(url_for("admin"))
         with lock:
             agent.reconnect_llm()
-        ok, detail = agent.test_llm()
-        session["admin_msg"] = ("✅ GPT 연결 성공 - " if ok else "❌ GPT 연결 실패 - ") + detail
+        results = agent.test_llm_each()
+        if not results:
+            session["admin_msg"] = "❌ AI 연결 실패 - " + agent.llm.off_reason()
+        else:
+            session["admin_msg"] = " / ".join(("✅ " if ok else "❌ ") + detail for ok, detail in results)
         return redirect(url_for("admin"))
 
     @app.get("/admin/template")

@@ -22,7 +22,7 @@
     <p class="notice warn">아직 등록된 매물이 없습니다. 관리자 화면에서 매물 파일을 올려주세요.</p>
   {% else %}
     <p class="meta">보유 토지 매물 <strong>{{ count }}</strong>건 ·
-      {% if llm_mode == "ai" %}AI(GPT/Claude)가 문장을 이해합니다
+      {% if llm_mode == "ai" %}AI({{ llm_names }})가 문장을 이해합니다
       {% elif llm_mode == "cooling" %}AI 잠시 쉬는 중 - 규칙 기반으로 이해합니다 (약 {{ llm_wait }}초 뒤 자동으로 다시 연결)
       {% else %}AI 미연결 - 규칙 기반으로 이해합니다{% endif %}</p>
     {% if llm_mode == "cooling" %}<p class="meta small-note">이유: {{ llm_cool_reason }}</p>{% endif %}

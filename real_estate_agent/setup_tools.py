@@ -39,19 +39,24 @@ def mask(key: str) -> str:
 def setup_key() -> int:
     from .config import KEY_FILE
 
-    print("OpenAI API 키를 저장합니다. (입력하는 글자는 화면에 보이지 않습니다)")
+    print("GPT(OpenAI)·Claude(Anthropic) API 키를 저장합니다. (입력하는 글자는 화면에 보이지 않습니다)")
     print(f"  저장 위치: {KEY_FILE}  (GitHub 에 올라가지 않는 파일)")
-    key = getpass.getpass("  OpenAI API 키 붙여넣기 후 Enter: ").strip()
-    if not key:
+    print("  두 키를 모두 넣으면 GPT 와 Claude 를 골고루 번갈아 씁니다. 없는 키는 그냥 Enter.")
+    key = getpass.getpass("  OpenAI(GPT) API 키 붙여넣기 후 Enter: ").strip()
+    model = ""
+    if key:
+        model = input("  사용할 GPT 모델 이름 (그냥 Enter = gpt-5.6-luna): ").strip()
+    anthropic_key = getpass.getpass("  Anthropic(Claude) API 키 붙여넣기 후 Enter: ").strip()
+    if not key and not anthropic_key:
         print("입력이 없어 취소했습니다.")
         return 1
-    model = input("  사용할 GPT 모델 이름 (그냥 Enter = gpt-5.6-luna): ").strip() or "gpt-5.6-luna"
     try:
-        save_key_to_code_file(key, model if model != "gpt-5.6-luna" else "")
+        save_key_to_code_file(key, model if model != "gpt-5.6-luna" else "", anthropic_key)
     except ValueError as e:
         print(f"저장하지 못했습니다: {e}")
         return 1
-    print(f"저장했습니다: {KEY_FILE.name} 의 OPENAI_API_KEY={mask(key)}, OPENAI_MODEL={model}")
+    saved = [f"OPENAI_API_KEY={mask(key)}"] * bool(key) + [f"ANTHROPIC_API_KEY={mask(anthropic_key)}"] * bool(anthropic_key)
+    print(f"저장했습니다: {KEY_FILE.name} 의 {', '.join(saved)}")
     print("이제 'python main.py llm-check' 로 연결을 확인해 보세요.")
     return 0
 
@@ -90,22 +95,30 @@ def llm_check(agent) -> int:
     return 0 if ok else 1
 
 
-def save_key_to_code_file(key: str, model: str = "") -> None:
-    """관리자 화면에서 입력한 키를 my_api_key.py 에 저장 (GitHub 에 올라가지 않는 파일)."""
+def save_key_to_code_file(key: str = "", model: str = "", anthropic_key: str = "") -> None:
+    """관리자 화면에서 입력한 GPT/Claude 키를 my_api_key.py 에 저장 (GitHub 에 올라가지 않는 파일).
+    비워 둔 키는 바꾸지 않음."""
     import re as _re
 
     from .config import KEY_FILE, KEY_FILE_EXAMPLE
 
-    key = key.strip()
-    if not _re.fullmatch(r"sk-[A-Za-z0-9_\-]{20,}", key):
+    key, anthropic_key = key.strip(), anthropic_key.strip()
+    if not key and not anthropic_key:
+        raise ValueError("저장할 키가 없습니다")
+    if key and key.startswith("sk-ant-"):
+        raise ValueError("Claude(Anthropic) 키를 GPT 칸에 넣었습니다 - Claude 키 칸에 넣어 주세요")
+    if key and not _re.fullmatch(r"sk-[A-Za-z0-9_\-]{20,}", key):
         raise ValueError("OpenAI API 키 형식이 아닙니다 ('sk-' 로 시작하는 긴 문자열)")
+    if anthropic_key and not _re.fullmatch(r"sk-ant-[A-Za-z0-9_\-]{20,}", anthropic_key):
+        raise ValueError("Claude(Anthropic) API 키 형식이 아닙니다 ('sk-ant-' 로 시작하는 긴 문자열)")
     if model and not _re.fullmatch(r"[A-Za-z0-9._\-]{2,60}", model.strip()):
         raise ValueError("모델 이름 형식이 올바르지 않습니다")
     text = (KEY_FILE.read_text(encoding="utf-8") if KEY_FILE.exists()
             else KEY_FILE_EXAMPLE.read_text(encoding="utf-8") if KEY_FILE_EXAMPLE.exists()
             else 'OPENAI_API_KEY = ""\nOPENAI_MODEL = ""\n')
-    for name, value in (("OPENAI_API_KEY", key), ("OPENAI_MODEL", model.strip())):
-        if name == "OPENAI_MODEL" and not value:
+    for name, value in (("OPENAI_API_KEY", key), ("OPENAI_MODEL", model.strip()),
+                        ("ANTHROPIC_API_KEY", anthropic_key)):
+        if not value:
             continue
         line = f'{name} = "{value}"'
         if _re.search(rf"^\s*{name}\s*=.*$", text, _re.M):
@@ -113,6 +126,9 @@ def save_key_to_code_file(key: str, model: str = "") -> None:
         else:
             text += f"\n{line}\n"
     KEY_FILE.write_text(text, encoding="utf-8")
-    os.environ["OPENAI_API_KEY"] = key
+    if key:
+        os.environ["OPENAI_API_KEY"] = key
+    if anthropic_key:
+        os.environ["ANTHROPIC_API_KEY"] = anthropic_key
     if model.strip():
         os.environ["OPENAI_MODEL"] = model.strip()

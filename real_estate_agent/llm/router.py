@@ -1,7 +1,9 @@
-"""여러 LLM 을 우선순위대로 시도하는 라우터.
+"""여러 LLM(GPT, Claude)을 함께 쓰는 라우터.
 
-LLM_PROVIDERS=anthropic,openai,rule  ->  Claude 실패 시 GPT, 그것도 실패하면 규칙 기반.
-'rule' 은 LLM 없이 동작하는 모드로, 이 경우 호출부가 규칙 기반 로직을 사용합니다.
+LLM_STRATEGY=balance (기본) : GPT 와 Claude 를 골고루 번갈아 사용. 최근 1분 동안 덜 쓴 쪽에 먼저 보내고,
+                              한쪽이 실패하거나 쉬는 중이면 다른 쪽이 바로 받음. (분당 한도가 두 배로 늘어나는 효과)
+LLM_STRATEGY=order          : LLM_PROVIDERS 에 적은 순서대로 (앞의 것이 실패할 때만 다음 것).
+둘 다 안 되면 규칙 기반. 'rule' 은 LLM 없이 동작하는 모드로, 이 경우 호출부가 규칙 기반 로직을 사용합니다.
 """
 
 from __future__ import annotations
@@ -49,8 +51,11 @@ class LLMRouter:
             self.optional_per_min = max(0, int(os.getenv("LLM_OPTIONAL_PER_MIN", "10")))
         except ValueError:
             self.optional_per_min = 10
-        self._recent_calls: deque[float] = deque()
+        self._recent_calls: dict[str, deque[float]] = {}  # LLM 이름 -> 최근 호출 시각
         self.skipped_optional = 0
+        self.strategy = os.getenv("LLM_STRATEGY", "balance").strip().lower() or "balance"
+        self._turn = 0  # 사용량이 같을 때 번갈아 고르기 위한 순번
+        self.usage: dict[str, int] = {}  # 이번 실행에서 LLM 별로 성공한 횟수 (관리자 화면 표시)
 
     @property
     def available(self) -> bool:
@@ -94,11 +99,27 @@ class LLMRouter:
             return "AI 서버에 일시적인 오류가 있습니다"
         return "AI 응답이 지연되고 있습니다"
 
-    def _budget_left(self) -> bool:
+    def _recent(self, c: LLMClient) -> int:
+        """최근 1분 동안 이 LLM 에 보낸 요청 수."""
+        q = self._recent_calls.setdefault(c.name, deque())
         now = time.time()
-        while self._recent_calls and now - self._recent_calls[0] > 60:
-            self._recent_calls.popleft()
-        return len(self._recent_calls) < self.optional_per_min
+        while q and now - q[0] > 60:
+            q.popleft()
+        return len(q)
+
+    def _order(self) -> list[LLMClient]:
+        """이번 요청을 보낼 순서. balance: 최근 1분 동안 덜 쓴 LLM 먼저, 같으면 번갈아."""
+        clients = list(self.clients)
+        if self.strategy != "balance" or len(clients) < 2:
+            return clients
+        self._turn += 1
+        n = len(clients)
+        return sorted(clients, key=lambda c: (self._recent(c), (clients.index(c) - self._turn) % n))
+
+    def names(self) -> str:
+        """화면 표시용: 지금 연결된 AI 이름 (예: 'GPT + Claude')."""
+        label = {"openai": "GPT", "anthropic": "Claude"}
+        return " + ".join(label.get(c.name, c.name) for c in self.clients) or "없음"
 
     def seconds_until_retry(self) -> int:
         waits = [self._cooling(c) for c in self.clients]
@@ -114,21 +135,29 @@ class LLMRouter:
             parts.append(label)
         active = ", ".join(parts) or "없음"
         off = "; ".join(f"{k}: {v}" for k, v in self.unavailable.items())
-        return f"사용 가능 LLM: {active}" + (f" | 비활성: {off}" if off else "") + " | 최종 대체: 규칙 기반"
+        mode = ("GPT·Claude 골고루 번갈아 사용" if self.strategy == "balance" and len(self.clients) > 1
+                else "적힌 순서대로 사용")
+        used = ", ".join(f"{k} {v}회" for k, v in self.usage.items())
+        return (f"사용 가능 LLM: {active} ({mode})" + (f" | 이번 실행 사용 횟수: {used}" if used else "")
+                + (f" | 비활성: {off}" if off else "") + " | 최종 대체: 규칙 기반")
 
     def _try(self, fn_name: str, *args: Any, optional: bool = False, **kwargs: Any) -> Any:
         last_err: Exception | None = None
-        if optional and self.clients and not self._budget_left():
-            self.skipped_optional += 1
-            self.last_used = "rule"
-            raise LLMUnavailable("최근 1분 동안 AI 요청이 많아 이번 설명/학습은 규칙 기반으로 처리")
-        for c in list(self.clients):
-            if self._cooling(c):  # 일시적 오류 후 쉬는 중 -> 기다리지 않고 다음으로
+        candidates = self._order()
+        if optional:  # 설명·학습 같은 부가 요청: LLM 마다 1분 예산 안에서만
+            candidates = [c for c in candidates if self._recent(c) < self.optional_per_min]
+            if self.clients and not candidates:
+                self.skipped_optional += 1
+                self.last_used = "rule"
+                raise LLMUnavailable("최근 1분 동안 AI 요청이 많아 이번 설명/학습은 규칙 기반으로 처리")
+        for c in candidates:
+            if c not in self.clients or self._cooling(c):  # 일시적 오류 후 쉬는 중 -> 기다리지 않고 다음으로
                 continue
-            self._recent_calls.append(time.time())
+            self._recent_calls.setdefault(c.name, deque()).append(time.time())
             try:
                 result = getattr(c, fn_name)(*args, **kwargs)
                 self.last_used = c.name
+                self.usage[c.name] = self.usage.get(c.name, 0) + 1
                 self.cooldown_until.pop(c.name, None)
                 return result
             except LLMUnavailable as e:

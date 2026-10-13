@@ -213,6 +213,23 @@ class RealEstateAgent:
         except LLMUnavailable as e:
             return False, str(e)
 
+    def test_llm_each(self) -> list[tuple[bool, str]]:
+        """연결된 GPT·Claude 각각에 한 번씩 물어봐서 확인 (관리자 화면)."""
+        label = {"openai": "GPT", "anthropic": "Claude"}
+        out = []
+        for c in list(self.llm.clients):
+            name = f"{label.get(c.name, c.name)}({getattr(c, 'model', '')})"
+            try:
+                answer = c.complete("짧게 답하는 도우미입니다.", "연결 확인입니다. '확인' 이라고만 답하세요.",
+                                    max_tokens=200)
+                out.append((True, f"{name} 연결 성공: {answer.strip()[:20]}"))
+            except LLMUnavailable as e:
+                out.append((False, f"{name} 연결 실패: {e}"))
+        for name, reason in self.llm.unavailable.items():
+            if name in {"openai", "anthropic"} and "키가 없습니다" not in reason and "설정되지 않았습니다" not in reason:
+                out.append((False, f"{label.get(name, name)} 사용 안 함: {reason}"))
+        return out
+
     # ------------------------------------------------------------------ 생성형 AI 학습
     def ai_learn(self, session: RecommendationSession) -> Optional[dict]:
         """손님 반응 기록을 GPT/Claude 에 보내 취향을 추론 (느릴 수 있으므로 웹에서는 잠금 밖에서 호출)."""

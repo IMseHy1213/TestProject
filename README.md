@@ -53,7 +53,7 @@
 | `real_estate_agent/preference.py` | 피드백 학습 (항목 중요도 온라인 학습 + 지목·용도지역·특징 선호) |
 | `real_estate_agent/ai_learning.py` | 생성형 AI(GPT/Claude)로 손님 반응 기록을 분석해 취향 학습 |
 | `real_estate_agent/land_use.py` | 목적별(창고·공장·전원주택·근린생활) 건축 가능 토지 판단 |
-| `real_estate_agent/llm/` | Claude / OpenAI 클라이언트, 우선순위 라우터 (실패 시 다음 LLM → 규칙 기반) |
+| `real_estate_agent/llm/` | Claude / OpenAI 클라이언트, 라우터 (GPT·Claude 골고루 번갈아 사용, 실패 시 다른 쪽 → 규칙 기반) |
 | `real_estate_agent/storage.py` | SQLite: 매물, 손님 조건, 알림·피드백 이력 |
 | `real_estate_agent/agent.py` | 위 단계를 묶는 에이전트 오케스트레이터 |
 | `real_estate_agent/web/` | 웹 서비스 (손님 검색·추천 화면, 관리자 화면) |
@@ -151,6 +151,20 @@ GPT/Claude 가 연결되어 있으면, 손님이 매물을 거절하거나 관�
 > `my_api_key.py` 는 `.gitignore` 에 들어 있어 **GitHub 에 올라가지 않고**, `git pull` 해도 지워지지 않습니다.
 > 키는 비밀번호와 같으니 카톡·메일로 보내거나 다른 파일에 복사하지 마세요.
 > 키를 찾는 순서: `my_api_key.py` → `.env` → 시스템 환경변수
+
+### GPT 와 Claude 를 골고루 쓰기
+
+GPT 키와 Claude(Anthropic) 키를 **둘 다** 넣으면 자동으로 두 AI 를 번갈아 씁니다.
+- 요청마다 **최근 1분 동안 덜 쓴 쪽**에 먼저 보냅니다 → 한쪽에 몰리지 않아 분당 한도(429)에 훨씬 덜 걸립니다.
+- 한쪽이 한도에 걸리거나 응답이 늦으면 **다른 쪽이 바로** 받습니다. 둘 다 안 될 때만 규칙 기반.
+- 첫 화면에 **"AI(GPT + Claude)가 문장을 이해합니다"** 가 나오면 둘 다 연결된 것입니다. 관리자 화면 "AI 연결" 칸에 AI 별 사용 횟수가 나옵니다.
+
+Claude 키 넣는 방법 (둘 중 하나)
+1. `my_api_key.py` 의 `ANTHROPIC_API_KEY = ""` 따옴표 안에 `sk-ant-...` 키를 붙여넣고 저장
+2. 관리자 화면 → "AI 연결" → **Claude(Anthropic) API 키** 칸에 붙여넣기 → 저장하고 연결 확인
+
+Claude 키는 https://console.anthropic.com 에서 발급합니다. (GPT 와 별도로 결제 등록 필요)
+번갈아 쓰지 않고 GPT 를 우선으로 쓰려면 `.env` 에 `LLM_STRATEGY=order` (그러면 `LLM_PROVIDERS` 에 적힌 순서대로, 앞의 것이 실패할 때만 다음 것을 씁니다).
 
 **"AI 미연결" 이 나올 때** - 첫 화면 아래에 **이유**가 함께 나옵니다.
 - `OPENAI_API_KEY 가 설정되지 않았습니다` → 위 방법 1 또는 2로 키를 넣으세요. (폴더를 새로 받았다면 키 파일이 비어 있는 것이 정상)

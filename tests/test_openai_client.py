@@ -202,3 +202,54 @@ def test_optional_calls_have_a_per_minute_budget():
         r.complete("s", "u", optional=True)
     assert r.complete("s", "u") == "ok"  # 검색 문장 이해는 계속 AI 로
     assert Count.n == 4 and r.mode() == "ai"
+
+
+class Named(LLMClient):
+    def __init__(self, name, fail=None):
+        self.name, self.fail, self.n = name, list(fail or []), 0
+
+    def complete(self, system, user, max_tokens=2000):
+        self.n += 1
+        if self.fail:
+            raise self.fail.pop(0)
+        return self.name
+
+
+def _two(monkeypatch, strategy="balance"):
+    from real_estate_agent.llm.router import LLMRouter
+
+    monkeypatch.setenv("LLM_STRATEGY", strategy)
+    r = LLMRouter(["rule"])
+    gpt, claude = Named("openai"), Named("anthropic")
+    r.clients = [gpt, claude]
+    return r, gpt, claude
+
+
+def test_balance_uses_gpt_and_claude_evenly(monkeypatch):
+    r, gpt, claude = _two(monkeypatch)
+    answers = [r.complete("s", "u") for _ in range(10)]
+    assert gpt.n == 5 and claude.n == 5  # 골고루
+    assert answers[0] != answers[1]  # 번갈아
+    assert r.names() == "GPT + Claude" and "골고루" in r.status()
+
+
+def test_balance_falls_back_when_one_is_rate_limited(monkeypatch):
+    r, gpt, claude = _two(monkeypatch)
+    gpt.fail = [LLMUnavailable("한도", retry_after=30, kind="rate_limit")]
+    assert {r.complete("s", "u") for _ in range(4)} == {"anthropic"}  # GPT 가 쉬는 동안 Claude 가 받음
+    assert r.mode() == "ai"  # 한쪽만 쉬면 화면은 계속 'AI 사용 중'
+
+
+def test_order_strategy_keeps_priority(monkeypatch):
+    r, gpt, claude = _two(monkeypatch, "order")
+    assert [r.complete("s", "u") for _ in range(3)] == ["openai"] * 3 and claude.n == 0
+
+
+def test_optional_budget_is_per_provider(monkeypatch):
+    r, gpt, claude = _two(monkeypatch)
+    r.optional_per_min = 2
+    for _ in range(4):
+        r.complete("s", "u", optional=True)  # GPT 2번 + Claude 2번
+    with pytest.raises(LLMUnavailable):
+        r.complete("s", "u", optional=True)
+    assert gpt.n == 2 and claude.n == 2
