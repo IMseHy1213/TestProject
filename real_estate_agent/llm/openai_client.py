@@ -120,10 +120,14 @@ class OpenAILLM(LLMClient):
             except o.PermissionDeniedError as e:
                 raise LLMUnavailable(f"OpenAI 권한 없음 (모델 접근 권한/결제 확인): {e}", permanent=True) from e
             except o.RateLimitError as e:
-                raise LLMUnavailable("OpenAI 요청 한도 초과 또는 크레딧 부족 (결제 설정 확인)") from e
+                raise LLMUnavailable("OpenAI 요청 한도 초과 또는 크레딧 부족 (결제 설정 확인)", retry_after=30) from e
+            except o.APITimeoutError as e:  # 응답이 늦음 (APIConnectionError 의 한 종류라 먼저 처리)
+                raise LLMUnavailable("OpenAI 응답 시간 초과 - 잠시 후 다시 시도합니다", retry_after=20) from e
             except o.APIConnectionError as e:
-                # 인터넷이 끊긴 상태에서 매번 기다리지 않도록 이번 실행 동안은 규칙 기반으로 전환
-                raise LLMUnavailable("OpenAI 서버에 연결할 수 없습니다 (인터넷/방화벽 확인)", permanent=True) from e
+                # 인터넷이 잠깐 끊긴 경우: 매번 기다리지 않도록 1분만 쉬고, 그 뒤 자동으로 다시 시도
+                raise LLMUnavailable("OpenAI 서버에 연결할 수 없습니다 (인터넷/방화벽 확인)", retry_after=60) from e
+            except o.InternalServerError as e:
+                raise LLMUnavailable(f"OpenAI 서버 오류 - 잠시 후 다시 시도합니다: {e}", retry_after=20) from e
             except o.OpenAIError as e:
                 raise LLMUnavailable(f"OpenAI 호출 실패: {e}") from e
         else:

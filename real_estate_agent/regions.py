@@ -60,7 +60,7 @@ _AMBIGUOUS_STEMS = {"동해", "남해", "구리", "장수", "영광", "보성", 
                     "신안", "예산", "청양", "광양", "보은", "의령", "고령", "진안", "영동", "옥천", "청도",
                     "하동", "안성", "양주", "성주", "상주", "무안"}
 
-ALL_SIGUNGU = sorted({n for names in SIGUNGU.values() for n in names}, key=len, reverse=True)
+ALL_SIGUNGU = sorted({n for names in SIGUNGU.values() for n in names}, key=lambda n: (-len(n), n))
 SIGUNGU_TO_SIDO: dict[str, set[str]] = {}
 for _sido, _names in SIGUNGU.items():
     for _n in _names:
@@ -103,8 +103,14 @@ def find_regions(text: str) -> list[str]:
                 if key not in found:
                     found.append(key)
                 break
-    # '세종시' 처럼 시·도이면서 '○○시' 로 잡힌 경우 정리
-    return found
+    # 문장에 나온 순서대로 ('여주나 양평' -> 여주시, 양평군)
+    def pos(name: str) -> int:
+        for cand in [name, _stem(name)] + SIDO_ALIASES.get(name, []):
+            i = compact.find(cand)
+            if i >= 0:
+                return i
+        return len(compact)
+    return sorted(found, key=pos)
 
 
 def address_in_region(address: str, region: str) -> bool:

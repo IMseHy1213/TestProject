@@ -87,3 +87,58 @@ def test_update_env_file_keeps_other_lines(tmp_path):
     text = env.read_text(encoding="utf-8")
     assert "# 주석" in text and "REA_DATA_DIR=E:\\매물" in text
     assert "OPENAI_API_KEY=sk-test" in text and "OPENAI_MODEL=gpt-5" in text
+
+
+# ---------------- 일시적 오류 후 자동 복구 ----------------
+from real_estate_agent.llm.base import LLMClient  # noqa: E402
+from real_estate_agent.llm.router import LLMRouter  # noqa: E402
+
+
+def test_timeout_is_temporary_not_permanent():
+    llm = OpenAILLM("gpt-5", client=FakeClient([openai.APITimeoutError(request=REQ)]))
+    with pytest.raises(LLMUnavailable) as e:
+        llm.complete("s", "u")
+    assert not e.value.permanent and e.value.retry_after  # 시간 초과는 잠깐만 쉼
+    llm = OpenAILLM("gpt-5", client=FakeClient([openai.APIConnectionError(request=REQ)]))
+    with pytest.raises(LLMUnavailable) as e:
+        llm.complete("s", "u")
+    assert not e.value.permanent and e.value.retry_after == 60
+
+
+class Flaky(LLMClient):
+    name = "openai"
+    model = "gpt-test"
+
+    def __init__(self, script):
+        self.script = list(script)
+
+    def complete(self, system, user, max_tokens=2000):
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def test_router_recovers_after_cooldown(monkeypatch):
+    import real_estate_agent.llm.router as router_mod
+
+    now = [1000.0]
+    monkeypatch.setattr(router_mod.time, "time", lambda: now[0])
+    r = LLMRouter(["rule"])
+    r.clients = [Flaky([LLMUnavailable("timeout", retry_after=20), "다시 연결됨"])]
+    assert r.mode() == "ai"
+    with pytest.raises(LLMUnavailable):
+        r.complete("s", "u")
+    assert r.available and r.mode() == "cooling" and r.seconds_until_retry() == 21  # 꺼지지 않고 잠깐 쉼
+    with pytest.raises(LLMUnavailable):
+        r.complete("s", "u")  # 쉬는 동안은 기다리지 않고 바로 규칙 기반으로
+    now[0] += 21
+    assert r.mode() == "ai" and r.complete("s", "u") == "다시 연결됨"  # 자동 복구
+
+
+def test_router_permanent_error_disables():
+    r = LLMRouter(["rule"])
+    r.clients = [Flaky([LLMUnavailable("bad key", permanent=True)])]
+    with pytest.raises(LLMUnavailable):
+        r.complete("s", "u")
+    assert not r.available and r.mode() == "off" and "openai" in r.unavailable

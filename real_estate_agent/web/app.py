@@ -184,7 +184,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         with lock:
             count = len(agent.listings())
         return render_template("index.html", examples=EXAMPLES, count=count, llm=agent.llm.last_used,
-                               llm_on=agent.llm.available, no_data=count == 0)
+                               llm_on=agent.llm.available, llm_mode=agent.llm.mode(),
+                               llm_wait=agent.llm.seconds_until_retry(), no_data=count == 0)
 
     @app.post("/search")
     def search():

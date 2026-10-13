@@ -9,12 +9,14 @@ from typing import Any
 class LLMUnavailable(Exception):
     """API 키 미설정, 패키지 미설치, 호출 실패 등.
 
-    permanent=True 이면 (키 없음/잘못된 모델 등) 라우터가 해당 LLM 을 이번 실행 동안 비활성화합니다.
+    permanent=True   : 키 없음/잘못된 키/모델 없음 등 -> 라우터가 해당 LLM 을 이번 실행 동안 비활성화
+    retry_after=초   : 시간 초과/일시적 연결 끊김/요청 한도 등 -> 그 시간 동안만 쉬었다가 자동으로 다시 사용
     """
 
-    def __init__(self, message: str = "", permanent: bool = False):
+    def __init__(self, message: str = "", permanent: bool = False, retry_after: float | None = None):
         super().__init__(message)
         self.permanent = permanent
+        self.retry_after = retry_after
 
 
 class LLMClient(ABC):
