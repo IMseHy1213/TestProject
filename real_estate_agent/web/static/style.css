@@ -200,3 +200,27 @@ table.listings tr.is-hidden td { opacity: .6; }
 .req { color: var(--accent); font-size: .78rem; font-weight: 700; }
 .danger-zone { margin-top: 14px; }
 @media (max-width: 600px) { .listing-form .two { grid-template-columns: 1fr; } }
+
+/* 매물 파일·폴더 올리기 */
+.panel form.upload-form, .upload-form { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.upload-form .pickers { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.upload-form .picker { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1.5px dashed var(--line);
+  border-radius: 10px; background: var(--bg); font-weight: 600; cursor: pointer; }
+.upload-form .picker:hover { border-color: var(--brand); }
+.upload-form .picker input { font: inherit; font-weight: 400; font-size: .85rem; max-width: 100%; }
+.upload-form .dest { display: flex; gap: 8px; flex-wrap: wrap; }
+.upload-form .dest select, .upload-form .dest input { min-height: 44px; padding: 0 10px; font: inherit;
+  border: 1.5px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); flex: 1 1 180px; }
+.upload-form .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; }
+.upload-form .check input { margin-top: 5px; }
+.upload-form > label { font-weight: 600; }
+.upload-form .btn { align-self: flex-start; }
+.upload-box { margin: 12px 0; }
+.upload-box summary { cursor: pointer; }
+.upload-box[open] summary { margin-bottom: 12px; }
+.upload-form .pickers { align-items: start; }
+.upload-form .picker input[type=file] { min-height: 0; height: auto; padding: 0; border: 0; background: none; }
+table.listings td:first-child, table.listings td:nth-child(6), table.listings td:last-child { white-space: nowrap; }
+table.listings td:nth-child(2) { min-width: 240px; }
+.upload-form .pickers { display: flex; flex-wrap: wrap; gap: 10px; }
+.upload-form .picker { flex: 1 1 240px; }

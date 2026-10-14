@@ -172,7 +172,7 @@ def test_admin_login_upload_and_full_info(make_client):
 
     r = c.post("/admin/upload", data={"csrf": csrf(c, "/admin"), "file": (io.BytesIO(b"x"), "virus.exe")},
                content_type="multipart/form-data", follow_redirects=True)
-    assert "지원하지 않는 형식" in r.get_data(as_text=True)
+    assert "저장할 매물 파일이 없습니다" in r.get_data(as_text=True)  # .exe 등은 저장하지 않음
 
     html = search(c, "음성군 채광 좋은 2억원대 땅").get_data(as_text=True)
     assert "관리자 정보" in html and "010-" in html  # 관리자는 연락처·지번 확인 가능

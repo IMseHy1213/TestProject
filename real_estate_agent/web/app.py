@@ -32,6 +32,8 @@ from ..admin_auth import MIN_LENGTH as MIN_PASSWORD_LEN
 from ..admin_auth import AdminAuth, auth_file
 from ..agent import RealEstateAgent, is_condition_change, mask_address
 from ..collectors.local_folder import SUPPORTED
+from ..file_uploads import DEFAULT_FOLDER as DEFAULT_UPLOAD_FOLDER
+from ..file_uploads import destination_folders, files_in, listing_folder, save_uploads
 from ..listing_editor import HIDDEN, STATUSES as LISTING_STATUSES, WEB_FOLDER
 from ..listing_editor import describe_changes, form_defaults, parse_form, web_file
 from ..models import JIMOK_TYPES
@@ -43,7 +45,7 @@ from ..recommender import EXHAUSTED_MESSAGE, NOT_FOUND_MESSAGE, RecommendationSe
 log = logging.getLogger(__name__)
 
 MAX_QUERY_LEN = 300
-MAX_UPLOAD_MB = 20
+MAX_UPLOAD_MB = 200  # 폴더째 올릴 때 전체 크기 (파일 하나는 20MB 까지)
 SESSION_TTL_SEC = 2 * 60 * 60
 MAX_SESSIONS = 500
 QUICK_REASONS = ["너무 비싸요", "너무 좁아요", "위치가 별로예요", "도로가 별로예요", "채광이 별로예요"]
@@ -164,7 +166,9 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
 
     @app.context_processor
     def inject():
-        return {"csrf_token": csrf_token, "is_admin": is_admin(), "format_price": format_price}
+        return {"csrf_token": csrf_token, "is_admin": is_admin(), "format_price": format_price,
+                "upload_folders": lambda: destination_folders(settings.data_dir),
+                "upload_accept": ",".join(sorted(SUPPORTED)), "default_upload_folder": DEFAULT_UPLOAD_FOLDER}
 
     def current() -> Optional[tuple[RecommendationSession, str]]:
         return store.get(session.get("sid"))
@@ -460,9 +464,11 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             original = agent.original_listing(listing_id) if listing_id else None
             changes = describe_changes(original, edit) if original and edit else []
             source_file = Path(original.source_file).name if original and original.source_file else ""
+            folder = listing_folder(settings.data_dir, original.source_file) if original else ""
         return render_template("listing_form.html", mode=mode, v=values, listing_id=listing_id, errors=list(errors),
                                jimok_choices=JIMOK_TYPES, zoning_choices=ZONING_TYPES, statuses=LISTING_STATUSES,
                                changes=changes, hidden=bool(edit.get(HIDDEN)), source_file=source_file,
+                               folder=folder, folder_files=files_in(settings.data_dir, folder) if listing_id else [],
                                web_file=str(Path(settings.data_dir.name) / WEB_FOLDER / web_file(settings.data_dir).name)), status
 
     @app.get("/admin/listings")
@@ -572,28 +578,61 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
 
     @app.post("/admin/upload")
     def admin_upload():
+        """매물 파일 여러 개 또는 폴더째 올리기 -> 매물 폴더에 저장 후 다시 읽기."""
         if not is_admin():
             abort(403)
-        f = request.files.get("file")
-        if not f or not f.filename:
-            session["admin_msg"] = "파일을 선택해 주세요."
-            return redirect(url_for("admin"))
-        name = safe_filename(f.filename)
-        if Path(name).suffix.lower() not in SUPPORTED:
-            session["admin_msg"] = f"지원하지 않는 형식입니다. ({', '.join(sorted(SUPPORTED))})"
-            return redirect(url_for("admin"))
-        target_dir = settings.data_dir / "웹업로드"
+        back = request.form.get("back", "admin")
+        listing_id = (request.form.get("id") or "").strip()[:100]
+
+        def go_back():
+            if back == "edit" and listing_id:
+                return redirect(url_for("admin_listing_edit", id=listing_id))
+            return redirect(url_for("admin_listings" if back == "listings" else "admin"))
+
+        folder_files = request.files.getlist("folder")
+        paths = request.form.getlist("folder_paths")
+        if len(paths) == len(folder_files):  # 화면이 보낸 '폴더/하위/파일' 경로가 더 정확함
+            for f, p in zip(folder_files, paths):
+                if "/" in p and "/" not in (f.filename or "").replace("\\", "/"):
+                    f.filename = p
+        files = request.files.getlist("files") + folder_files + request.files.getlist("file")
+        dest = request.form.get("dest", DEFAULT_UPLOAD_FOLDER)
+        if dest == "__new__":
+            dest = (request.form.get("new_dest") or "").strip()
+            if not dest:
+                session["admin_msg"] = "❌ 새로 만들 폴더 이름을 적어 주세요."
+                return go_back()
+        if back == "edit" and listing_id:  # 이 매물의 폴더에 올리기
+            with lock:
+                listing = agent.find_listing(listing_id)
+            if listing is None:
+                session["admin_msg"] = "❌ 매물을 찾을 수 없습니다."
+                return redirect(url_for("admin_listings"))
+            dest = listing_folder(settings.data_dir, listing.source_file)
         try:
-            target_dir.mkdir(parents=True, exist_ok=True)
-            target = target_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{name}"
-            f.save(target)
-        except OSError as e:
-            session["admin_msg"] = f"저장 실패: {e}"
-            return redirect(url_for("admin"))
-        with lock:
-            do_sync()
-        session["admin_msg"] = f"'{name}' 업로드 후 매물을 다시 읽었습니다."
-        return redirect(url_for("admin"))
+            with lock:
+                before = {l.listing_id for l in agent.listings() + agent.hidden_listings}
+                result = save_uploads(settings.data_dir, files, dest, replace=request.form.get("replace") == "1")
+                do_sync()
+                after = agent.listings() + agent.hidden_listings
+                saved = {str((settings.data_dir / p).resolve()) for p in result.saved}
+                added = [l for l in after if l.listing_id not in before]
+                from_files = [l for l in after if str(Path(l.source_file).resolve()) in saved]
+                problems = [e for e in (agent.last_sync.file_errors if agent.last_sync else [])
+                            if any(Path(p).name in e or Path(p).parent.name in e for p in result.saved)]
+        except (ValueError, OSError) as e:
+            session["admin_msg"] = f"❌ 올리지 못했습니다: {e}"
+            return go_back()
+        where = f"'{dest}'" if dest else "매물 폴더 바로 아래"
+        msg = f"✅ {where} 에 {result.summary()}. 다시 읽은 결과: 새 매물 {len(added)}건, 올린 파일에서 읽은 매물 {len(from_files)}건."
+        if not from_files:
+            msg += " ⚠ 올린 파일에서 매물을 읽지 못했습니다. 소재지·면적·매매가 항목이 있는지 확인하세요."
+        if problems:
+            msg += " 확인 필요: " + "; ".join(problems[:3])
+        session["admin_msg"] = msg
+        if back != "edit" and len(added) == 1:
+            return redirect(url_for("admin_listings", q=added[0].listing_id))
+        return go_back()
 
     @app.get("/healthz")
     def healthz():

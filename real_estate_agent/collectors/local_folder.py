@@ -64,6 +64,7 @@ class LocalFolderCollector(Collector):
             p for p in self.data_dir.rglob("*")
             if p.is_file() and p.suffix.lower() in SUPPORTED and not p.name.startswith(("~$", "."))
             and p.name.lower() != "readme.txt"  # 폴더 안내문은 매물 파일이 아님
+            and not any(part.startswith("_백업") for part in p.relative_to(self.data_dir).parts)  # 교체 전 보관본
         )
 
     def listing_unit(self, path: Path) -> Optional[Path]:

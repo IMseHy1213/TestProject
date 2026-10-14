@@ -8,6 +8,12 @@
 </div>
 {% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
 
+<details class="panel upload-box">
+  <summary><strong>📁 엑셀 파일·폴더로 매물 추가</strong> <small class="muted">— 여러 매물을 한꺼번에</small></summary>
+  {% set up_back = 'listings' %}{% set up_id = '' %}{% set up_folder = '' %}
+  {% include "_upload_form.html" %}
+</details>
+
 <form method="get" action="{{ url_for('admin_listings') }}" class="search compact list-search">
   <label class="sr-only" for="q">매물 찾기</label>
   <input id="q" name="q" value="{{ q }}" placeholder="주소·매물번호·지목으로 찾기 (예: 무극리, 대)">
@@ -54,3 +60,4 @@
 <p class="card empty">찾는 매물이 없습니다.</p>
 {% endif %}
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='app.js') }}"></script>{% endblock %}

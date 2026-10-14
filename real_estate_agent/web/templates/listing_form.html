@@ -89,6 +89,16 @@
 </form>
 
 {% if mode == 'edit' %}
+<section class="panel">
+  <h2>이 매물의 파일</h2>
+  <p class="meta">폴더: <code>{{ folder or '(매물 폴더 바로 아래)' }}</code>
+    {% if folder_files %} · 들어 있는 파일: {{ folder_files | join(', ') }}{% endif %}</p>
+  <p class="meta small-note">이 폴더에 엑셀 파일이나 폴더를 추가하거나, 같은 이름의 파일을 새 것으로 교체할 수 있습니다.
+    파일 내용이 바뀌면 위에서 고친 항목은 그대로 유지되고, 고치지 않은 항목은 새 파일 내용으로 바뀝니다.</p>
+  {% set up_back = 'edit' %}{% set up_id = listing_id %}{% set up_folder = folder %}
+  {% include "_upload_form.html" %}
+</section>
+
 <section class="panel danger-zone">
   <h2>다른 작업</h2>
   <div class="row left">
@@ -113,3 +123,4 @@
 </section>
 {% endif %}
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='app.js') }}"></script>{% endblock %}

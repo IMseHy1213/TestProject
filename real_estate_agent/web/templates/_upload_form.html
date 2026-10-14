@@ -1,0 +1,39 @@
+{#- 매물 파일·폴더 올리기. include 전에 up_back('admin'|'listings'|'edit'), up_id, up_folder 를 정해 둠 -#}
+<form method="post" action="{{ url_for('admin_upload') }}" enctype="multipart/form-data" class="upload-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="back" value="{{ up_back }}">
+  {% if up_id %}<input type="hidden" name="id" value="{{ up_id }}">{% endif %}
+
+  <div class="pickers">
+    <label class="picker">
+      <span>📄 엑셀 파일 고르기 <small class="muted">(여러 개 가능)</small></span>
+      <input type="file" name="files" multiple accept="{{ upload_accept }}">
+    </label>
+    <label class="picker">
+      <span>📁 폴더째 고르기 <small class="muted">(안의 하위 폴더까지)</small></span>
+      <input type="file" name="folder" webkitdirectory directory multiple>
+    </label>
+  </div>
+
+  {% if up_back == 'edit' %}
+    <p class="meta small-note">저장 위치: 이 매물의 폴더 <code>{{ up_folder or '(매물 폴더 바로 아래)' }}</code></p>
+  {% else %}
+    <label for="dest-{{ up_back }}">저장할 폴더</label>
+    <div class="dest">
+      <select id="dest-{{ up_back }}" name="dest">
+        {% set folders = upload_folders() %}
+        {% if default_upload_folder not in folders %}<option value="{{ default_upload_folder }}">{{ default_upload_folder }} (기본)</option>{% endif %}
+        {% for f in folders %}<option value="{{ f }}" {% if f == default_upload_folder %}selected{% endif %}>{{ f }}</option>{% endfor %}
+        <option value="">(매물 폴더 바로 아래)</option>
+        <option value="__new__">＋ 새 폴더 만들기…</option>
+      </select>
+      <input name="new_dest" placeholder="새 폴더 이름 (예: 진천군)" maxlength="60" aria-label="새 폴더 이름">
+    </div>
+    <p class="meta small-note">지역 폴더(예: 음성군)를 고르고 '지번 이름 폴더'를 폴더째 올리면 그 폴더가 매물 1건으로 읽힙니다.</p>
+  {% endif %}
+
+  <label class="check"><input type="checkbox" name="replace" value="1">
+    같은 이름의 파일이 있으면 <strong>교체</strong> (기존 파일은 매물 폴더의 <code>_백업</code>에 보관)</label>
+  <p class="meta small-note">체크하지 않으면 둘 다 보관합니다 (새 파일 이름 뒤에 _2). 엑셀·CSV 등 매물 파일만 저장되고 사진·PDF 는 건너뜁니다.</p>
+  <button class="btn primary">올리고 다시 읽기</button>
+</form>

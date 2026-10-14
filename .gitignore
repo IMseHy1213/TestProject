@@ -17,3 +17,4 @@ my_api_key.py
 # 샘플 데이터로 연습할 때 웹에서 추가/업로드한 파일
 sample_data/**/웹입력/
 sample_data/**/웹업로드/
+sample_data/**/_백업/
