@@ -132,12 +132,33 @@ def address_in_region(address: str, region: str) -> bool:
     return False
 
 
+# 읍 승격 등으로 이름이 바뀐 곳 (옛 이름 -> 지금 이름). 새로 바뀐 곳이 생기면 여기에 한 줄 추가.
+RENAMED_REGIONS = {
+    "대소면": "대소읍",  # 충북 음성군 대소면 -> 대소읍 (읍 승격)
+}
+
+
+def eupmyeon_variants(name: str) -> list[str]:
+    """'대소면' -> ['대소면', '대소읍'] (면이 읍으로 승격돼도 같은 곳). 읍·면이 아니면 [name]."""
+    n = re.sub(r"\s+", "", name or "")
+    if len(n) >= 3 and n[-1] in "읍면":
+        return [n, n[:-1] + ("읍" if n[-1] == "면" else "면")]
+    return [n]
+
+
+def same_place(a: str, b: str) -> bool:
+    """'대소면' 과 '대소읍' 처럼 읍·면 표기만 다른 같은 곳인지."""
+    return a == b or b in eupmyeon_variants(a)
+
+
 def canonical_region(name: str) -> str:
     """'음성' / '음성시'(잘못된 표기) / '음성 군' -> '음성군', '여주' -> '여주시', '경상북도' -> '경북'.
     시·군 이름표에 없으면(읍·면·리 이름 등) 그대로 둠."""
     n = re.sub(r"\s+", "", str(name or ""))
     if not n:
         return n
+    if n in RENAMED_REGIONS:  # '대소면' -> '대소읍'
+        return RENAMED_REGIONS[n]
     if n in SIGUNGU_TO_SIDO:
         return n
     sido = sido_of(n)

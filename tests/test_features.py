@@ -103,5 +103,31 @@ def test_county_plus_township_narrows_to_township():
     assert narrow_regions(["여주시", "대소면"], addrs) == ["여주시", "대소면"]  # 서로 다른 지역은 둘 다
     assert narrow_regions(["음성군"], addrs) == ["음성군"]
     p = RequirementParser(None, ["음성군", "대소면", "원남면", "여주시", "가남읍"], addrs)
-    assert p.parse("음성군 대소면 땅").regions == ["대소면"]
+    assert p.parse("음성군 대소면 땅").regions == ["대소읍"]  # 읍 승격된 지금 이름으로
     assert sorted(p.parse("여주나 음성 땅").regions) == ["여주시", "음성군"]
+
+
+def test_daeso_myeon_finds_daeso_eup_listings():
+    """대소면 -> 대소읍 승격: 옛 이름으로 검색해도 새 이름 매물이, 새 이름으로 검색해도 옛 표기 매물이 나옴."""
+    from real_estate_agent.models import CustomerRequirement, LandListing
+    from real_estate_agent.recommender import region_match
+    from real_estate_agent.regions import canonical_region, same_place
+    from real_estate_agent.requirement_parser import RequirementParser
+
+    assert canonical_region("대소면") == "대소읍" and same_place("대소면", "대소읍")
+    assert not same_place("대소면", "삼성면")
+
+    new = LandListing("A", "충청북도 음성군 대소읍 삼정리 100", 1000, 20000)
+    old = LandListing("B", "충청북도 음성군 대소면 오류리 5", 1000, 20000)  # 아직 옛 이름으로 적힌 엑셀
+    other = LandListing("C", "충청북도 음성군 원남면 하당리 3", 1000, 20000)
+    addrs = [l.address for l in (new, old, other)]
+    known = ["음성군", "대소읍", "대소면", "원남면"]
+
+    for q in ("대소면 땅", "음성군 대소면 땅", "대소읍 땅", "음성 대소읍 창고 부지"):
+        req = RequirementParser(None, known, addrs).parse(q)
+        hits = [l.listing_id for l in (new, old, other) if region_match(l, req.regions)]
+        assert hits == ["A", "B"], (q, req.regions)
+
+    # 보유 매물이 모두 '대소읍' 으로만 적혀 있어도 '대소면' 을 알아듣고 안내
+    req = RequirementParser(None, ["음성군", "대소읍"], [new.address]).parse("대소면 땅")
+    assert req.regions == ["대소읍"] and any("대소읍" in n and "대소면" in n for n in req.notes)

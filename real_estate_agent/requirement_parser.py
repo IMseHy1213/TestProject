@@ -14,7 +14,7 @@ from typing import Iterable, Optional
 from .llm import LLMRouter, LLMUnavailable
 from .models import JIMOK_TYPES, PYEONG_M2, CustomerRequirement
 from .normalizer import JIMOK_ALIASES, parse_price_manwon
-from .regions import canonical_region, find_regions
+from .regions import RENAMED_REGIONS, canonical_region, eupmyeon_variants, find_regions, same_place
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +98,11 @@ class RequirementParser:
             req.customer_name = customer_name
         req = sanitize(req)
         req.regions = narrow_regions(req.regions, self.addresses)
+        # '대소면' 이라고 썼는데 지금 이름이 '대소읍' 이면 알려 줌
+        for r in req.regions:
+            old = next((v for v in eupmyeon_variants(r) if v != r and v in text and r not in text), None)
+            if old:
+                req.notes.append(f"'{old}'은(는) 지금 '{r}'(으)로 이름이 바뀌어 {r} 매물을 찾았습니다.")
         return req
 
     def _parse_llm(self, text: str) -> CustomerRequirement:
@@ -137,7 +142,7 @@ def narrow_regions(regions: list[str], addresses: Iterable[str]) -> list[str]:
         if big[-1:] not in "도시군구" or big in small:
             continue
         for s in small:
-            if any(big in a and s in a.split() for a in addresses) or (
+            if any(big in a and any(same_place(s, tok) for tok in a.split()) for a in addresses) or (
                     not addresses and s.startswith(re.sub(r"(시|군|구)$", "", big))):
                 drop.add(big)
                 break
@@ -301,10 +306,15 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
     regions: list[str] = []
     for r in known_regions:
         # 시·군·구는 줄여 써도 인정 ('음성' -> 음성군), 읍·면·동·리는 전체 이름을 써야 인정 ('음성' 이 음성읍이 되지 않도록)
+        # 읍·면은 승격 전/후 이름 모두 인정 ('대소면' 이라고 써도 보유 매물의 '대소읍')
         stem = re.sub(r"(시|군|구)$", "", r) if r[-1:] in "시군구" else r
-        if (r in t or (len(stem) >= 2 and re.search(rf"{re.escape(stem)}{_REGION_END}", t))) \
-                and not any(r in x for x in regions):
+        typed = any(v in t for v in eupmyeon_variants(r))
+        if (typed or (len(stem) >= 2 and re.search(rf"{re.escape(stem)}{_REGION_END}", t))) \
+                and not any(r in x or same_place(r, x) for x in regions):
             regions.append(r)
+    for old, new in RENAMED_REGIONS.items():  # 보유 매물에 아직 없어도 옛 이름은 지금 이름으로
+        if old in t and not any(same_place(new, x) for x in regions):
+            regions.append(new)
     # 전국 시·도 / 시·군 이름표 (보유 매물에 없는 지역도 지역 조건으로 인정 -> '현재 존재하지 않습니다' 안내)
     for w in find_regions(t):
         if not any(w in x or x in w for x in regions):
