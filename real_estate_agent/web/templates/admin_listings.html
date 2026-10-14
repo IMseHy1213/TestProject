@@ -34,7 +34,8 @@
   <tbody>
   {% for r in rows %}
     <tr class="{% if r.hidden %}is-hidden{% endif %}">
-      <td><code>{{ r.id }}</code></td>
+      <td>{% if r.office_no %}<code>{{ r.office_no }}</code>{% else %}<span class="muted">(번호 없음)</span>{% endif %}
+        {% if r.id != r.office_no %}<br><small class="muted" title="프로그램이 붙인 번호">{{ r.id }}</small>{% endif %}</td>
       <td>{{ r.address }}
         {% if r.edited %}<span class="tag">수정됨</span>{% endif %}
         {% if r.hidden %}<span class="tag warn">숨김</span>{% endif %}

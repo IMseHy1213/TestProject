@@ -82,7 +82,10 @@
 <section class="panel">
   <h2>매물 정리 보고서 (오류·중복)</h2>
   <p class="meta">{{ data.summary }}</p>
-  <pre class="pre tall">{{ data.report }}</pre>
+  <details class="report-box">
+    <summary>보고서 자세히 보기 (오류·중복 매물 목록)</summary>
+    <pre class="pre tall">{{ data.report }}</pre>
+  </details>
 </section>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='app.js') }}"></script>{% endblock %}

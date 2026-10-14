@@ -264,6 +264,11 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
     listing_id = "" if _is_blank(mapped.get("listing_id")) else str(mapped["listing_id"]).strip()
     if listing_id.endswith(".0"):  # 엑셀 숫자형 번호
         listing_id = listing_id[:-2]
+    # 엑셀에 적힌 매물번호 (화면 표시용). 매물 폴더 방식은 수집기가 따로 넘겨줌 (자동 번호와 구분)
+    extra.pop("_파일매물번호", None)
+    file_no = str(record.get("_파일매물번호") or "").strip() if "_파일매물번호" in record else listing_id
+    if file_no:
+        extra["매물번호"] = file_no
 
     listing = LandListing(
         listing_id=listing_id or make_listing_id(address, area),

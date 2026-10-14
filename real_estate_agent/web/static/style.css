@@ -224,3 +224,8 @@ table.listings td:first-child, table.listings td:nth-child(6), table.listings td
 table.listings td:nth-child(2) { min-width: 240px; }
 .upload-form .pickers { display: flex; flex-wrap: wrap; gap: 10px; }
 .upload-form .picker { flex: 1 1 240px; }
+
+.office-no { margin: -2px 0 6px; color: var(--muted); font-size: .9rem; }
+.office-no strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.report-box summary { cursor: pointer; font-weight: 600; color: var(--brand); padding: 4px 0; }
+.report-box[open] summary { margin-bottom: 8px; }

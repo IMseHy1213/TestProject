@@ -45,6 +45,11 @@ class LandListing:
         return self.price_manwon / self.area_pyeong if self.area_m2 > 0 else 0.0
 
     @property
+    def office_no(self) -> str:
+        """매물 자료(엑셀)에 적힌 매물번호. 없으면 빈 문자열 (프로그램이 붙인 번호는 표시하지 않음)."""
+        return str(self.extra.get("매물번호", "") or "")
+
+    @property
     def is_blind_land(self) -> bool:
         """맹지 여부."""
         return "맹지" in self.road_access or "맹지" in self.description

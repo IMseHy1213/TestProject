@@ -249,3 +249,13 @@ def test_rate_limit_shows_reason_and_explain_is_cached(tmp_path, monkeypatch):
     n = RateLimited.calls
     second = c.get("/api/explain").get_json()  # 같은 매물은 다시 GPT 를 부르지 않음
     assert first == second and RateLimited.calls == n
+
+
+def test_card_shows_office_number_without_road_and_report_is_folded(make_client):
+    c = make_client("pw1234")
+    html = search(c, "양평 땅").get_data(as_text=True)
+    assert "매물번호 <strong>" in html
+    assert "<dt>도로</dt>" not in html  # 매물 정보 칸에서 도로는 뺌
+    c.post("/admin/login", data={"password": "pw1234", "csrf": csrf(c, "/admin")})
+    admin = c.get("/admin").get_data(as_text=True)
+    assert '<details class="report-box">' in admin and "<details class=\"report-box\" open" not in admin

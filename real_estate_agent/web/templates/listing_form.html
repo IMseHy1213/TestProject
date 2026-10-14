@@ -2,7 +2,7 @@
 {% block title %}{% if mode == 'new' %}새 매물 추가{% else %}매물 수정{% endif %}{% endblock %}
 {% block content %}
 <p class="meta"><a href="{{ url_for('admin_listings') }}">← 매물 관리</a></p>
-<h1>{% if mode == 'new' %}새 매물 추가{% else %}매물 수정 <small class="muted">{{ listing_id }}</small>{% endif %}</h1>
+<h1>{% if mode == 'new' %}새 매물 추가{% else %}매물 수정 <small class="muted">{{ office_no or listing_id }}</small>{% endif %}</h1>
 
 {% if errors %}
   <div class="notice warn" role="alert"><strong>저장하지 못했습니다.</strong>
@@ -12,7 +12,7 @@
 {% if mode == 'new' %}
   <p class="meta">저장하면 매물 폴더의 <code>{{ web_file }}</code> 에 한 줄로 추가되고 손님 검색에 바로 나옵니다.</p>
 {% else %}
-  <p class="meta">원본 파일: {{ source_file or "-" }} · 원본 엑셀은 그대로 두고, 여기서 고친 항목만 프로그램에 덮어씁니다.</p>
+  <p class="meta">매물번호: {{ office_no or "(엑셀에 없음)" }}{% if office_no != listing_id %} · 프로그램 번호 {{ listing_id }}{% endif %} · 원본 파일: {{ source_file or "-" }} · 원본 엑셀은 그대로 두고, 여기서 고친 항목만 프로그램에 덮어씁니다.</p>
   {% if changes %}
     <div class="learned"><strong>지금까지 고친 내용</strong>
       <ul>{% for c in changes %}<li>{{ c }}</li>{% endfor %}</ul></div>

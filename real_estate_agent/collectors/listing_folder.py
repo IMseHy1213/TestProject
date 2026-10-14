@@ -155,6 +155,9 @@ def extract_key_values(grid: list[list[Any]], skip_rows: set[int]) -> dict[str, 
     return kv
 
 
+OFFICE_NO_COLUMNS = {"매물번호", "관리번호", "매물코드", "매물no", "매물id"}
+
+
 # ---------------------------------------------------------------- 매물 1건으로 합치기
 def _value(rec: dict, field: str) -> tuple[Optional[str], Any]:
     for k, v in rec.items():
@@ -268,8 +271,19 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
     if zoning_mix:
         desc_parts.append(f"용도지역: {zoning_mix}")
 
+    # 엑셀에 적힌 사무실 매물번호 (정보지의 '매물번호' 칸, 또는 표의 '매물번호/관리번호' 열. 필지 순번 '번호' 열은 제외)
+    file_no = _text(kv_val("listing_id"))
+    if not file_no:
+        for p in ([total] if total else []) + parcels:
+            file_no = next((_text(v) for k, v in p.items()
+                            if re.sub(r"\s+", "", str(k)).lower() in OFFICE_NO_COLUMNS and _text(v)), "")
+            if file_no:
+                break
+    file_no = file_no[:-2] if file_no.endswith(".0") else file_no
+
     record: dict[str, Any] = {
         "매물번호": _text(kv_val("listing_id")) or "F-" + hashlib.sha1(unit_name.encode()).hexdigest()[:10],
+        "_파일매물번호": file_no,
         "소재지": address,
         "면적(㎡)": round(area, 2) if area else None,
         "매매가": price,

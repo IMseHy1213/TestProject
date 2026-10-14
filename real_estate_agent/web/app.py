@@ -176,7 +176,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     def listing_view(s, admin: bool) -> dict:
         l = s.listing
         return {
-            "id": l.listing_id,
+            "id": l.listing_id, "office_no": l.office_no,
             "address": l.address if admin else mask_address(l.address),
             "jimok": l.jimok or "-", "zoning": l.zoning or "-",
             "area_m2": f"{l.area_m2:,.0f}", "area_pyeong": f"{l.area_pyeong:,.0f}",
@@ -451,7 +451,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     # ------------------------------------------------------------ 관리자: 매물 추가·수정
     def admin_row(l, hidden: bool = False) -> dict:
         return {
-            "id": l.listing_id, "address": l.address, "jimok": l.jimok or "-",
+            "id": l.listing_id, "office_no": l.office_no, "address": l.address, "jimok": l.jimok or "-",
             "pyeong": f"{l.area_pyeong:,.0f}", "price": format_price(l.price_manwon), "status": l.status,
             "edited": bool(l.extra.get("관리자수정")), "hidden": hidden, "web": l.source == "web"
             or Path(l.source_file).parent.name == WEB_FOLDER,
@@ -465,10 +465,11 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             changes = describe_changes(original, edit) if original and edit else []
             source_file = Path(original.source_file).name if original and original.source_file else ""
             folder = listing_folder(settings.data_dir, original.source_file) if original else ""
+            office_no = original.office_no if original else ""
         return render_template("listing_form.html", mode=mode, v=values, listing_id=listing_id, errors=list(errors),
                                jimok_choices=JIMOK_TYPES, zoning_choices=ZONING_TYPES, statuses=LISTING_STATUSES,
                                changes=changes, hidden=bool(edit.get(HIDDEN)), source_file=source_file,
-                               folder=folder, folder_files=files_in(settings.data_dir, folder) if listing_id else [],
+                               folder=folder, office_no=office_no, folder_files=files_in(settings.data_dir, folder) if listing_id else [],
                                web_file=str(Path(settings.data_dir.name) / WEB_FOLDER / web_file(settings.data_dir).name)), status
 
     @app.get("/admin/listings")
@@ -491,7 +492,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             rows = [r for r in rows if r["web"]]
         if q:
             words = q.split()
-            rows = [r for r in rows if all(w in f"{r['id']} {r['address']} {r['jimok']} {r['status']}" for w in words)]
+            rows = [r for r in rows if all(w in f"{r['id']} {r['office_no']} {r['address']} {r['jimok']} {r['status']}"
+                                       for w in words)]
         rows.sort(key=lambda r: (r["hidden"], r["address"]))
         per = 50
         pages = max(1, (len(rows) + per - 1) // per)

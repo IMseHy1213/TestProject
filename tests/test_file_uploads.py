@@ -158,3 +158,30 @@ def test_folder_paths_field_restores_structure(admin):
                content_type="multipart/form-data", follow_redirects=True)
     assert "새 매물 1건" in r.get_data(as_text=True)
     assert (data / "음성군" / FOLDER / f"{FOLDER}.xlsx").exists()
+
+
+def test_office_number_from_excel_is_shown(admin):
+    c, agent, data = admin
+    with_no = [("매물번호", "음성-0715")] + INFO
+    upload(c, [(f"{FOLDER}/{FOLDER}.xlsx", info_sheet(with_no))], dest="음성군")
+    l = next(l for l in agent.listings() if "오향리 501-2" in l.address)
+    assert l.office_no == "음성-0715"
+
+    # 필지 목록의 '번호'(1, 2, 3 순번)는 매물번호로 쓰지 않음
+    other = "음성군 생극면 방축리 88"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["번호", "소재지", "지목", "면적(㎡)", "금액"])
+    ws.append([1, "충청북도 음성군 생극면 방축리 88", "전", 1000, 5000])
+    ws.append([2, "충청북도 음성군 생극면 방축리 89", "전", 1200, 6000])
+    buf = io.BytesIO()
+    wb.save(buf)
+    upload(c, [(f"{other}/{other}.xlsx", buf.getvalue())], dest="음성군")
+    l2 = next(l for l in agent.listings() if "방축리 88" in l.address)
+    assert l2.office_no == "" and l2.listing_id.startswith("F-")
+
+    ledger_listing = agent.find_listing("T-1004")  # 장부 파일의 매물번호 열
+    assert ledger_listing.office_no == "T-1004"
+
+    html = c.get(f"/admin/listings?q=음성-0715").get_data(as_text=True)
+    assert "음성-0715" in html and l.listing_id in html  # 매물번호로 찾기 + 프로그램 번호도 표시

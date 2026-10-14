@@ -29,13 +29,13 @@
     <span class="of">전체 {{ total }}건 중</span>
     <span class="score" title="조건 일치 점수">{{ item.score }}점</span>
   </div>
+  {% if item.office_no %}<p class="office-no">매물번호 <strong>{{ item.office_no }}</strong></p>{% endif %}
   <h2 id="addr">{{ item.address }}</h2>
   <dl class="facts">
     <div><dt>가격</dt><dd class="price">{{ item.price }}<small>평당 {{ item.ppp }}만원</small></dd></div>
     <div><dt>면적</dt><dd>{{ item.area_pyeong }}평<small>{{ item.area_m2 }}㎡</small></dd></div>
     <div><dt>지목</dt><dd>{{ item.jimok }}</dd></div>
     <div><dt>용도지역</dt><dd>{{ item.zoning }}</dd></div>
-    <div class="wide"><dt>도로</dt><dd>{{ item.road }}</dd></div>
   </dl>
   {% if item.description %}<p class="desc">{{ item.description }}</p>{% endif %}
 
@@ -50,7 +50,7 @@
 
   {% if is_admin %}
     <div class="admin-box">
-      <strong>관리자 정보</strong> · 매물번호 {{ item.id }} · 연락처 {{ item.contact or "-" }} ·
+      <strong>관리자 정보</strong> ·{% if item.id != item.office_no %} 프로그램 번호 {{ item.id }} ·{% endif %} 도로 {{ item.road }} · 연락처 {{ item.contact or "-" }} ·
       출처 {{ item.source }} · 등록일 {{ item.registered }} · 파일 {{ item.source_file }} ·
       <a href="{{ url_for('admin_listing_edit', id=item.id) }}">이 매물 수정</a>
     </div>
@@ -107,7 +107,7 @@
   <summary>다음 후보 미리보기 ({{ others | length }}건)</summary>
   <ol start="{{ rank + 1 }}">
     {% for o in others %}
-      <li><strong>{{ o.address }}</strong> · {{ o.jimok }} · {{ o.area_pyeong }}평 · {{ o.price }} <span class="score small">{{ o.score }}점</span></li>
+      <li>{% if o.office_no %}<span class="tag">{{ o.office_no }}</span> {% endif %}<strong>{{ o.address }}</strong> · {{ o.jimok }} · {{ o.area_pyeong }}평 · {{ o.price }} <span class="score small">{{ o.score }}점</span></li>
     {% endfor %}
   </ol>
 </details>
