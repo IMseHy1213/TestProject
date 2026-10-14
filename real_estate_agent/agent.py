@@ -233,7 +233,7 @@ class RealEstateAgent:
 
     # ------------------------------------------------------------------ 3~5. 상담·추천
     def parser(self) -> RequirementParser:
-        return RequirementParser(self.llm, self.known_regions())
+        return RequirementParser(self.llm, self.known_regions(), [l.address for l in self.listings()])
 
     def understand(self, inquiry: str, customer_name: str = "") -> CustomerRequirement:
         return self.parser().parse(inquiry, customer_name)

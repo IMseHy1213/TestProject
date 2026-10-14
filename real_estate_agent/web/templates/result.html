@@ -30,14 +30,14 @@
     <span class="score" title="조건 일치 점수">{{ item.score }}점</span>
   </div>
   {% if item.office_no %}<p class="office-no">매물번호 <strong>{{ item.office_no }}</strong></p>{% endif %}
-  <h2 id="addr">{{ item.address }}</h2>
+  <h2 id="addr">{{ item.address }}{% if item.use_tag %} <span class="tag use">{{ item.use_tag }}</span>{% endif %}</h2>
   <dl class="facts">
     <div><dt>가격</dt><dd class="price">{{ item.price }}<small>평당 {{ item.ppp }}만원</small></dd></div>
     <div><dt>면적</dt><dd>{{ item.area_pyeong }}평<small>{{ item.area_m2 }}㎡</small></dd></div>
-    <div><dt>지목</dt><dd>{{ item.jimok }}</dd></div>
-    <div><dt>용도지역</dt><dd>{{ item.zoning }}</dd></div>
+    <div><dt>지목</dt><dd>{{ item.jimok }}{% if item.jimok_mix %}<small>{{ item.jimok_mix }}</small>{% endif %}</dd></div>
+    <div><dt>용도지역</dt><dd>{{ item.zoning }}{% if item.zoning_mix %}<small>{{ item.zoning_mix }}</small>{% endif %}</dd></div>
+    <div class="wide"><dt>매물 특징</dt><dd class="features">{{ item.features or "-" }}</dd></div>
   </dl>
-  {% if item.description %}<p class="desc">{{ item.description }}</p>{% endif %}
 
   {% if item.reasons %}
     <ul class="good">{% for r in item.reasons %}<li>{{ r }}</li>{% endfor %}</ul>

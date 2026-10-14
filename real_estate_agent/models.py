@@ -50,6 +50,20 @@ class LandListing:
         return str(self.extra.get("매물번호", "") or "")
 
     @property
+    def features(self) -> str:
+        """화면의 '매물 특징': '● 대소IC-15분 거리(중부 고속도로) / 2필지 일괄 매매'"""
+        if "_매물특징" in self.extra:
+            return str(self.extra["_매물특징"] or "")
+        from .collectors.listing_folder import feature_lines, format_features
+
+        return format_features(feature_lines(self.description))
+
+    @property
+    def use_tag(self) -> str:
+        """매물 폴더 이름의 괄호 안 용도 (예: '물류부지', '상가 부지')."""
+        return str(self.extra.get("_용도태그", "") or "")
+
+    @property
     def is_blind_land(self) -> bool:
         """맹지 여부."""
         return "맹지" in self.road_access or "맹지" in self.description

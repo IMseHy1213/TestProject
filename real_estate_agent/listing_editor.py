@@ -142,6 +142,8 @@ def apply_fields(listing: LandListing, fields: dict[str, Any]) -> None:
     for k, v in fields.items():
         if k in EDITABLE:
             setattr(listing, k, _from_json(k, v))
+    if "description" in fields:  # 특이사항을 고치면 '매물 특징' 도 고친 내용으로 표시
+        listing.extra.pop("_매물특징", None)
     if fields:
         listing.extra["관리자수정"] = sorted(LABELS.get(k, k) for k in fields if k != HIDDEN)
 

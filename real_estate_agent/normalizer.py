@@ -266,6 +266,9 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
         listing_id = listing_id[:-2]
     # 엑셀에 적힌 매물번호 (화면 표시용). 매물 폴더 방식은 수집기가 따로 넘겨줌 (자동 번호와 구분)
     extra.pop("_파일매물번호", None)
+    for key in ("_매물특징", "_용도태그", "_지목구성", "_용도지역구성"):  # 매물 폴더 수집기가 넘긴 표시용 값 (빈 값도 유지)
+        if key in record:
+            extra[key] = "" if _is_blank(record[key]) else str(record[key])
     file_no = str(record.get("_파일매물번호") or "").strip() if "_파일매물번호" in record else listing_id
     if file_no:
         extra["매물번호"] = file_no

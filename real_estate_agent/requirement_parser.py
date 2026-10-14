@@ -77,9 +77,11 @@ def _pyeong_or_m2(num: float, unit: str) -> float:
 
 
 class RequirementParser:
-    def __init__(self, llm: Optional[LLMRouter] = None, known_regions: Iterable[str] = ()):
+    def __init__(self, llm: Optional[LLMRouter] = None, known_regions: Iterable[str] = (),
+                 addresses: Iterable[str] = ()):
         self.llm = llm
         self.known_regions = sorted({r for r in known_regions if len(r) >= 2}, key=len, reverse=True)
+        self.addresses = list(addresses)  # 보유 매물 주소 ('음성군 대소면' 처럼 어느 읍·면이 어느 군에 속하는지 알기 위해)
 
     def parse(self, text: str, customer_name: str = "") -> CustomerRequirement:
         req: Optional[CustomerRequirement] = None
@@ -94,7 +96,9 @@ class RequirementParser:
         req.notes = non_land_notes(text)
         if customer_name:
             req.customer_name = customer_name
-        return sanitize(req)
+        req = sanitize(req)
+        req.regions = narrow_regions(req.regions, self.addresses)
+        return req
 
     def _parse_llm(self, text: str) -> CustomerRequirement:
         hint = ""
@@ -119,6 +123,25 @@ class RequirementParser:
             except LLMUnavailable as e:
                 log.info("LLM 피드백 반영 실패, 규칙 기반으로 전환: %s", e)
         return apply_feedback_rule_based(req, feedback, self.known_regions)
+
+
+def narrow_regions(regions: list[str], addresses: Iterable[str]) -> list[str]:
+    """'음성군 대소면' -> ['대소면']: 같이 적은 읍·면·동·리가 그 시·군 안에 있으면 좁은 쪽만 남김.
+    ('여주 양평' 처럼 서로 다른 지역은 그대로 둘 다)"""
+    small = [r for r in regions if r[-1:] in "읍면동리"]
+    if not small:
+        return regions
+    addresses = list(addresses)
+    drop = set()
+    for big in regions:
+        if big[-1:] not in "도시군구" or big in small:
+            continue
+        for s in small:
+            if any(big in a and s in a.split() for a in addresses) or (
+                    not addresses and s.startswith(re.sub(r"(시|군|구)$", "", big))):
+                drop.add(big)
+                break
+    return [r for r in regions if r not in drop]
 
 
 def sanitize(req: CustomerRequirement) -> CustomerRequirement:

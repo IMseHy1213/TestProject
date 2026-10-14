@@ -181,7 +181,9 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             "jimok": l.jimok or "-", "zoning": l.zoning or "-",
             "area_m2": f"{l.area_m2:,.0f}", "area_pyeong": f"{l.area_pyeong:,.0f}",
             "price": format_price(l.price_manwon), "ppp": f"{l.price_per_pyeong:,.0f}",
-            "road": l.road_access or "-", "description": l.description,
+            "road": l.road_access or "-", "description": l.description, "features": l.features,
+            "use_tag": l.use_tag, "jimok_mix": l.extra.get("_지목구성", ""),
+            "zoning_mix": l.extra.get("_용도지역구성", ""),
             "score": f"{s.score:.1f}", "reasons": s.reasons, "penalties": s.penalties,
             "registered": l.registered_date.isoformat() if l.registered_date else "-",
             # 관리자 전용

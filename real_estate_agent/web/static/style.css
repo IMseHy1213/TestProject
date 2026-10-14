@@ -229,3 +229,6 @@ table.listings td:nth-child(2) { min-width: 240px; }
 .office-no strong { color: var(--ink); font-variant-numeric: tabular-nums; }
 .report-box summary { cursor: pointer; font-weight: 600; color: var(--brand); padding: 4px 0; }
 .report-box[open] summary { margin-bottom: 8px; }
+
+.facts dd.features { font-weight: 500; line-height: 1.7; }
+.tag.use { vertical-align: middle; font-size: .78rem; margin-left: 6px; }

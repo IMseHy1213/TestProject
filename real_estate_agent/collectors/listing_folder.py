@@ -158,6 +158,69 @@ def extract_key_values(grid: list[list[Any]], skip_rows: set[int]) -> dict[str, 
 OFFICE_NO_COLUMNS = {"매물번호", "관리번호", "매물코드", "매물no", "매물id"}
 
 
+# ---------------------------------------------------------------- 매물 특징
+BULLETS = "●•·∙○◎▶►▷■□◆◇◈★☆✔✓-*"
+
+
+def feature_lines(text: Any) -> list[str]:
+    """'● 대소IC 15분\n● 2차선 도로 접함' / '정남향, 채광 우수' -> ['● 대소IC 15분', '● 2차선 도로 접함'] 처럼 한 줄에 하나씩, 앞에 ●."""
+    out = []
+    for line in re.split(r"[\r\n]+|\s+/\s+", _text(text)):
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("※"):  # 참고 문구는 그대로
+            out.append(line)
+            continue
+        body = line.lstrip(BULLETS + " \t").strip()
+        if body:
+            out.append(f"● {body}")
+    return out
+
+
+def extract_features(grid: list[list[Any]], skip_rows: set[int] = frozenset()) -> list[str]:
+    """'매물 특징' 칸의 값 + 그 아래로 이어지는 '●' 줄들까지 모두. (필지 표 안의 '비고' 열은 제외)"""
+    for r, row in enumerate(grid):
+        if r in skip_rows:
+            continue
+        for c, cell in enumerate(row):
+            if _label(cell) != "description":
+                continue
+            lines: list[str] = []
+            col = None
+            for j in range(c + 1, min(c + 4, len(row))):  # 오른쪽 값
+                if _text(row[j]) and not _label(row[j]):
+                    lines += feature_lines(row[j])
+                    col = j
+                    break
+            col = c if col is None else col  # 오른쪽이 비었으면 아래 칸들이 값
+            for rr in range(r + 1, min(r + 30, len(grid))):  # 아래로 이어지는 줄
+                if rr in skip_rows:
+                    break
+                below = grid[rr]
+                if c < len(below) and _label(below[c]):
+                    break  # 다음 항목 시작
+                value = _text(below[col]) if col < len(below) else ""
+                if not value:
+                    if lines:
+                        break
+                    continue
+                if col != c and not value.startswith(tuple(BULLETS + "※")):
+                    break
+                lines += feature_lines(value)
+            if lines:
+                return lines
+    return []
+
+
+def format_features(lines: list[str], n_parcels: int = 0) -> str:
+    """화면 표시용: '● 대소IC-15분 거리(중부 고속도로) / 2필지 일괄 매매'"""
+    parts = list(lines)
+    if n_parcels > 1:
+        parts.append(f"{n_parcels}필지 일괄 매매")
+    return " / ".join(parts)
+
+
 # ---------------------------------------------------------------- 매물 1건으로 합치기
 def _value(rec: dict, field: str) -> tuple[Optional[str], Any]:
     for k, v in rec.items():
@@ -191,8 +254,10 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
     parcels: list[dict] = []
     total: Optional[dict] = None
     kv: dict[str, tuple[str, Any]] = {}
+    features: list[str] = []
     for grid in grids:
         rows, tot, used = extract_table(grid)
+        features = features or extract_features(grid, used)
         parcels.extend(rows)
         total = total or tot
         for f, pair in extract_key_values(grid, used).items():
@@ -257,13 +322,19 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
     jimok, jimok_mix = dominant("jimok", normalize_jimok)
     zoning, zoning_mix = dominant("zoning", normalize_zoning)
 
-    desc_parts = []
-    if tags:
-        desc_parts.append(" ".join(tags))
-    if _text(kv_val("description")):
-        desc_parts.append(_text(kv_val("description")))
+    if not features:  # 표의 '특징/비고' 열
+        for p in ([total] if total else []) + parcels[:1]:
+            _, v = _value(p, "description")
+            if v is not None:
+                features = feature_lines(v)
+                break
     m = _MULTI_PARCEL.search(base)
     n_parcels = len(parcels) or (int(m.group(1)) + 1 if m else 0)
+
+    desc_parts = []  # 검색용 전체 설명 (용도 태그 + 특징 + 필지 + 지목 구성)
+    if tags:
+        desc_parts.append(" ".join(tags))
+    desc_parts.extend(features)
     if n_parcels > 1:
         desc_parts.append(f"{n_parcels}필지 일괄")
     if jimok_mix:
@@ -295,6 +366,10 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
         "특이사항": " / ".join(desc_parts),
         "연락처": _text(kv_val("owner_contact")),
         "_매물폴더": unit_name,
+        "_매물특징": format_features(features, n_parcels),
+        "_용도태그": " ".join(tags),
+        "_지목구성": jimok_mix,
+        "_용도지역구성": zoning_mix,
         "_필지수": n_parcels or 1,
     }
     if price is None and "price_per_pyeong" in kv:
