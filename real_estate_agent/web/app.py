@@ -5,6 +5,7 @@
   /result          추천 매물 카드 + [마음에 안 들어요 → 다음 순위] / 빠른 사유 / 관심 / 이전 / 조건 변경
   /api/explain     현재 매물 AI 설명 (화면이 먼저 뜬 뒤 불러옴)
 관리자 화면 (처음 /admin 에 들어가면 비밀번호를 정하는 화면이 나옴 - 서버를 켠 PC 에서만)
+  /admin/listings  매물 관리: 새 매물 추가, 기존 매물 수정·숨기기·되돌리기
   /admin           매물 다시 읽기, 오류·중복 보고서, 매물 파일 업로드, AI 연결 상태, 학습 현황
 
 개인정보: 손님 화면에는 소유자 연락처·원본 파일·정확한 지번을 보여주지 않습니다. (관리자 로그인 시에만 표시)
@@ -31,6 +32,10 @@ from ..admin_auth import MIN_LENGTH as MIN_PASSWORD_LEN
 from ..admin_auth import AdminAuth, auth_file
 from ..agent import RealEstateAgent, is_condition_change, mask_address
 from ..collectors.local_folder import SUPPORTED
+from ..listing_editor import HIDDEN, STATUSES as LISTING_STATUSES, WEB_FOLDER
+from ..listing_editor import describe_changes, form_defaults, parse_form, web_file
+from ..models import JIMOK_TYPES
+from ..requirement_parser import ZONING_TYPES
 from ..config import PROJECT_ROOT, Settings, get_settings
 from ..models import format_price
 from ..recommender import EXHAUSTED_MESSAGE, NOT_FOUND_MESSAGE, RecommendationSession
@@ -438,6 +443,123 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         else:
             session["admin_msg"] = " / ".join(("✅ " if ok else "❌ ") + detail for ok, detail in results)
         return redirect(url_for("admin"))
+
+    # ------------------------------------------------------------ 관리자: 매물 추가·수정
+    def admin_row(l, hidden: bool = False) -> dict:
+        return {
+            "id": l.listing_id, "address": l.address, "jimok": l.jimok or "-",
+            "pyeong": f"{l.area_pyeong:,.0f}", "price": format_price(l.price_manwon), "status": l.status,
+            "edited": bool(l.extra.get("관리자수정")), "hidden": hidden, "web": l.source == "web"
+            or Path(l.source_file).parent.name == WEB_FOLDER,
+            "file": Path(l.source_file).name if l.source_file else "-",
+        }
+
+    def form_page(mode: str, values: dict, listing_id: str = "", errors=(), status: int = 200):
+        with lock:
+            edit = agent.listing_edit(listing_id) if listing_id else {}
+            original = agent.original_listing(listing_id) if listing_id else None
+            changes = describe_changes(original, edit) if original and edit else []
+            source_file = Path(original.source_file).name if original and original.source_file else ""
+        return render_template("listing_form.html", mode=mode, v=values, listing_id=listing_id, errors=list(errors),
+                               jimok_choices=JIMOK_TYPES, zoning_choices=ZONING_TYPES, statuses=LISTING_STATUSES,
+                               changes=changes, hidden=bool(edit.get(HIDDEN)), source_file=source_file,
+                               web_file=str(Path(settings.data_dir.name) / WEB_FOLDER / web_file(settings.data_dir).name)), status
+
+    @app.get("/admin/listings")
+    def admin_listings():
+        if not is_admin():
+            return redirect(url_for("admin"))
+        q = (request.args.get("q") or "").strip()[:MAX_QUERY_LEN]
+        show = request.args.get("show", "")
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+        except ValueError:
+            page = 1
+        with lock:
+            rows = [admin_row(l) for l in agent.listings()] + [admin_row(l, True) for l in agent.hidden_listings]
+        if show == "edited":
+            rows = [r for r in rows if r["edited"] or r["hidden"]]
+        elif show == "hidden":
+            rows = [r for r in rows if r["hidden"]]
+        elif show == "web":
+            rows = [r for r in rows if r["web"]]
+        if q:
+            words = q.split()
+            rows = [r for r in rows if all(w in f"{r['id']} {r['address']} {r['jimok']} {r['status']}" for w in words)]
+        rows.sort(key=lambda r: (r["hidden"], r["address"]))
+        per = 50
+        pages = max(1, (len(rows) + per - 1) // per)
+        page = min(page, pages)
+        return render_template("admin_listings.html", rows=rows[(page - 1) * per: page * per], total=len(rows),
+                               q=q, show=show, page=page, pages=pages,
+                               message=session.pop("admin_msg", ""))
+
+    @app.route("/admin/listings/new", methods=["GET", "POST"])
+    def admin_listing_new():
+        if not is_admin():
+            return redirect(url_for("admin"))
+        if request.method == "GET":
+            return form_page("new", form_defaults())
+        form = parse_form(request.form)
+        if form.errors:
+            return form_page("new", form.raw, errors=form.errors, status=400)
+        try:
+            with lock:
+                listing_id, warnings = agent.add_listing(form.values)
+        except (ValueError, OSError) as e:
+            return form_page("new", form.raw, errors=[str(e)], status=400)
+        session["admin_msg"] = f"✅ 새 매물을 추가했습니다 (매물번호 {listing_id}). 손님 검색에 바로 나옵니다." + (
+            f" 참고: {', '.join(warnings)}" if warnings else "")
+        return redirect(url_for("admin_listings", q=listing_id))
+
+    @app.route("/admin/listings/edit", methods=["GET", "POST"])
+    def admin_listing_edit():
+        if not is_admin():
+            return redirect(url_for("admin"))
+        listing_id = (request.values.get("id") or "").strip()[:100]
+        with lock:
+            listing = agent.find_listing(listing_id)
+        if listing is None:
+            session["admin_msg"] = "❌ 매물을 찾을 수 없습니다. (매물 폴더에서 지워졌을 수 있습니다)"
+            return redirect(url_for("admin_listings"))
+        if request.method == "GET":
+            return form_page("edit", form_defaults(listing), listing_id)
+        form = parse_form(request.form)
+        if form.errors:
+            return form_page("edit", form.raw, listing_id, errors=form.errors, status=400)
+        try:
+            with lock:
+                warnings = agent.edit_listing(listing_id, form.values)
+        except ValueError as e:
+            return form_page("edit", form.raw, listing_id, errors=[str(e)], status=400)
+        session["admin_msg"] = f"✅ 매물 {listing_id} 을(를) 수정했습니다. 손님 검색에 바로 반영됩니다." + (
+            f" 참고: {', '.join(warnings)}" if warnings else "")
+        return redirect(url_for("admin_listings", q=listing_id))
+
+    @app.post("/admin/listings/state")
+    def admin_listing_state():
+        """숨기기 / 다시 보이기 / 원래대로 되돌리기."""
+        if not is_admin():
+            abort(403)
+        listing_id = (request.form.get("id") or "").strip()[:100]
+        op = request.form.get("op", "")
+        try:
+            with lock:
+                if op == "hide":
+                    agent.edit_listing(listing_id, {}, hidden=True)
+                    msg = f"매물 {listing_id} 을(를) 숨겼습니다. 손님 검색에 나오지 않습니다. ('숨긴 매물'에서 다시 보이게 할 수 있습니다)"
+                elif op == "show":
+                    agent.edit_listing(listing_id, {}, hidden=False)
+                    msg = f"매물 {listing_id} 을(를) 다시 손님 검색에 보이게 했습니다."
+                elif op == "revert":
+                    agent.revert_listing(listing_id)
+                    msg = f"매물 {listing_id} 을(를) 원래 엑셀 내용으로 되돌렸습니다."
+                else:
+                    abort(400)
+            session["admin_msg"] = "✅ " + msg
+        except ValueError as e:
+            session["admin_msg"] = f"❌ {e}"
+        return redirect(url_for("admin_listings", q=listing_id))
 
     @app.get("/admin/template")
     def admin_template():

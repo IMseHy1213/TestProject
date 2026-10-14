@@ -171,3 +171,32 @@ button.link { background: none; border: 0; color: var(--brand); font: inherit; c
 .panel form.stack { flex-direction: column; align-items: stretch; }
 .panel form.stack input { min-height: 44px; padding: 0 12px; font: inherit; border: 1.5px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); }
 .small-note { font-size: .82rem; }
+
+/* 관리자: 매물 관리 */
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.list-search { max-width: none; margin: 12px 0; }
+.list-search select, .with-unit select, .listing-form select {
+  min-height: 46px; padding: 0 10px; font: inherit; border: 1.5px solid var(--line); border-radius: 10px;
+  background: var(--surface); color: var(--ink); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+table.listings { width: 100%; border-collapse: collapse; font-size: .9rem; }
+table.listings th, table.listings td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+table.listings th { font-size: .8rem; color: var(--muted); font-weight: 600; white-space: nowrap; }
+table.listings td.num, table.listings th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+table.listings tr.is-hidden td { opacity: .6; }
+.tag.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.btn.small { min-height: 36px; padding: 0 12px; font-size: .88rem; }
+.pager { margin-top: 14px; }
+.listing-form { display: flex; flex-direction: column; gap: 6px; }
+.listing-form label { font-weight: 600; margin-top: 8px; }
+.listing-form input, .listing-form textarea {
+  width: 100%; min-height: 46px; padding: 8px 12px; font: inherit; border: 1.5px solid var(--line);
+  border-radius: 10px; background: var(--surface); color: var(--ink); }
+.listing-form textarea { resize: vertical; }
+.listing-form .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.listing-form .two > div { display: flex; flex-direction: column; gap: 6px; }
+.listing-form .row { margin-top: 14px; }
+.with-unit { display: flex; gap: 6px; }
+.req { color: var(--accent); font-size: .78rem; font-weight: 700; }
+.danger-zone { margin-top: 14px; }
+@media (max-width: 600px) { .listing-form .two { grid-template-columns: 1fr; } }

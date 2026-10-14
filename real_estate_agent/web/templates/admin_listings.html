@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}매물 관리{% endblock %}
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin') }}">← 관리자 화면</a></p>
+<div class="page-head">
+  <h1>매물 관리</h1>
+  <a class="btn primary" href="{{ url_for('admin_listing_new') }}">＋ 새 매물 추가</a>
+</div>
+{% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
+
+<form method="get" action="{{ url_for('admin_listings') }}" class="search compact list-search">
+  <label class="sr-only" for="q">매물 찾기</label>
+  <input id="q" name="q" value="{{ q }}" placeholder="주소·매물번호·지목으로 찾기 (예: 무극리, 대)">
+  <select name="show" aria-label="보기">
+    <option value="" {% if not show %}selected{% endif %}>전체</option>
+    <option value="edited" {% if show == 'edited' %}selected{% endif %}>수정·숨긴 매물</option>
+    <option value="hidden" {% if show == 'hidden' %}selected{% endif %}>숨긴 매물</option>
+    <option value="web" {% if show == 'web' %}selected{% endif %}>웹에서 추가한 매물</option>
+  </select>
+  <button class="btn">찾기</button>
+</form>
+<p class="meta">{{ total }}건{% if pages > 1 %} · {{ page }}/{{ pages }} 쪽{% endif %}</p>
+
+{% if rows %}
+<div class="table-wrap">
+<table class="listings">
+  <thead><tr><th>매물번호</th><th>소재지</th><th>지목</th><th class="num">면적</th><th class="num">매매가</th><th>상태</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="{% if r.hidden %}is-hidden{% endif %}">
+      <td><code>{{ r.id }}</code></td>
+      <td>{{ r.address }}
+        {% if r.edited %}<span class="tag">수정됨</span>{% endif %}
+        {% if r.hidden %}<span class="tag warn">숨김</span>{% endif %}
+        {% if r.web %}<span class="tag">웹 추가</span>{% endif %}
+        <br><small class="muted">{{ r.file }}</small></td>
+      <td>{{ r.jimok }}</td>
+      <td class="num">{{ r.pyeong }}평</td>
+      <td class="num">{{ r.price }}</td>
+      <td>{{ r.status }}</td>
+      <td><a class="btn small" href="{{ url_for('admin_listing_edit', id=r.id) }}">수정</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if pages > 1 %}
+<nav class="row pager" aria-label="쪽 이동">
+  {% if page > 1 %}<a class="btn" href="{{ url_for('admin_listings', q=q, show=show, page=page - 1) }}">← 이전</a>{% endif %}
+  {% if page < pages %}<a class="btn" href="{{ url_for('admin_listings', q=q, show=show, page=page + 1) }}">다음 →</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="card empty">찾는 매물이 없습니다.</p>
+{% endif %}
+{% endblock %}

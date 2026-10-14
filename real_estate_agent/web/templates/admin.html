@@ -7,6 +7,15 @@
 
 <section class="grid">
   <div class="panel">
+    <h2>매물 추가·수정</h2>
+    <p class="meta">새 매물을 화면에서 바로 입력하거나, 기존 매물의 가격·상태·특이사항 등을 고칩니다.</p>
+    <div class="row left">
+      <a class="btn primary" href="{{ url_for('admin_listing_new') }}">＋ 새 매물 추가</a>
+      <a class="btn" href="{{ url_for('admin_listings') }}">매물 목록 / 수정</a>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>매물 현황</h2>
     <p class="big-num">{{ data.count }}<small>건</small></p>
     <p class="meta">매물 폴더: {{ data_dir }}<br>마지막으로 읽은 시각: {{ data.synced_at }}</p>

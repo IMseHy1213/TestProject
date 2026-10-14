@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS listings (
     last_seen TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS listing_edits (
+    listing_id TEXT PRIMARY KEY,
+    fields TEXT NOT NULL,
+    updated TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS customers (
     name TEXT PRIMARY KEY,
     requirement TEXT NOT NULL,
@@ -104,6 +109,20 @@ class Storage:
     def active_listings(self) -> list[LandListing]:
         rows = self.conn.execute("SELECT data FROM listings WHERE active=1").fetchall()
         return [LandListing.from_dict(json.loads(r["data"])) for r in rows]
+
+    # ---------------- 관리자 화면에서 고친 내용 (원본 엑셀은 그대로 두고 덮어씀) ----------------
+    def listing_edits(self) -> dict[str, dict]:
+        rows = self.conn.execute("SELECT listing_id, fields FROM listing_edits").fetchall()
+        return {r["listing_id"]: json.loads(r["fields"]) for r in rows}
+
+    def save_listing_edit(self, listing_id: str, fields: dict) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO listing_edits VALUES (?,?,?)",
+                          (listing_id, json.dumps(fields, ensure_ascii=False, default=str), _now()))
+        self.conn.commit()
+
+    def delete_listing_edit(self, listing_id: str) -> None:
+        self.conn.execute("DELETE FROM listing_edits WHERE listing_id=?", (listing_id,))
+        self.conn.commit()
 
     # ---------------- customers ----------------
     def save_customer(self, req: CustomerRequirement) -> None:

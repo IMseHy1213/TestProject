@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from .cleaner import CleanResult, clean
 from .collectors import LocalFolderCollector
 from .collectors.public_data import LandTradePriceClient, VWorldGeocoder
 from .config import DEFAULT_DATA_DIR, Settings
+from .listing_editor import apply_edits
 from .llm import LLMRouter, LLMUnavailable
 from .models import CustomerRequirement, LandListing, ScoredListing, format_price
 from .recommender import RecommendationSession, RecommendOptions, score_listing, hard_filter
@@ -81,6 +83,8 @@ class RealEstateAgent:
         self._llm_built_at = time.time()
         self._listings: Optional[list[LandListing]] = None
         self._office_model: Optional[PreferenceModel] = None
+        self.hidden_listings: list[LandListing] = []  # 관리자가 목록에서 숨긴 매물
+        self._originals: dict[str, LandListing] = {}  # 관리자가 고치기 전 원본 (되돌리기용)
         self.last_sync: Optional[SyncReport] = None
         self.last_sync_at: Optional[datetime] = None
 
@@ -92,6 +96,9 @@ class RealEstateAgent:
             prepare_data_folder(self.settings.data_dir)  # 프로젝트 '매물' 폴더는 없으면 자동으로 만듦
         records = self.collector.collect()
         result = clean(records, today)
+        # 관리자 화면에서 고친 내용 덮어쓰기 (원본 엑셀은 그대로)
+        result.listings, self.hidden_listings, self._originals = apply_edits(result.listings,
+                                                                             self.storage.listing_edits())
         self._enrich(result.listings)
         diff = self.storage.upsert_listings(result.listings)
         self._listings = result.listings
@@ -132,6 +139,89 @@ class RealEstateAgent:
         if self._listings is None:
             self._listings = self.storage.active_listings()
         return self._listings
+
+    # ------------------------------------------------------------------ 관리자: 매물 추가·수정
+    def find_listing(self, listing_id: str) -> Optional[LandListing]:
+        return next((l for l in self.listings() + self.hidden_listings if l.listing_id == listing_id), None)
+
+    def original_listing(self, listing_id: str) -> Optional[LandListing]:
+        """관리자가 고치기 전 원본 (고친 적 없으면 지금 매물)."""
+        return self._originals.get(listing_id) or self.find_listing(listing_id)
+
+    def listing_edit(self, listing_id: str) -> dict:
+        return self.storage.listing_edits().get(listing_id, {})
+
+    def check_listing(self, candidate: LandListing, ignore_id: str = "") -> tuple[list[str], list[str]]:
+        """저장 전 검사: (오류, 경고). 오류가 있으면 저장하지 않음."""
+        from .cleaner import is_duplicate, validate
+
+        errors, warnings = validate(copy.deepcopy(candidate))
+        for other in self.listings() + self.hidden_listings:
+            if other.listing_id != ignore_id and other.listing_id != candidate.listing_id \
+                    and is_duplicate(candidate, other):
+                errors.append(f"이미 같은 매물이 있습니다 (매물번호 {other.listing_id}). 그 매물을 수정해 주세요.")
+                break
+        return errors, warnings
+
+    def add_listing(self, values: dict) -> tuple[str, list[str]]:
+        """새 매물을 매물 폴더의 웹입력 엑셀에 추가하고 다시 읽음. (매물번호, 경고) 반환. 오류면 ValueError."""
+        from .listing_editor import append_listing, new_listing_id, preview_listing, web_file
+
+        existing = {l.listing_id for l in self.listings() + self.hidden_listings}
+        listing_id = new_listing_id(existing)
+        errors, warnings = self.check_listing(preview_listing(listing_id, values, web_file(self.settings.data_dir)))
+        if errors:
+            raise ValueError(" / ".join(errors))
+        try:
+            append_listing(self.settings.data_dir, listing_id, values)
+        except PermissionError as e:
+            raise ValueError("웹입력매물.xlsx 가 엑셀에서 열려 있어 저장하지 못했습니다. 엑셀을 닫고 다시 저장하세요.") from e
+        self.sync()
+        if self.find_listing(listing_id) is None:
+            raise ValueError("저장했지만 매물로 읽히지 않았습니다. 관리자 화면의 매물 정리 보고서를 확인하세요.")
+        return listing_id, warnings
+
+    def edit_listing(self, listing_id: str, values: dict, hidden: Optional[bool] = None) -> list[str]:
+        """기존 매물 수정: 원본과 달라진 항목만 저장해 덮어씀. 경고 목록 반환. 오류면 ValueError."""
+        from .listing_editor import HIDDEN, apply_fields, diff_fields
+
+        current = self.find_listing(listing_id)
+        if current is None:
+            raise ValueError("매물을 찾을 수 없습니다. (매물 폴더에서 지워졌을 수 있습니다)")
+        original = self.original_listing(listing_id)
+        fields = diff_fields(original, values) if values else {
+            k: v for k, v in self.listing_edit(listing_id).items() if k != HIDDEN}
+        hide = bool(self.listing_edit(listing_id).get(HIDDEN)) if hidden is None else hidden
+        candidate = copy.deepcopy(original)
+        apply_fields(candidate, fields)
+        errors, warnings = self.check_listing(candidate, ignore_id=listing_id) if values else ([], [])
+        if errors:
+            raise ValueError(" / ".join(errors))
+        if hide:
+            fields[HIDDEN] = True
+        if fields:
+            self.storage.save_listing_edit(listing_id, fields)
+            self._originals.setdefault(listing_id, copy.deepcopy(original))
+        else:
+            self.storage.delete_listing_edit(listing_id)
+        self._replace_listing(listing_id, candidate if fields else copy.deepcopy(original), hide)
+        return warnings
+
+    def revert_listing(self, listing_id: str) -> None:
+        """관리자가 고친 내용을 모두 지우고 원본 엑셀 내용으로 되돌림 (숨김도 해제)."""
+        original = self.original_listing(listing_id)
+        if original is None:
+            raise ValueError("매물을 찾을 수 없습니다.")
+        self.storage.delete_listing_edit(listing_id)
+        self._replace_listing(listing_id, copy.deepcopy(original), hide=False)
+        self._originals.pop(listing_id, None)
+
+    def _replace_listing(self, listing_id: str, new: LandListing, hide: bool) -> None:
+        visible = [l for l in self.listings() if l.listing_id != listing_id]
+        self.hidden_listings = [l for l in self.hidden_listings if l.listing_id != listing_id]
+        (self.hidden_listings if hide else visible).append(new)
+        self._listings = visible
+        self.storage.upsert_listings(visible)
 
     def known_regions(self) -> list[str]:
         regions = set()

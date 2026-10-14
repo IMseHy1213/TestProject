@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{% if mode == 'new' %}새 매물 추가{% else %}매물 수정{% endif %}{% endblock %}
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin_listings') }}">← 매물 관리</a></p>
+<h1>{% if mode == 'new' %}새 매물 추가{% else %}매물 수정 <small class="muted">{{ listing_id }}</small>{% endif %}</h1>
+
+{% if errors %}
+  <div class="notice warn" role="alert"><strong>저장하지 못했습니다.</strong>
+    <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+{% if mode == 'new' %}
+  <p class="meta">저장하면 매물 폴더의 <code>{{ web_file }}</code> 에 한 줄로 추가되고 손님 검색에 바로 나옵니다.</p>
+{% else %}
+  <p class="meta">원본 파일: {{ source_file or "-" }} · 원본 엑셀은 그대로 두고, 여기서 고친 항목만 프로그램에 덮어씁니다.</p>
+  {% if changes %}
+    <div class="learned"><strong>지금까지 고친 내용</strong>
+      <ul>{% for c in changes %}<li>{{ c }}</li>{% endfor %}</ul></div>
+  {% endif %}
+{% endif %}
+
+<form method="post" class="panel listing-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+  {% if listing_id %}<input type="hidden" name="id" value="{{ listing_id }}">{% endif %}
+
+  <label for="address">소재지 <span class="req">필수</span></label>
+  <input id="address" name="address" value="{{ v.address or '' }}" required maxlength="200"
+         placeholder="충청북도 음성군 금왕읍 무극리 210-3">
+
+  <div class="two">
+    <div>
+      <label for="jimok">지목</label>
+      <select id="jimok" name="jimok">
+        <option value="">(모름)</option>
+        {% for j in jimok_choices %}<option {% if v.jimok == j %}selected{% endif %}>{{ j }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="zoning">용도지역</label>
+      <input id="zoning" name="zoning" list="zoning-list" value="{{ v.zoning or '' }}" placeholder="계획관리지역">
+      <datalist id="zoning-list">{% for z in zoning_choices %}<option value="{{ z }}">{% endfor %}</datalist>
+    </div>
+  </div>
+
+  <div class="two">
+    <div>
+      <label for="area">면적 <span class="req">필수</span></label>
+      <div class="with-unit">
+        <input id="area" name="area" value="{{ v.area or '' }}" required inputmode="decimal" placeholder="250">
+        <select name="area_unit" aria-label="면적 단위">
+          <option value="pyeong" {% if v.area_unit != 'm2' %}selected{% endif %}>평</option>
+          <option value="m2" {% if v.area_unit == 'm2' %}selected{% endif %}>㎡</option>
+        </select>
+      </div>
+    </div>
+    <div>
+      <label for="price">매매가 <span class="req">필수</span></label>
+      <input id="price" name="price" value="{{ v.price or '' }}" required placeholder="2억 3천만원 또는 23000(만원)">
+    </div>
+  </div>
+
+  <label for="road_access">도로</label>
+  <input id="road_access" name="road_access" value="{{ v.road_access or '' }}" maxlength="100" placeholder="6m 포장도로 접함 / 맹지">
+
+  <div class="two">
+    <div>
+      <label for="status">상태</label>
+      <select id="status" name="status">
+        {% for s in statuses %}<option {% if v.status == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+      <small class="muted">보류·계약완료는 손님 검색에 나오지 않습니다.</small>
+    </div>
+    <div>
+      <label for="registered_date">등록일</label>
+      <input id="registered_date" name="registered_date" type="date" value="{{ v.registered_date or '' }}">
+    </div>
+  </div>
+
+  <label for="description">특이사항 <small class="muted">— 채광·향·경사·주변 시설 등. 검색에 쓰이니 자세히 적을수록 좋아요.</small></label>
+  <textarea id="description" name="description" rows="4" maxlength="2000">{{ v.description or '' }}</textarea>
+
+  <label for="owner_contact">연락처 <small class="muted">— 손님 화면에는 나오지 않습니다</small></label>
+  <input id="owner_contact" name="owner_contact" value="{{ v.owner_contact or '' }}" maxlength="100" autocomplete="off">
+
+  <div class="row left">
+    <button class="btn primary">{% if mode == 'new' %}매물 추가{% else %}수정 저장{% endif %}</button>
+    <a class="btn" href="{{ url_for('admin_listings') }}">취소</a>
+  </div>
+</form>
+
+{% if mode == 'edit' %}
+<section class="panel danger-zone">
+  <h2>다른 작업</h2>
+  <div class="row left">
+    <form method="post" action="{{ url_for('admin_listing_state') }}" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="id" value="{{ listing_id }}">
+      {% if hidden %}
+        <input type="hidden" name="op" value="show"><button class="btn">손님 검색에 다시 보이기</button>
+      {% else %}
+        <input type="hidden" name="op" value="hide"><button class="btn">목록에서 숨기기 (삭제)</button>
+      {% endif %}
+    </form>
+    {% if changes %}
+    <form method="post" action="{{ url_for('admin_listing_state') }}" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="id" value="{{ listing_id }}">
+      <input type="hidden" name="op" value="revert"><button class="btn">원래 엑셀 내용으로 되돌리기</button>
+    </form>
+    {% endif %}
+  </div>
+  <p class="meta small-note">숨긴 매물은 '매물 관리 → 숨긴 매물'에서 다시 보이게 할 수 있습니다. 매물 파일은 지워지지 않습니다.</p>
+</section>
+{% endif %}
+{% endblock %}

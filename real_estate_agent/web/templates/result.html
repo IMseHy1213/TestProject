@@ -51,7 +51,8 @@
   {% if is_admin %}
     <div class="admin-box">
       <strong>관리자 정보</strong> · 매물번호 {{ item.id }} · 연락처 {{ item.contact or "-" }} ·
-      출처 {{ item.source }} · 등록일 {{ item.registered }} · 파일 {{ item.source_file }}
+      출처 {{ item.source }} · 등록일 {{ item.registered }} · 파일 {{ item.source_file }} ·
+      <a href="{{ url_for('admin_listing_edit', id=item.id) }}">이 매물 수정</a>
     </div>
   {% endif %}
 </article>

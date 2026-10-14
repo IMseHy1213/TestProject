@@ -14,3 +14,6 @@ logs/
 !매물/README.txt
 # 코드에 넣는 API 키 파일 (절대 GitHub 에 올리지 않음)
 my_api_key.py
+# 샘플 데이터로 연습할 때 웹에서 추가/업로드한 파일
+sample_data/**/웹입력/
+sample_data/**/웹업로드/
