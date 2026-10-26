@@ -177,6 +177,34 @@ def print_sync(report: SyncReport, verbose: bool = False) -> None:
         print(report.clean.report())
 
 
+def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6) -> int:
+    """v0.2 Tool-use Agent 를 터미널에서: 도구 호출 과정(행동→관찰)과 답변을 출력."""
+    from .tool_agent import ToolAgent
+
+    runner = ToolAgent(agent, max_steps=max_steps)
+    history: list = []
+    interactive = not question
+    if interactive:
+        print("\nAI 상담 (빈 줄 또는 q 로 종료). 예) 음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘")
+    while True:
+        q = question or input("\n질문> ").strip()
+        if not q or q.lower() in {"q", "quit", "exit"}:
+            return 0
+        result, history = runner.run(q, history)
+        print()
+        for s in result.steps:
+            if s.kind == "tool":
+                mark = "✔" if s.ok else "✘"
+                print(f"  [{s.n}] {mark} {s.tool}({s.args}) → {s.summary}  ({s.ms}ms, {s.policy})")
+            else:
+                print(f"  [{s.n}] {s.kind}: {s.summary}  ({s.policy})")
+        print(f"\n{result.answer}")
+        print(f"\n  (도구 {result.tool_calls}회, 오류 {result.tool_errors}회, {result.total_ms / 1000:.1f}초, {result.policy})")
+        if not interactive:
+            return 0
+        question = ""
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="real-estate-agent", description="Real Estate Recommendation Agent (토지)")
     p.add_argument("--data-dir", help="매물 폴더 경로 (기본: 프로젝트의 '매물' 폴더)")
@@ -193,6 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--batch", action="store_true", help="대화 없이 상위 5개만 출력")
 
     sub.add_parser("chat", help="대화형 상담")
+
+    ag = sub.add_parser("agent", help="AI 상담 (v0.2 Tool-use Agent: 도구를 골라 쓰며 답함, 실행 과정 출력)")
+    ag.add_argument("question", nargs="?", default="", help="질문 (비우면 대화 모드)")
+    ag.add_argument("--max-steps", type=int, default=6)
 
     c = sub.add_parser("customers", help="저장된 손님 목록")
     c.add_argument("--remove", help="해당 손님 선제 알림 중지")
@@ -264,6 +296,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         return llm_check(agent)
     print(agent.llm.status())
+    if cmd == "agent":
+        agent.sync()
+        return run_tool_agent(agent, args.question, args.max_steps)
 
     try:
         if cmd in {"sync", "recommend", "chat", "proactive", "export"}:

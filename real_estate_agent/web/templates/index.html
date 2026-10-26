@@ -17,6 +17,7 @@
       <button type="button" class="chip" data-fill="{{ ex }}">{{ ex }}</button>
     {% endfor %}
   </div>
+  <p class="agent-link"><a href="{{ url_for('agent_page') }}">🤖 여러 조건을 묻거나 매물을 비교하고 싶다면 → <strong>AI 상담</strong></a></p>
 
   {% if no_data %}
     <p class="notice warn">아직 등록된 매물이 없습니다. 관리자 화면에서 매물 파일을 올려주세요.</p>

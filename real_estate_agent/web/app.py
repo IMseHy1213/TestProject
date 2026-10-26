@@ -4,6 +4,7 @@
   /                검색창 ("음성군 채광 좋은 2억원대 땅")
   /result          추천 매물 카드 + [마음에 안 들어요 → 다음 순위] / 빠른 사유 / 관심 / 이전 / 조건 변경
   /api/explain     현재 매물 AI 설명 (화면이 먼저 뜬 뒤 불러옴)
+  /agent           AI 상담 (v0.2 Tool-use Agent: 도구를 골라 쓰며 여러 단계 질문에 답함, 실행 과정 표시)
 관리자 화면 (처음 /admin 에 들어가면 비밀번호를 정하는 화면이 나옴 - 서버를 켠 PC 에서만)
   /admin/listings  매물 관리: 새 매물 추가, 기존 매물 수정·숨기기·되돌리기
   /admin           매물 다시 읽기, 오류·중복 보고서, 매물 파일 업로드, AI 연결 상태, 학습 현황
@@ -101,6 +102,35 @@ def _secret_key(settings: Settings) -> str:
         return secrets.token_hex(32)
 
 
+class AgentConversations:
+    """접속자별 AI 상담 대화 (대화 기록 + 도구 상태 + 화면 표시용 기록). 2시간 사용 없으면 삭제."""
+
+    MAX_TURNS = 20
+
+    def __init__(self, ttl: int = SESSION_TTL_SEC, max_size: int = MAX_SESSIONS):
+        self.ttl, self.max_size = ttl, max_size
+        self._data: OrderedDict[str, dict] = OrderedDict()
+
+    def get(self, cid: Optional[str]) -> tuple[str, dict]:
+        now = time.time()
+        for k in [k for k, v in self._data.items() if now - v["ts"] > self.ttl]:
+            del self._data[k]
+        if not cid or cid not in self._data:
+            while len(self._data) >= self.max_size:
+                self._data.popitem(last=False)
+            from ..tool_agent import AgentContext
+
+            cid = secrets.token_urlsafe(16)
+            self._data[cid] = {"history": [], "ctx": AgentContext(), "turns": [], "ts": now}
+        conv = self._data[cid]
+        conv["ts"] = now
+        self._data.move_to_end(cid)
+        return cid, conv
+
+    def reset(self, cid: Optional[str]) -> None:
+        self._data.pop(cid or "", None)
+
+
 def safe_filename(name: str) -> str:
     """업로드 파일 이름 정리 (한글 유지, 경로·특수문자 제거)."""
     name = Path(name.replace("\\", "/")).name
@@ -121,6 +151,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     )
     lock = threading.RLock()  # 매물 목록·DB·학습 모델을 여러 접속자가 동시에 바꾸지 않도록
     store = SessionStore()
+    conversations = AgentConversations()
     state = {"sync_error": ""}
 
     def do_sync() -> None:
@@ -163,6 +194,13 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             "frame-ancestors 'none'; form-action 'self'; base-uri 'self'",
         )
         return resp
+
+    @app.template_filter("kjson")
+    def kjson(value) -> str:
+        """한글이 \\uXXXX 로 바뀌지 않는 JSON (화면 표시용, 자동 HTML 이스케이프됨)."""
+        import json as _json
+
+        return _json.dumps(value, ensure_ascii=False, default=str)
 
     @app.context_processor
     def inject():
@@ -306,6 +344,55 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                 cache[key] = (text, source)
         return jsonify(text=text, source=source)
 
+    # ------------------------------------------------------------ AI 상담 (Tool-use Agent)
+    AGENT_EXAMPLES = ["음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘", "양평 전원주택 부지 3억 이하 추천해줘",
+                      "E-3004 매물에 공장도 지을 수 있어?", "어느 지역 매물이 제일 많아요?"]
+
+    def agent_card(lid: str, admin: bool) -> Optional[dict]:
+        l = agent.find_listing(lid)
+        if l is None:
+            return None
+        return {"id": l.listing_id, "office_no": l.office_no,
+                "address": l.address if admin else mask_address(l.address), "price": format_price(l.price_manwon),
+                "pyeong": f"{l.area_pyeong:,.0f}", "jimok": l.jimok or "-", "zoning": l.zoning or "-",
+                "features": l.features, "contact": l.owner_contact if admin else ""}
+
+    @app.get("/agent")
+    def agent_page():
+        cid, conv = conversations.get(session.get("cid"))
+        session["cid"] = cid
+        with lock:
+            agent.maybe_reconnect_llm()
+        return render_template("agent.html", turns=conv["turns"], examples=AGENT_EXAMPLES,
+                               llm_mode=agent.llm.mode(), llm_names=agent.llm.names())
+
+    @app.post("/agent/ask")
+    def agent_ask():
+        from ..tool_agent import ToolAgent
+        from ..tool_agent.loop import step_dict
+
+        q = (request.form.get("q") or "").strip()[:MAX_QUERY_LEN]
+        if not q:
+            return redirect(url_for("agent_page"))
+        cid, conv = conversations.get(session.get("cid"))
+        session["cid"] = cid
+        # LLM 호출은 잠금 밖에서, 도구 실행(매물 목록·DB 접근)만 잠금 안에서
+        runner = ToolAgent(agent, ctx=conv["ctx"], lock=lock)
+        result, conv["history"] = runner.run(q, conv["history"])
+        admin = is_admin()
+        with lock:
+            cards = [c for c in (agent_card(i, admin) for i in result.listing_ids) if c]
+        conv["turns"].append({"question": q, "answer": result.answer, "steps": [step_dict(s) for s in result.steps],
+                              "cards": cards, "policy": result.policy, "total_ms": result.total_ms,
+                              "tool_calls": result.tool_calls, "tool_errors": result.tool_errors})
+        conv["turns"] = conv["turns"][-AgentConversations.MAX_TURNS:]
+        return redirect(url_for("agent_page") + "#last")
+
+    @app.post("/agent/reset")
+    def agent_reset():
+        conversations.reset(session.pop("cid", None))
+        return redirect(url_for("agent_page"))
+
     # ------------------------------------------------------------ 관리자 화면
     auth = AdminAuth(auth_file(settings))
     app.config["ADMIN_AUTH"] = auth  # 테스트용
@@ -324,7 +411,10 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         """로그인 성공: 세션 고정 공격을 막도록 쿠키 내용을 새로 만들고 (추천 상담은 이어지게) 관리자 표시."""
         sid = session.get("sid")
         source = session.get("source")
+        cid = session.get("cid")
         session.clear()
+        if cid:
+            session["cid"] = cid
         if sid:
             session["sid"] = sid
         if source:

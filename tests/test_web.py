@@ -259,3 +259,24 @@ def test_card_shows_office_number_without_road_and_report_is_folded(make_client)
     c.post("/admin/login", data={"password": "pw1234", "csrf": csrf(c, "/admin")})
     admin = c.get("/admin").get_data(as_text=True)
     assert '<details class="report-box">' in admin and "<details class=\"report-box\" open" not in admin
+
+
+def test_agent_page_runs_tools_and_shows_trace(make_client):
+    c = make_client()
+    html = c.get("/agent").get_data(as_text=True)
+    assert "AI 상담" in html and "규칙 기반 정책" in html
+    r = c.post("/agent/ask", data={"q": "양평 땅 2개 비교해줘", "csrf": csrf(c, "/agent")}, follow_redirects=True)
+    html = r.get_data(as_text=True)
+    assert "에이전트 실행 과정" in html and "<code>search_listings</code>" in html and "<code>compare_listings</code>" in html
+    assert html.count('class="mini"') == 2 and "010-" not in html  # 손님 화면: 연락처 없음
+    r = c.post("/agent/ask", data={"q": "그 중 첫 번째는 창고 지을 수 있어?", "csrf": csrf(c, "/agent")},
+               follow_redirects=True)
+    assert r.get_data(as_text=True).count('class="turn"') == 2  # 대화가 이어짐
+    c.post("/agent/reset", data={"csrf": csrf(c, "/agent")})
+    assert 'class="turn"' not in c.get("/agent").get_data(as_text=True)
+
+
+def test_agent_trace_shows_korean_arguments(make_client):
+    c = make_client()
+    html = c.post("/agent/ask", data={"q": "음성군 땅", "csrf": csrf(c, "/agent")}, follow_redirects=True).get_data(as_text=True)
+    assert "음성군 땅" in html.split("<code>search_listings</code>")[1][:200] and "\\uc74c" not in html

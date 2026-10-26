@@ -181,6 +181,12 @@ class LLMRouter:
                       optional: bool = False) -> dict[str, Any]:
         return self._try("complete_json", system, user, max_tokens, optional=optional)
 
+    def tool_step(self, system: str, messages: list[dict], tools: list[dict], max_tokens: int = 1500):
+        """도구 호출 대화 한 단계. 대화 기록이 공통 형식이라 중간에 GPT -> Claude 로 바뀌어도 이어서 진행."""
+        turn = self._try("tool_step", system, messages, tools, max_tokens)
+        turn.provider = self.last_used
+        return turn
+
 
 def _make_anthropic(model: str) -> LLMClient:
     from .anthropic_client import AnthropicLLM

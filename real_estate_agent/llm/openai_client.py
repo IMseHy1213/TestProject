@@ -16,7 +16,7 @@ import logging
 import re
 from typing import Any, Optional
 
-from .base import LLMClient, LLMUnavailable, extract_json
+from .base import LLMClient, LLMUnavailable, ToolCall, ToolTurn, extract_json, parse_arguments
 
 log = logging.getLogger(__name__)
 
@@ -114,9 +114,21 @@ class OpenAILLM(LLMClient):
     def available_models(self) -> list[str]:
         return sorted(m.id for m in self.client.models.list())
 
+    # ------------------------------------------------------------------ 도구 호출 (Function calling)
+    def tool_step(self, system: str, messages: list[dict], tools: list[dict], max_tokens: int = 1500) -> ToolTurn:
+        params: dict[str, Any] = {
+            "instructions": system,
+            "input": to_openai_input(messages),
+            "max_output_tokens": min(max(max_tokens + REASONING_ALLOWANCE, MIN_OUTPUT_TOKENS), MAX_OUTPUT_TOKENS),
+        }
+        if tools:
+            params["tools"] = [{"type": "function", "name": t["name"], "description": t["description"],
+                                "parameters": t["parameters"]} for t in tools]
+        resp = self._request(params, json_mode=False)
+        return from_openai_response(resp)
+
     # ------------------------------------------------------------------ 내부
     def _call(self, system: str, user: str, max_tokens: int, json_mode: bool) -> str:
-        o = self._openai
         params: dict[str, Any] = {
             "instructions": system,
             "input": user,
@@ -124,6 +136,16 @@ class OpenAILLM(LLMClient):
         }
         if json_mode:
             params["text"] = {"format": {"type": "json_object"}}
+        resp = self._request(params, json_mode)
+        text = getattr(resp, "output_text", "") or ""
+        if not text.strip():
+            status = getattr(resp, "status", "")
+            raise LLMUnavailable(f"OpenAI 빈 응답 (status={status})")
+        return text
+
+    def _request(self, params: dict[str, Any], json_mode: bool) -> Any:
+        """responses.create + 재시도/모델 교체/오류 분류 (일반 답변·도구 호출 공통)."""
+        o = self._openai
         for _attempt in range(4):
             if self._use_reasoning:
                 params["reasoning"] = {"effort": "low"}
@@ -135,14 +157,14 @@ class OpenAILLM(LLMClient):
                     # 추론하느라 한도를 다 써서 답이 잘림 -> 이번만 한도를 늘려 다시
                     params["max_output_tokens"] = min(params["max_output_tokens"] * 2, MAX_OUTPUT_TOKENS)
                     continue
-                break
+                return resp
             except o.NotFoundError as e:
                 if not self._resolve_model():
                     raise LLMUnavailable(f"OpenAI 모델 '{self.model}' 을 찾을 수 없습니다 (OPENAI_MODEL 확인)",
                                          permanent=True) from e
             except o.BadRequestError as e:
                 msg = str(e).lower()
-                if self._use_reasoning and "reasoning" in msg:
+                if self._use_reasoning and "reasoning" in msg and "item" not in msg:
                     self._use_reasoning = False  # 추론 옵션을 지원하지 않는 모델 (예: gpt-4.1)
                     continue
                 if json_mode and ("json" in msg or "format" in msg):
@@ -172,14 +194,7 @@ class OpenAILLM(LLMClient):
                                      kind="server") from e
             except o.OpenAIError as e:
                 raise LLMUnavailable(f"OpenAI 호출 실패: {e}") from e
-        else:
-            raise LLMUnavailable("OpenAI 요청 재시도 실패")
-
-        text = getattr(resp, "output_text", "") or ""
-        if not text.strip():
-            status = getattr(resp, "status", "")
-            raise LLMUnavailable(f"OpenAI 빈 응답 (status={status})")
-        return text
+        raise LLMUnavailable("OpenAI 요청 재시도 실패")
 
     def _resolve_model(self) -> bool:
         """지정 모델이 없을 때 한 번만, 계정에서 쓸 수 있는 모델로 교체."""
@@ -203,3 +218,49 @@ def _truncated(resp: Any) -> bool:
     details = getattr(resp, "incomplete_details", None)
     reason = getattr(details, "reason", None) or (details.get("reason") if isinstance(details, dict) else None)
     return getattr(resp, "status", "") == "incomplete" and reason == "max_output_tokens"
+
+
+# ---------------------------------------------------------------------- 공통 대화 형식 <-> Responses API
+def _dump(item: Any) -> dict:
+    if isinstance(item, dict):
+        return item
+    if hasattr(item, "model_dump"):
+        return item.model_dump(exclude_none=True)
+    return {k: v for k, v in vars(item).items() if not k.startswith("_")}
+
+
+def to_openai_input(messages: list[dict]) -> list[dict]:
+    items: list[dict] = []
+    for m in messages:
+        role = m["role"]
+        if role == "user":
+            items.append({"role": "user", "content": m["content"]})
+        elif role == "assistant":
+            raw = (m.get("raw") or {}).get("openai")
+            if raw:  # GPT 가 만든 응답이면 그대로 (추론 항목과 함께 돌려줘야 하는 모델이 있음)
+                items.extend(raw)
+                continue
+            if m.get("content"):
+                items.append({"role": "assistant", "content": m["content"]})
+            for c in m.get("tool_calls") or []:
+                items.append({"type": "function_call", "call_id": c.id, "name": c.name,
+                              "arguments": json.dumps(c.arguments, ensure_ascii=False)})
+        elif role == "tool":
+            items.append({"type": "function_call_output", "call_id": m["call_id"], "output": m["content"]})
+    return items
+
+
+def from_openai_response(resp: Any) -> ToolTurn:
+    output = list(getattr(resp, "output", None) or [])
+    calls = []
+    for item in output:
+        if (getattr(item, "type", None) or (item.get("type") if isinstance(item, dict) else None)) != "function_call":
+            continue
+        get = (lambda k: item.get(k)) if isinstance(item, dict) else (lambda k: getattr(item, k, None))
+        args, err = parse_arguments(get("arguments"))
+        calls.append(ToolCall(id=get("call_id") or get("id") or f"call_{len(calls)}", name=get("name") or "",
+                              arguments=args, parse_error=err))
+    text = getattr(resp, "output_text", "") or ""
+    if not calls and not text.strip():
+        raise LLMUnavailable(f"OpenAI 빈 응답 (status={getattr(resp, 'status', '')})")
+    return ToolTurn(text=text, tool_calls=calls, raw={"openai": [_dump(i) for i in output]}, provider="openai")

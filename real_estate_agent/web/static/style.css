@@ -232,3 +232,31 @@ table.listings td:nth-child(2) { min-width: 240px; }
 
 .facts dd.features { font-weight: 500; line-height: 1.7; }
 .tag.use { vertical-align: middle; font-size: .78rem; margin-left: 6px; }
+
+/* AI 상담 (Tool-use Agent) */
+.agent-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.lead.left { margin: 0 0 6px; text-align: left; }
+.agent-link { margin: 6px 0 0; font-size: .95rem; }
+.chat { display: flex; flex-direction: column; gap: 18px; margin: 18px 0; }
+.turn { display: flex; flex-direction: column; gap: 8px; scroll-margin-top: 16px; }
+.bubble { border-radius: 14px; padding: 12px 16px; margin: 0; max-width: 100%; }
+.bubble.q { align-self: flex-end; background: var(--brand); color: var(--brand-ink); max-width: 80%; }
+.bubble.a { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.answer { white-space: pre-line; margin: 0 0 10px; }
+.mini-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.mini { background: var(--bg); border-radius: 10px; padding: 10px 12px; font-size: .9rem; }
+.mini p { margin: 0 0 4px; }
+.mini-no { color: var(--muted); font-size: .82rem; }
+.mini-addr { font-weight: 700; }
+.mini-facts .price { color: var(--accent); }
+.mini-feat { color: var(--muted); font-size: .84rem; }
+.mini-admin { font-size: .8rem; color: var(--accent); }
+.trace summary { cursor: pointer; font-size: .86rem; color: var(--brand); font-weight: 600; }
+.trace ol { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.trace li { font-size: .84rem; background: var(--bg); border-radius: 8px; padding: 8px 10px 8px 38px; position: relative; overflow-wrap: anywhere; }
+.trace li.is-error { background: var(--warn-bg); color: var(--warn-ink); }
+.trace .step-n { position: absolute; left: 10px; top: 8px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--brand-soft); color: var(--brand); font-weight: 700; font-size: .75rem; display: grid; place-items: center; }
+.trace .args { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
+.trace .policy { float: right; font-size: .72rem; color: var(--muted); }
+.agent-ask { max-width: none; }

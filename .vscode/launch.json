@@ -30,6 +30,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "🤖 AI 상담 (Tool Agent) - 터미널 대화",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["agent"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "📄 매물 입력 양식(엑셀) 새로 만들기",
       "type": "debugpy",
       "request": "launch",

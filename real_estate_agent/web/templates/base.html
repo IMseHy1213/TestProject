@@ -14,6 +14,7 @@
       <span>토지 매물 추천<small>Real Estate Recommendation Agent</small></span>
     </a>
     <nav>
+      <a href="{{ url_for('agent_page') }}">AI 상담</a>
       {% if is_admin %}
         <a href="{{ url_for('admin') }}">관리자</a>
         <form method="post" action="{{ url_for('admin_logout') }}" class="inline">
