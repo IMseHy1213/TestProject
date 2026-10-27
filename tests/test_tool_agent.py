@@ -1,6 +1,7 @@
 """v0.2 Tool-use Agent 테스트 (가짜 GPT/Claude 로 Function calling 흐름 검사)."""
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -108,7 +109,7 @@ def test_failover_to_rule_policy_mid_run(agent):
     result, _ = ToolAgent(agent, llm=router(fake)).run("음성군 창고 땅")
     kinds = [s.kind for s in result.steps]
     assert "fallback" in kinds and result.policy == "rule" and result.stopped == "answer"
-    assert "조건에 맞는 매물" in result.answer  # 규칙 기반이 이미 받은 검색 결과로 답을 마무리
+    assert re.search(r"매물 \d+건", result.answer)  # 규칙 기반이 이미 받은 검색 결과로 답을 마무리
 
 
 def test_repeated_calls_and_step_limit(agent):
@@ -132,7 +133,7 @@ def test_feedback_tool_excludes_rejected_in_same_conversation(agent):
 def test_rule_policy_compare_flow_and_run_log(agent, tmp_path):
     result, _ = ToolAgent(agent).run("양평 땅 2개 비교해줘")
     assert [s.tool for s in result.steps if s.kind == "tool"] == ["search_listings", "compare_listings"]
-    assert "가장 싼 매물은" in result.answer and len(result.listing_ids) == 2
+    assert "가장 싸고 넓은 매물" in result.answer or "최저가" in result.answer and len(result.listing_ids) == 2
     row = json.loads((tmp_path / "logs" / "agent_runs.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert row["tool_calls"] == 2 and row["policy"] == "rule" and row["total_ms"] >= 0
 
@@ -204,7 +205,7 @@ def test_openai_client_sends_tools(monkeypatch):
 def test_step_limit_falls_back_to_rule_summary_if_model_keeps_calling_tools(agent):
     keep = lambda _m: call("search_listings", query="양평 땅", limit=2)  # noqa: E731
     result, _ = ToolAgent(agent, llm=router(ScriptedLLM([keep] * 5)), max_steps=3).run("양평 땅")
-    assert result.stopped == "max_steps" and result.policy == "rule" and "조건에 맞는 매물" in result.answer
+    assert result.stopped == "max_steps" and result.policy == "rule" and re.search(r"매물 \d+건", result.answer)
 
 
 def test_rule_policy_sorts_by_price_when_asked_for_cheap(agent):
@@ -234,7 +235,7 @@ def test_cards_and_badges_from_tool_results(agent):
     badges = [b for i in result.listing_ids for b in result.badges.get(i, [])]
     assert "최저가" in badges and "가장 넓음" in badges and any(b.startswith("창고 ") for b in badges)
     assert "\n1)" not in result.answer and "●" not in result.answer  # 목록·특징을 답변에 늘어놓지 않음
-    assert "카드" in result.answer
+    assert len(result.answer.splitlines()) <= 3  # 짧게 (3줄 이내)
 
 
 def test_names_in_office_numbers_never_reach_the_ai(tmp_path):
@@ -261,3 +262,33 @@ def test_names_in_office_numbers_never_reach_the_ai(tmp_path):
     assert "이재순" not in sent and "골드" not in sent and "이재순" not in trace
     assert result.listing_ids == ["S.24250409(이재순님)", "S.251229(골드)"]  # 화면 카드용 실제 id
     assert "최저가" in result.badges["S.24250409(이재순님)"] and "창고 가능" in result.badges["S.24250409(이재순님)"]
+
+
+def test_follow_up_picks_one_from_previous_conditions(agent):
+    ctx = AgentContext()
+    runner = ToolAgent(agent, ctx=ctx)
+    first, history = runner.run("음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘")
+    assert len(first.listing_ids) == 2
+    second, history = runner.run("그 중에 넓은 건?", history)
+    search = next(s for s in second.steps if s.tool == "search_listings")
+    assert search.args == {"use_previous_conditions": True, "sort": "area_desc", "limit": 1}
+    assert len(second.listing_ids) == 1 and second.answer.startswith("앞서 찾은 음성군 · 창고 용도 매물")
+    assert "가장 넓은 매물은" in second.answer and len(second.answer.splitlines()) == 1
+    # 이전 조건(음성군·창고)에 맞는 매물 중 실제로 가장 넓은 것
+    widest = max((l for l in agent.listings() if "음성군" in l.address), key=lambda l: l.area_m2)
+    reg = ToolRegistry(agent)
+    all_ok = reg.run("search_listings", {"query": "음성군 창고 땅", "limit": 10})["result"]["매물"]
+    assert second.listing_ids[0] == max(all_ok, key=lambda x: x["면적_평"])["id"]
+    third, _ = runner.run("거기서 제일 싼 거 2개", history)
+    s3 = next(s for s in third.steps if s.tool == "search_listings")
+    assert s3.args["sort"] == "price_asc" and s3.args["limit"] == 2 and len(third.listing_ids) == 2
+    assert widest is not None
+
+
+def test_new_question_is_not_treated_as_follow_up(agent):
+    ctx = AgentContext()
+    runner = ToolAgent(agent, ctx=ctx)
+    _, history = runner.run("음성군 창고 땅")
+    result, _ = runner.run("양평 전원주택 부지 넓은 거", history)
+    search = next(s for s in result.steps if s.tool == "search_listings")
+    assert "use_previous_conditions" not in search.args and "양평" in search.args["query"]

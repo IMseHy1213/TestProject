@@ -43,7 +43,9 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
 - 가격 인자는 만원 단위입니다 (1억 = 10000).
 - 지번 전체와 소유자 연락처는 알 수 없습니다. 물으면 "상담 시 안내해 드립니다"라고 답하세요.
 - 조건에 맞는 매물이 없으면 "해당 조건에 맞는 매물이 없습니다."라고 답하세요.
-- 화면에 매물 카드(지역·가격·면적·지목·특징)가 따로 나오므로, 최종 답변은 한국어 2~5문장의 요약만 쓰세요.
+- 손님이 '그 중에', '거기서', '그럼 넓은 건?'처럼 직전 결과를 가리키면 search_listings 에
+  use_previous_conditions=true 와 sort 를 주고, 하나만 물으면 limit=1 로 하나만 답하세요.
+- 화면에 매물 카드(지역·가격·면적·지목·특징)가 따로 나오므로, 최종 답변은 한국어 1~3문장의 짧은 요약만 쓰세요.
   매물은 매물번호(없으면 id)로 가리키고 핵심 수치(가격 또는 면적)만 괄호로 덧붙이세요.
   매물 목록을 줄줄이 나열하거나 특징을 그대로 옮겨 쓰지 말고, 표·마크다운(**, #, -)도 쓰지 마세요.
 - 주소는 도구가 준 대로(시/도 + 시/군/구)만 말하세요.
@@ -103,6 +105,9 @@ class RulePolicy:
 
     name = "rule"
 
+    def __init__(self, ctx: Optional[AgentContext] = None):
+        self.ctx = ctx
+
     def next(self, messages: list[dict], tools: list[dict]) -> ToolTurn:
         question = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
         start = max(i for i, m in enumerate(messages) if m["role"] == "user")
@@ -112,13 +117,19 @@ class RulePolicy:
         found = (last_search or {}).get("result", {}).get("매물", [])
 
         if "search_listings" not in names:
+            sort = _sort_in(question)
+            if self.ctx and self.ctx.last_search and _is_follow_up(question, sort):
+                # '그 중에 넓은 건?' -> 직전 조건 그대로, 새 기준으로 1건 (개수를 말하면 그만큼)
+                args: dict[str, Any] = {"use_previous_conditions": True, "sort": sort or "score",
+                                        "limit": _wanted_count(question) or 1}
+                return _call("search_listings", args)
             limit = _wanted_count(question) or (3 if _wants_compare(question) else 5)
-            args: dict[str, Any] = {"query": question, "limit": limit}
-            if re.search(r"싼|저렴|최저가|가격\s*낮", question):
-                args["sort"] = "price_asc"
-            elif re.search(r"넓은|큰\s*땅|면적\s*큰|제일\s*큰", question):
-                args["sort"] = "area_desc"
+            args = {"query": question, "limit": limit}
+            if sort:
+                args["sort"] = sort
             return _call("search_listings", args)
+        if (last_search or {}).get("result", {}).get("앞_조건_이어서"):
+            return ToolTurn(text=rule_answer(question, done), provider="rule")
         if _wants_compare(question) and len(found) >= 2 and "compare_listings" not in names:
             k = min(len(found), _wanted_count(question) or 2, 5)
             return _call("compare_listings", {"listing_ids": [x["id"] for x in found[:k]]})
@@ -138,6 +149,29 @@ def _loads(text: str) -> dict:
         return json.loads(text)
     except (TypeError, json.JSONDecodeError):
         return {}
+
+
+_FOLLOW_UP = re.compile(r"그\s*중|이\s*중|저\s*중|거기서|그\s*가운데|둘\s*중|셋\s*중|방금|위\s*매물|그\s*매물들|그럼|그러면")
+
+
+def _sort_in(q: str) -> str:
+    if re.search(r"평당", q):
+        return "price_per_pyeong_asc"
+    if re.search(r"비싼|고가", q):
+        return "price_desc"
+    if re.search(r"싼|저렴|최저가|가격\s*낮", q):
+        return "price_asc"
+    if re.search(r"넓은|넓|큰\s*(땅|거|건|것)|면적\s*큰|제일\s*큰|가장\s*큰", q):
+        return "area_desc"
+    return ""
+
+
+def _is_follow_up(q: str, sort: str) -> bool:
+    """직전 결과를 가리키는 후속 질문인지 ('그 중에 넓은 건?', '거기서 제일 싼 거', '더 넓은 건?')."""
+    if _FOLLOW_UP.search(q):
+        return True
+    # 지역·용도 없이 기준만 짧게 물으면 후속 질문으로 봄 ('넓은 건?', '제일 싼 거는?')
+    return bool(sort) and len(q.strip()) <= 15 and not _purpose_in(q) and not re.search(r"[가-힣]+(시|군|구|읍|면)\b", q)
 
 
 def _wants_compare(q: str) -> bool:
@@ -166,8 +200,20 @@ def _purpose_in(q: str) -> str:
     return ""
 
 
+_BEST = {"넓은 순": ("가장 넓은", "area"), "가격 낮은 순": ("가장 싼", "price"), "가격 높은 순": ("가장 비싼", "price"),
+         "평당가 낮은 순": ("평당가가 가장 낮은", "ppp"), "추천순": ("조건에 가장 잘 맞는", "price")}
+
+
+def _fact(x: dict, kind: str) -> str:
+    if kind == "area":
+        return f"{x['면적_평']:,}평, {x['가격']}"
+    if kind == "ppp":
+        return f"평당 {x['평당가_만원']:,}만원"
+    return f"{x['가격']}, {x['면적_평']:,}평"
+
+
 def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
-    """도구 결과만으로 짧은 요약 답변 만들기 (LLM 없이). 매물 상세는 화면의 카드가 보여줌."""
+    """도구 결과만으로 짧은 요약 답변 (LLM 없이). 매물 상세는 화면의 카드가 보여줌."""
     search = next((o for n, o in reversed(done) if n == "search_listings" and o.get("ok")), None)
     failed = next((o for n, o in reversed(done) if n == "search_listings" and not o.get("ok")), None)
     if search is None and failed:
@@ -177,37 +223,40 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
     if search and not found:
         return NOT_FOUND_MESSAGE
     names = {x["id"]: x.get("매물번호") or x["id"] for x in found}
+    total, cond = res.get("조건에_맞는_매물_수", len(found)), res.get("조건_요약", "말씀하신 조건")
+    order = res.get("정렬", "추천순")
     lines: list[str] = []
+
+    if found and res.get("앞_조건_이어서"):  # 후속 질문: 한 줄로
+        best, kind = _BEST.get(order, _BEST["추천순"])
+        if len(found) == 1:
+            x = found[0]
+            return f"앞서 찾은 {cond} 매물 {total}건 중 {best} 매물은 {names[x['id']]}({_fact(x, kind)})입니다."
+        return f"앞서 찾은 {cond} 매물 {total}건 중 {best} {len(found)}건입니다."
+
     if found:
-        order = res.get("정렬", "추천순")
-        how = "추천 순으로" if order == "추천순" else f"{order.replace(' 순', '')} 순으로"
-        total = res.get("조건에_맞는_매물_수", len(found))
-        cond = res.get("조건_요약", "말씀하신 조건")
-        lines.append(f"{cond} 조건에 맞는 매물 {total}건을 {how} 정리했습니다." if total <= len(found) else
-                     f"{cond} 조건에 맞는 매물 {total}건 중 {how} {len(found)}건을 골랐습니다.")
+        how = "추천 순" if order == "추천순" else order
+        lines.append(f"{cond} 매물 {total}건 중 {how}으로 {len(found)}건입니다." if total > len(found) else
+                     f"{cond} 매물 {total}건입니다 ({how}).")
     cmp_ = next((o for n, o in reversed(done) if n == "compare_listings" and o.get("ok")), None)
     if cmp_:
         r = cmp_["result"]
         rows = {x["id"]: x for x in r["매물"]}
         names.update({i: x.get("매물번호") or i for i, x in rows.items()})
         cheap, wide = r["가장_싼_매물"], r["가장_넓은_매물"]
-        lines.append(f"가장 싼 매물은 {names[cheap]}({rows[cheap]['가격']}), "
-                     f"가장 넓은 매물은 {names[wide]}({rows[wide]['면적_평']:,}평)입니다. "
-                     f"두 매물의 가격 차이는 {format_price(r['가격차_만원'])}입니다."
-                     if len(rows) == 2 else
-                     f"가장 싼 매물은 {names[cheap]}({rows[cheap]['가격']}), 가장 넓은 매물은 {names[wide]}"
-                     f"({rows[wide]['면적_평']:,}평), 평당가가 가장 낮은 매물은 {names[r['평당가가_가장_낮은_매물']]}입니다.")
+        if cheap == wide:
+            lines.append(f"가장 싸고 넓은 매물: {names[cheap]}({rows[cheap]['가격']}, {rows[wide]['면적_평']:,}평)")
+        else:
+            lines.append(f"최저가 {names[cheap]}({rows[cheap]['가격']}) · 가장 넓은 매물 {names[wide]}"
+                         f"({rows[wide]['면적_평']:,}평)")
     elif found:
         top = found[0]
-        lines.append(f"1순위는 {names[top['id']]}({top['가격']}, {top['면적_평']:,}평)입니다.")
+        lines.append(f"1순위 {names[top['id']]}({_fact(top, 'price')})")
     use = next((o for n, o in reversed(done) if n == "check_land_use" and o.get("ok")), None)
     if use and "가능" in use["result"]:
         r = use["result"]
-        verdict = "건축이 가능해 보입니다" if r["가능"] else "건축이 어려워 보입니다"
-        lines.append(f"{names.get(r['id'], r['id'])}는 {r['용도']} {verdict}({r['근거']}). "
-                     "실제 가능 여부는 토지이용계획확인원으로 확인이 필요합니다.")
-    if found:
-        lines.append("자세한 내용은 아래 매물 카드를 확인해 주세요.")
+        verdict = "건축 가능해 보입니다" if r["가능"] else "건축이 어려워 보입니다"
+        lines.append(f"{names.get(r['id'], r['id'])}: {r['용도']} {verdict} (토지이용계획 확인 필요)")
     return "\n".join(lines) or "질문을 이해하지 못했습니다. 지역·용도·예산을 함께 말씀해 주세요."
 
 
@@ -241,7 +290,7 @@ class ToolAgent:
         self.agent = agent
         self.registry = ToolRegistry(agent, ctx, lock)
         self.llm_policy = LLMPolicy(llm if llm is not None else agent.llm)
-        self.rule_policy = RulePolicy()
+        self.rule_policy = RulePolicy(self.registry.ctx)
         self.max_steps = max_steps
         self.log_dir = log_dir if log_dir is not None else getattr(agent.settings, "log_dir", None)
 

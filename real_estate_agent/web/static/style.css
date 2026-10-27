@@ -243,29 +243,32 @@ table.listings td:nth-child(2) { min-width: 240px; }
 .bubble.q { align-self: flex-end; background: var(--brand); color: var(--brand-ink); max-width: 80%; }
 .bubble.a { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
 .answer { white-space: pre-line; margin: 0 0 10px; }
-.mini-cards { list-style: none; padding: 0; margin: 0 0 10px; display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.mini { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 14px; font-size: .92rem;
-  display: flex; flex-direction: column; gap: 8px; }
+.mini-cards { list-style: none; padding: 0; margin: 4px 0 12px; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 16px; }
+.mini { background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; font-size: 1rem;
+  display: flex; flex-direction: column; gap: 12px; }
 .mini p { margin: 0; }
-.mini-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.mini-rank { width: 22px; height: 22px; border-radius: 6px; background: var(--brand); color: var(--brand-ink);
-  font-weight: 800; font-size: .8rem; display: grid; place-items: center; flex: none; }
-.mini-no { color: var(--muted); font-size: .84rem; margin-right: auto; }
-.mini-no strong { color: var(--ink); }
-.badge { font-size: .74rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;
-  background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+.mini-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mini-rank { width: 28px; height: 28px; border-radius: 8px; background: var(--brand); color: var(--brand-ink);
+  font-weight: 800; font-size: .95rem; display: grid; place-items: center; flex: none; }
+.mini-no { color: var(--muted); font-size: .95rem; margin-right: auto; }
+.mini-no strong { color: var(--ink); font-size: 1.05rem; }
+.badge { font-size: .85rem; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+  background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
 .badge.warn { background: var(--warn-bg); color: var(--warn-ink); }
-.mini-addr { font-weight: 700; font-size: 1rem; }
-.mini-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 0; }
-.mini-facts > div { background: var(--surface); border-radius: 8px; padding: 6px 10px; }
-.mini-facts dt { font-size: .72rem; color: var(--muted); }
-.mini-facts dd { margin: 0; font-weight: 700; }
-.mini-facts dd small { display: block; font-weight: 400; color: var(--muted); font-size: .74rem; }
-.mini-facts .price { color: var(--accent); }
-.mini-feat { margin: 0; padding-left: 1.1em; color: var(--ink); font-size: .86rem; display: flex; flex-direction: column; gap: 2px; }
+.mini-addr { font-weight: 800; font-size: 1.2rem; line-height: 1.35; }
+.mini-addr .tag.use { font-size: .8rem; }
+.mini-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 0; }
+.mini-facts > div { background: var(--surface); border-radius: 10px; padding: 10px 14px; }
+.mini-facts dt { font-size: .85rem; color: var(--muted); }
+.mini-facts dd { margin: 2px 0 0; font-weight: 800; font-size: 1.15rem; }
+.mini-facts dd small { display: block; font-weight: 400; color: var(--muted); font-size: .85rem; margin-top: 1px; }
+.mini-facts .price { color: var(--accent); font-size: 1.22rem; white-space: nowrap; }
+.mini-feat { margin: 0; padding-left: 1.2em; color: var(--ink); font-size: 1rem; line-height: 1.55;
+  display: flex; flex-direction: column; gap: 4px; }
 .mini-feat li::marker { color: var(--brand); }
-.mini-admin { font-size: .8rem; color: var(--accent); }
+.mini-admin { font-size: .9rem; color: var(--accent); }
+.answer { font-size: 1.05rem; line-height: 1.7; }
 .trace summary { cursor: pointer; font-size: .86rem; color: var(--brand); font-weight: 600; }
 .trace ol { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 6px; }
 .trace li { font-size: .84rem; background: var(--bg); border-radius: 8px; padding: 8px 10px 8px 38px; position: relative; overflow-wrap: anywhere; }
@@ -275,3 +278,9 @@ table.listings td:nth-child(2) { min-width: 240px; }
 .trace .args { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
 .trace .policy { float: right; font-size: .72rem; color: var(--muted); }
 .agent-ask { max-width: none; }
+.mini-facts dd { overflow-wrap: normal; word-break: keep-all; }
+@media (max-width: 480px) {
+  .mini { padding: 14px; }
+  .mini-facts dd { font-size: 1.02rem; }
+  .mini-facts .price { font-size: 1.1rem; }
+}

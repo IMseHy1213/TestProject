@@ -44,6 +44,7 @@ class AgentContext:
     liked: list[str] = field(default_factory=list)
     seen: list[str] = field(default_factory=list)            # 도구 결과로 보여준 매물 (순서대로)
     customer: str = ""
+    last_search: dict[str, Any] = field(default_factory=dict)  # 직전 검색 조건 ('그 중에 넓은 건?' 같은 후속 질문용)
 
 
 # ---------------------------------------------------------------------- 인자 검사
@@ -154,11 +155,9 @@ def condition_summary(req: CustomerRequirement) -> str:
         parts.append(f"{req.area_min_m2 / PYEONG_M2:,.0f}평 이상")
     elif req.area_max_m2:
         parts.append(f"{req.area_max_m2 / PYEONG_M2:,.0f}평 이하")
-    if req.need_road:
-        parts.append("도로 접한 땅")
     if req.keywords:
-        parts.append(", ".join(req.keywords))
-    return " · ".join(parts) or "전체 매물"
+        parts.append(", ".join(req.keywords[:2]))
+    return " · ".join(parts) or "전체"
 
 
 class ToolRegistry:
@@ -235,9 +234,26 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                         purpose: str = "", budget_min_manwon: Optional[int] = None,
                         budget_max_manwon: Optional[int] = None, area_min_pyeong: Optional[float] = None,
                         area_max_pyeong: Optional[float] = None, keywords: Optional[list[str]] = None,
-                        sort: str = "score", limit: int = 5) -> dict[str, Any]:
+                        sort: str = "score", limit: int = 5, use_previous_conditions: bool = False) -> dict[str, Any]:
         from ..regions import canonical_region
         from ..requirement_parser import RequirementParser
+
+        given = {k: v for k, v in dict(query=query, regions=regions, jimok=jimok, purpose=purpose,
+                                         budget_min_manwon=budget_min_manwon, budget_max_manwon=budget_max_manwon,
+                                         area_min_pyeong=area_min_pyeong, area_max_pyeong=area_max_pyeong,
+                                         keywords=keywords).items() if v not in (None, "", [])}
+        follow_up = use_previous_conditions and bool(ctx.last_search)
+        if follow_up:  # '그 중에 넓은 건?' -> 직전 검색 조건 그대로 + 새 정렬/개수 (새로 준 조건은 덧붙임)
+            merged = dict(ctx.last_search)
+            for k, v in given.items():
+                merged[k] = f"{merged.get('query', '')} {v}".strip() if k == "query" else v
+            given = merged
+        ctx.last_search = dict(given)
+        query, regions, jimok = given.get("query", ""), given.get("regions"), given.get("jimok")
+        purpose = given.get("purpose", "")
+        budget_min_manwon, budget_max_manwon = given.get("budget_min_manwon"), given.get("budget_max_manwon")
+        area_min_pyeong, area_max_pyeong = given.get("area_min_pyeong"), given.get("area_max_pyeong")
+        keywords = given.get("keywords")
 
         # 문장 해석은 규칙 기반으로 (도구 안에서 LLM 을 또 부르지 않음 - 판단은 바깥의 Agent 가)
         parser = RequirementParser(None, agent.known_regions(), [l.address for l in agent.listings()])
@@ -276,7 +292,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         order = {"score": "추천순", "price_asc": "가격 낮은 순", "price_desc": "가격 높은 순", "area_desc": "넓은 순",
                  "price_per_pyeong_asc": "평당가 낮은 순"}[sort]
         out: dict[str, Any] = {"이해한_조건": req.describe(), "조건_요약": condition_summary(req), "정렬": order,
-                               "조건에_맞는_매물_수": len(ranked),
+                               "앞_조건_이어서": follow_up, "조건에_맞는_매물_수": len(ranked),
                                "매물": [brief(s.listing, s) for s in shown]}
         if not ranked:
             out["안내"] = NOT_FOUND_MESSAGE
@@ -363,6 +379,9 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                  "sort": {"type": "string", "enum": ["score", "price_asc", "price_desc", "area_desc",
                                                      "price_per_pyeong_asc"], "description": "정렬 (기본 추천순)"},
                  "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "최대 개수 (기본 5)"},
+                 "use_previous_conditions": {"type": "boolean", "description":
+                     "손님이 '그 중에', '거기서'처럼 직전 결과를 가리키면 true: 직전 검색 조건을 그대로 쓰고 "
+                     "sort·limit(하나만 물으면 1)만 바꿔 다시 찾음"},
              }}, search_listings),
         Tool("get_listing", "매물 하나의 자세한 정보 (도로, 상태, 등록일, 특이사항 포함).",
              {"type": "object", "properties": {"listing_id": {"type": "string", "description": "매물 id 또는 매물번호"}},
