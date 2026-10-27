@@ -264,25 +264,43 @@ def test_names_in_office_numbers_never_reach_the_ai(tmp_path):
     assert "최저가" in result.badges["S.24250409(이재순님)"] and "창고 가능" in result.badges["S.24250409(이재순님)"]
 
 
-def test_follow_up_picks_one_from_previous_conditions(agent):
+def test_follow_up_picks_only_from_listings_just_shown(agent):
     ctx = AgentContext()
     runner = ToolAgent(agent, ctx=ctx)
     first, history = runner.run("음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘")
-    assert len(first.listing_ids) == 2
+    shown = first.listing_ids
+    assert len(shown) == 2
     second, history = runner.run("그 중에 넓은 건?", history)
     search = next(s for s in second.steps if s.tool == "search_listings")
     assert search.args == {"use_previous_conditions": True, "sort": "area_desc", "limit": 1}
-    assert len(second.listing_ids) == 1 and second.answer.startswith("앞서 찾은 음성군 · 창고 용도 매물")
-    assert "가장 넓은 매물은" in second.answer and len(second.answer.splitlines()) == 1
-    # 이전 조건(음성군·창고)에 맞는 매물 중 실제로 가장 넓은 것
-    widest = max((l for l in agent.listings() if "음성군" in l.address), key=lambda l: l.area_m2)
-    reg = ToolRegistry(agent)
-    all_ok = reg.run("search_listings", {"query": "음성군 창고 땅", "limit": 10})["result"]["매물"]
-    assert second.listing_ids[0] == max(all_ok, key=lambda x: x["면적_평"])["id"]
-    third, _ = runner.run("거기서 제일 싼 거 2개", history)
-    s3 = next(s for s in third.steps if s.tool == "search_listings")
-    assert s3.args["sort"] == "price_asc" and s3.args["limit"] == 2 and len(third.listing_ids) == 2
-    assert widest is not None
+    widest_shown = max(shown, key=lambda i: agent.find_listing(i).area_m2)
+    assert second.listing_ids == [widest_shown]  # 보여준 2건 안에서만
+    assert second.answer.startswith("앞서 보여드린 2건 중 가장 넓은 매물은") and len(second.answer.splitlines()) == 1
+    # 같은 2건 안에서 계속 고름
+    third, _ = runner.run("그 중에 싼 건?", history)
+    cheapest_shown = min(shown, key=lambda i: agent.find_listing(i).price_manwon)
+    assert third.listing_ids == [cheapest_shown]
+    # 음성군 창고 매물 전체로 넓히지 않음 (전체 중 가장 넓은 매물이 보여준 2건 밖에 있어도)
+    all_ok = ToolRegistry(agent).run("search_listings", {"query": "음성군 창고 땅", "limit": 10})["result"]["매물"]
+    assert len(all_ok) > 2
+
+
+def test_listing_without_office_number_gets_readable_name(tmp_path):
+    from openpyxl import Workbook
+
+    data = tmp_path / "매물" / "음성군" / "음성군 감곡면 오향리 1 외 36필지(물류부지)"
+    data.mkdir(parents=True)
+    wb = Workbook()
+    ws = wb.active
+    for r in [["소재지", "충청북도 음성군 감곡면 오향리 1"], ["지목", "전"], ["면적", "15,005평"], ["매매가", "148억 8060만"],
+              ["매물 특징", "● 감곡IC-7분 거리"]]:
+        ws.append(r)
+    wb.save(data / "정보.xlsx")
+    a = RealEstateAgent(Settings(data_dir=tmp_path / "매물", db_path=tmp_path / "n.db", log_dir=tmp_path / "l",
+                                 llm_providers=["rule"]))
+    a.sync()
+    result, _ = ToolAgent(a).run("음성군 땅")
+    assert "F-" not in result.answer and "음성군 전 15,005평 매물" in result.answer
 
 
 def test_new_question_is_not_treated_as_follow_up(agent):

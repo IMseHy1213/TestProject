@@ -45,6 +45,7 @@ class AgentContext:
     seen: list[str] = field(default_factory=list)            # 도구 결과로 보여준 매물 (순서대로)
     customer: str = ""
     last_search: dict[str, Any] = field(default_factory=dict)  # 직전 검색 조건 ('그 중에 넓은 건?' 같은 후속 질문용)
+    last_shown: list[str] = field(default_factory=list)  # 직전에 손님에게 보여준 매물 ('그 중' = 이 안에서 고름)
 
 
 # ---------------------------------------------------------------------- 인자 검사
@@ -111,12 +112,24 @@ def tool_id(l: LandListing) -> str:
     return public_office_no(l.listing_id) or l.listing_id
 
 
+def display_name(l: LandListing) -> str:
+    """손님에게 매물을 가리킬 이름: 매물번호, 없으면 '음성군 전 15,005평 매물' (프로그램 내부 번호 F-… 는 쓰지 않음)."""
+    from ..agent import public_office_no, public_region
+
+    no = public_office_no(l.office_no)
+    if no:
+        return no
+    region = (public_region(l.address).split() or [""])[-1]
+    return " ".join(x for x in (region, l.jimok, f"{l.area_pyeong:,.0f}평 매물") if x)
+
+
 def brief(l: LandListing, s: Optional[ScoredListing] = None) -> dict[str, Any]:
     from ..agent import mask_address, public_office_no
 
     d = {
         "id": tool_id(l),
         "매물번호": public_office_no(l.office_no) or None,
+        "표시이름": display_name(l),
         "주소": mask_address(l.address),
         "지목": l.jimok or None,
         "용도지역": l.zoning or None,
@@ -277,6 +290,9 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         req.customer_name = ctx.customer
         session = agent.recommend(req)
         ranked = [s for s in session.ranked if s.listing.listing_id not in ctx.rejected]
+        pool = list(ctx.last_shown) if follow_up else []
+        if pool:  # '그 중에' -> 직전에 보여준 매물 안에서만
+            ranked = [s for s in ranked if s.listing.listing_id in pool]
         if sort == "price_asc":
             ranked.sort(key=lambda s: s.listing.price_manwon)
         elif sort == "price_desc":
@@ -289,10 +305,13 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         for s in shown:
             if s.listing.listing_id not in ctx.seen:
                 ctx.seen.append(s.listing.listing_id)
+        if not pool:  # 새 검색이면 '보여준 매물' 갱신 (후속 질문은 같은 후보 안에서 계속 고르도록 유지)
+            ctx.last_shown = [s.listing.listing_id for s in shown]
         order = {"score": "추천순", "price_asc": "가격 낮은 순", "price_desc": "가격 높은 순", "area_desc": "넓은 순",
                  "price_per_pyeong_asc": "평당가 낮은 순"}[sort]
         out: dict[str, Any] = {"이해한_조건": req.describe(), "조건_요약": condition_summary(req), "정렬": order,
-                               "앞_조건_이어서": follow_up, "조건에_맞는_매물_수": len(ranked),
+                               "앞_조건_이어서": follow_up, "앞서_보여준_매물_수": len(pool) or None,
+                               "조건에_맞는_매물_수": len(ranked),
                                "매물": [brief(s.listing, s) for s in shown]}
         if not ranked:
             out["안내"] = NOT_FOUND_MESSAGE
@@ -331,6 +350,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         for l in items:
             if l.listing_id not in ctx.seen:
                 ctx.seen.append(l.listing_id)
+        ctx.last_shown = [l.listing_id for l in items]  # 비교한 매물이 손님 화면에 나옴
         def pick(key):
             return tool_id(min(items, key=key))
         return {
@@ -380,8 +400,8 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                                                      "price_per_pyeong_asc"], "description": "정렬 (기본 추천순)"},
                  "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "최대 개수 (기본 5)"},
                  "use_previous_conditions": {"type": "boolean", "description":
-                     "손님이 '그 중에', '거기서'처럼 직전 결과를 가리키면 true: 직전 검색 조건을 그대로 쓰고 "
-                     "sort·limit(하나만 물으면 1)만 바꿔 다시 찾음"},
+                     "손님이 '그 중에', '거기서'처럼 직전 결과를 가리키면 true: 직전에 보여준 매물들 안에서만 "
+                     "sort 기준으로 다시 골라 limit(하나만 물으면 1)만큼 돌려줌"},
              }}, search_listings),
         Tool("get_listing", "매물 하나의 자세한 정보 (도로, 상태, 등록일, 특이사항 포함).",
              {"type": "object", "properties": {"listing_id": {"type": "string", "description": "매물 id 또는 매물번호"}},

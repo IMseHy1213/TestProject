@@ -44,7 +44,8 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
 - 지번 전체와 소유자 연락처는 알 수 없습니다. 물으면 "상담 시 안내해 드립니다"라고 답하세요.
 - 조건에 맞는 매물이 없으면 "해당 조건에 맞는 매물이 없습니다."라고 답하세요.
 - 손님이 '그 중에', '거기서', '그럼 넓은 건?'처럼 직전 결과를 가리키면 search_listings 에
-  use_previous_conditions=true 와 sort 를 주고, 하나만 물으면 limit=1 로 하나만 답하세요.
+  use_previous_conditions=true 와 sort 를 주세요 (직전에 보여준 매물 안에서만 고릅니다). 하나만 물으면 limit=1.
+- 매물을 가리킬 때는 '매물번호', 없으면 '표시이름'을 쓰세요. id(F-… 같은 내부 번호)는 손님에게 말하지 마세요.
 - 화면에 매물 카드(지역·가격·면적·지목·특징)가 따로 나오므로, 최종 답변은 한국어 1~3문장의 짧은 요약만 쓰세요.
   매물은 매물번호(없으면 id)로 가리키고 핵심 수치(가격 또는 면적)만 괄호로 덧붙이세요.
   매물 목록을 줄줄이 나열하거나 특징을 그대로 옮겨 쓰지 말고, 표·마크다운(**, #, -)도 쓰지 마세요.
@@ -222,17 +223,18 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
     found = res.get("매물", [])
     if search and not found:
         return NOT_FOUND_MESSAGE
-    names = {x["id"]: x.get("매물번호") or x["id"] for x in found}
+    names = {x["id"]: x.get("매물번호") or x.get("표시이름") or x["id"] for x in found}
     total, cond = res.get("조건에_맞는_매물_수", len(found)), res.get("조건_요약", "말씀하신 조건")
     order = res.get("정렬", "추천순")
     lines: list[str] = []
 
     if found and res.get("앞_조건_이어서"):  # 후속 질문: 한 줄로
         best, kind = _BEST.get(order, _BEST["추천순"])
+        pool = f"앞서 보여드린 {res['앞서_보여준_매물_수']}건" if res.get("앞서_보여준_매물_수") else f"앞서 찾은 {cond} 매물 {total}건"
         if len(found) == 1:
             x = found[0]
-            return f"앞서 찾은 {cond} 매물 {total}건 중 {best} 매물은 {names[x['id']]}({_fact(x, kind)})입니다."
-        return f"앞서 찾은 {cond} 매물 {total}건 중 {best} {len(found)}건입니다."
+            return f"{pool} 중 {best} 매물은 {names[x['id']]}({_fact(x, kind)})입니다."
+        return f"{pool} 중 {best} {len(found)}건입니다."
 
     if found:
         how = "추천 순" if order == "추천순" else order
@@ -242,7 +244,7 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
     if cmp_:
         r = cmp_["result"]
         rows = {x["id"]: x for x in r["매물"]}
-        names.update({i: x.get("매물번호") or i for i, x in rows.items()})
+        names.update({i: x.get("매물번호") or x.get("표시이름") or i for i, x in rows.items()})
         cheap, wide = r["가장_싼_매물"], r["가장_넓은_매물"]
         if cheap == wide:
             lines.append(f"가장 싸고 넓은 매물: {names[cheap]}({rows[cheap]['가격']}, {rows[wide]['면적_평']:,}평)")

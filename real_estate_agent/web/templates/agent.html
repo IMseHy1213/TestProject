@@ -28,7 +28,7 @@
         <li class="mini">
           <div class="mini-head">
             <span class="mini-rank">{{ loop.index }}</span>
-            <span class="mini-no">{% if c.office_no %}매물번호 <strong>{{ c.office_no }}</strong>{% else %}{{ c.id }}{% endif %}</span>
+            <span class="mini-no">{% if c.office_no %}매물번호 <strong>{{ c.office_no }}</strong>{% else %}매물번호 미등록{% endif %}</span>
             {% for b in c.badges %}<span class="badge{% if '어려움' in b or b == '제외' %} warn{% endif %}">{{ b }}</span>{% endfor %}
           </div>
           <p class="mini-addr">{{ c.address }}{% if c.use_tag %} <span class="tag use">{{ c.use_tag }}</span>{% endif %}</p>
