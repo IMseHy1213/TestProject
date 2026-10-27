@@ -300,7 +300,12 @@ def test_listing_without_office_number_gets_readable_name(tmp_path):
                                  llm_providers=["rule"]))
     a.sync()
     result, _ = ToolAgent(a).run("음성군 땅")
-    assert "F-" not in result.answer and "음성군 전 15,005평 매물" in result.answer
+    assert "F-" not in result.answer and "음성군 물류부지 15,005평 매물" in result.answer  # 지역 + 매물 종류 + 면적
+
+    from real_estate_agent.models import LandListing
+    from real_estate_agent.tool_agent.tools import display_name
+
+    assert display_name(LandListing("X", "충청북도 음성군 대소읍 삼정리 5", 3305.785, 10000, jimok="전")) == "음성군 토지 1,000평 매물"
 
 
 def test_new_question_is_not_treated_as_follow_up(agent):

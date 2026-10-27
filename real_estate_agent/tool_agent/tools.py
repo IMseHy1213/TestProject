@@ -113,14 +113,16 @@ def tool_id(l: LandListing) -> str:
 
 
 def display_name(l: LandListing) -> str:
-    """손님에게 매물을 가리킬 이름: 매물번호, 없으면 '음성군 전 15,005평 매물' (프로그램 내부 번호 F-… 는 쓰지 않음)."""
+    """손님에게 매물을 가리킬 이름: 매물번호, 없으면 '음성군 물류부지 15,005평 매물'
+    (매물 종류 = 매물 폴더 이름 괄호 안의 용도, 없으면 '토지'. 프로그램 내부 번호 F-… 는 쓰지 않음)."""
     from ..agent import public_office_no, public_region
 
     no = public_office_no(l.office_no)
     if no:
         return no
     region = (public_region(l.address).split() or [""])[-1]
-    return " ".join(x for x in (region, l.jimok, f"{l.area_pyeong:,.0f}평 매물") if x)
+    kind = l.use_tag or "토지"
+    return " ".join(x for x in (region, kind, f"{l.area_pyeong:,.0f}평 매물") if x)
 
 
 def brief(l: LandListing, s: Optional[ScoredListing] = None) -> dict[str, Any]:
