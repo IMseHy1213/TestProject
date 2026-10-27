@@ -485,21 +485,44 @@ def is_condition_change(text: str) -> bool:
     return bool(re.search(_CONDITION_CUES, text)) or parse_rule_based(text).describe() != "(조건 없음)"
 
 
+def public_region(address: str) -> str:
+    """손님에게 보여줄 지역: 시/도 + 시/군/구 까지만. '음성군 금왕읍 각회리 210-3' -> '충청북도 음성군'
+    (시/도가 안 적혀 있으면 시/군 이름으로 채움, '청주시 흥덕구' 처럼 시 아래 구는 함께)"""
+    from .regions import SIDO_ALIASES, SIGUNGU_TO_SIDO, sido_of
+
+    sido, parts = "", []
+    for tok in address.split():
+        if not sido and not parts and sido_of(tok):
+            sido = max(SIDO_ALIASES[sido_of(tok)], key=len)  # '충북' -> '충청북도'
+            continue
+        if re.fullmatch(r"[가-힣]{1,10}(시|군|구)", tok) and len(parts) < 2:
+            if parts and not (parts[0].endswith("시") and tok.endswith("구")):
+                break
+            parts.append(tok)
+            continue
+        break
+    if parts and not sido:
+        owners = SIGUNGU_TO_SIDO.get(parts[0], set())
+        if len(owners) == 1:
+            sido = max(SIDO_ALIASES[next(iter(owners))], key=len)
+    return " ".join(([sido] if sido else []) + parts)
+
+
 def mask_address(address: str) -> str:
-    """손님용 화면: 정확한 지번은 가리고 리/동까지만 표시. '음성군 금왕읍 무극리 210-3' -> '... 무극리 ***'"""
-    address = address.strip()
-    multi = re.search(r"\s*외\s*\d+\s*필지.*$", address)  # '417-2 외 36필지' -> '*** 외 36필지'
-    tail = multi.group(0).strip() if multi else ""
-    core = address[:multi.start()] if multi else address
-    masked = re.sub(r"\s*(산\s*)?\d+(-\d+)?(번지)?\s*$", "", core).strip()
-    if masked == core.strip():
-        return address
-    return f"{masked} ***" + (f" {tail}" if tail else "")
+    """손님용 화면: 시/도 + 시/군/구 까지만 보이고 나머지(읍·면·동·리, 도로명, 지번, 상세주소)는 가림.
+    '음성군 금왕읍 각회리 210-3' -> '충청북도 음성군 ***'"""
+    region = public_region(address.strip())
+    return f"{region} ***" if region else "***"
+
+
+def public_office_no(office_no: str) -> str:
+    """손님·AI 에게 보여줄 매물번호: 'S.24250409(이재순님)' -> 'S.24250409' (괄호 안 이름·메모는 가림)"""
+    return re.sub(r"\s*[(\[（].*$", "", office_no or "").strip()
 
 
 def template_explanation(s: ScoredListing, address: Optional[str] = None) -> str:
     l = s.listing
-    text = (f"{address or l.address}의 {l.jimok or '토지'} {l.area_pyeong:,.0f}평 매물로, "
+    text = (f"{(address or l.address).replace(' ***', '')} 소재 {l.jimok or '토지'} {l.area_pyeong:,.0f}평 매물로, "
             f"매매가는 {format_price(l.price_manwon)}(평당 약 {l.price_per_pyeong:,.0f}만원)입니다.")
     if s.reasons:
         text += " 장점: " + ", ".join(s.reasons[:4]) + "."

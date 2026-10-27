@@ -43,7 +43,10 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
 - 가격 인자는 만원 단위입니다 (1억 = 10000).
 - 지번 전체와 소유자 연락처는 알 수 없습니다. 물으면 "상담 시 안내해 드립니다"라고 답하세요.
 - 조건에 맞는 매물이 없으면 "해당 조건에 맞는 매물이 없습니다."라고 답하세요.
-- 최종 답변은 한국어로 짧게(3~8문장). 매물을 말할 때는 매물번호(없으면 id), 주소, 가격, 면적을 함께 쓰세요.
+- 화면에 매물 카드(지역·가격·면적·지목·특징)가 따로 나오므로, 최종 답변은 한국어 2~5문장의 요약만 쓰세요.
+  매물은 매물번호(없으면 id)로 가리키고 핵심 수치(가격 또는 면적)만 괄호로 덧붙이세요.
+  매물 목록을 줄줄이 나열하거나 특징을 그대로 옮겨 쓰지 말고, 표·마크다운(**, #, -)도 쓰지 마세요.
+- 주소는 도구가 준 대로(시/도 + 시/군/구)만 말하세요.
 - 건축 가능 여부는 프로그램의 1차 판단이며 토지이용계획 확인이 필요하다고 덧붙이세요.
 """
 
@@ -71,6 +74,7 @@ class AgentResult:
     stopped: str              # 'answer' / 'max_steps' / 'fallback'
     total_ms: float
     run_id: str = ""
+    badges: dict[str, list[str]] = field(default_factory=dict)  # 매물별 표시 (최저가, 창고 가능 …)
 
     @property
     def tool_calls(self) -> int:
@@ -163,8 +167,7 @@ def _purpose_in(q: str) -> str:
 
 
 def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
-    """도구 결과만으로 답변 문장 만들기 (LLM 없이)."""
-    lines: list[str] = []
+    """도구 결과만으로 짧은 요약 답변 만들기 (LLM 없이). 매물 상세는 화면의 카드가 보여줌."""
     search = next((o for n, o in reversed(done) if n == "search_listings" and o.get("ok")), None)
     failed = next((o for n, o in reversed(done) if n == "search_listings" and not o.get("ok")), None)
     if search is None and failed:
@@ -173,28 +176,62 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
     found = res.get("매물", [])
     if search and not found:
         return NOT_FOUND_MESSAGE
+    names = {x["id"]: x.get("매물번호") or x["id"] for x in found}
+    lines: list[str] = []
     if found:
-        lines.append(f"조건({res.get('이해한_조건', '')})에 맞는 매물 {res.get('조건에_맞는_매물_수', len(found))}건 중 "
-                     f"{res.get('정렬', '추천순')}으로 {len(found)}건입니다.")
-        for i, x in enumerate(found, 1):
-            no = x.get("매물번호") or x["id"]
-            feat = f" · {x['매물특징']}" if x.get("매물특징") else ""
-            lines.append(f"{i}) [{no}] {x['주소']} · {x['가격']} · {x['면적_평']:,}평 · {x.get('지목', '-')}{feat}")
+        order = res.get("정렬", "추천순")
+        how = "추천 순으로" if order == "추천순" else f"{order.replace(' 순', '')} 순으로"
+        total = res.get("조건에_맞는_매물_수", len(found))
+        cond = res.get("조건_요약", "말씀하신 조건")
+        lines.append(f"{cond} 조건에 맞는 매물 {total}건을 {how} 정리했습니다." if total <= len(found) else
+                     f"{cond} 조건에 맞는 매물 {total}건 중 {how} {len(found)}건을 골랐습니다.")
     cmp_ = next((o for n, o in reversed(done) if n == "compare_listings" and o.get("ok")), None)
     if cmp_:
         r = cmp_["result"]
-        name = {x["id"]: x.get("매물번호") or x["id"] for x in r["매물"]}
-        lines.append(f"비교: 가장 싼 매물은 {name[r['가장_싼_매물']]}, 가장 넓은 매물은 {name[r['가장_넓은_매물']]}, "
-                     f"평당가가 가장 낮은 매물은 {name[r['평당가가_가장_낮은_매물']]} 입니다 "
-                     f"(가격 차이 {format_price(r['가격차_만원'])}).")
+        rows = {x["id"]: x for x in r["매물"]}
+        names.update({i: x.get("매물번호") or i for i, x in rows.items()})
+        cheap, wide = r["가장_싼_매물"], r["가장_넓은_매물"]
+        lines.append(f"가장 싼 매물은 {names[cheap]}({rows[cheap]['가격']}), "
+                     f"가장 넓은 매물은 {names[wide]}({rows[wide]['면적_평']:,}평)입니다. "
+                     f"두 매물의 가격 차이는 {format_price(r['가격차_만원'])}입니다."
+                     if len(rows) == 2 else
+                     f"가장 싼 매물은 {names[cheap]}({rows[cheap]['가격']}), 가장 넓은 매물은 {names[wide]}"
+                     f"({rows[wide]['면적_평']:,}평), 평당가가 가장 낮은 매물은 {names[r['평당가가_가장_낮은_매물']]}입니다.")
+    elif found:
+        top = found[0]
+        lines.append(f"1순위는 {names[top['id']]}({top['가격']}, {top['면적_평']:,}평)입니다.")
     use = next((o for n, o in reversed(done) if n == "check_land_use" and o.get("ok")), None)
-    if use:
+    if use and "가능" in use["result"]:
         r = use["result"]
-        if "가능" in r:
-            verdict = "가능해 보입니다" if r["가능"] else "어려워 보입니다"
-            lines.append(f"{r['id']} 매물에 {r['용도']} 건축은 {verdict} ({r['근거']}). "
-                         "실제 가능 여부는 토지이용계획확인원으로 확인이 필요합니다.")
+        verdict = "건축이 가능해 보입니다" if r["가능"] else "건축이 어려워 보입니다"
+        lines.append(f"{names.get(r['id'], r['id'])}는 {r['용도']} {verdict}({r['근거']}). "
+                     "실제 가능 여부는 토지이용계획확인원으로 확인이 필요합니다.")
+    if found:
+        lines.append("자세한 내용은 아래 매물 카드를 확인해 주세요.")
     return "\n".join(lines) or "질문을 이해하지 못했습니다. 지역·용도·예산을 함께 말씀해 주세요."
+
+
+def listing_badges(done: list[tuple[str, dict]]) -> dict[str, list[str]]:
+    """도구 결과에서 매물별 표시: '최저가', '가장 넓음', '평당가 최저', '창고 가능' …"""
+    badges: dict[str, list[str]] = {}
+
+    def add(lid: str, text: str) -> None:
+        if text not in badges.setdefault(lid, []):
+            badges[lid].append(text)
+
+    for name, obs in done:
+        if not obs.get("ok"):
+            continue
+        r = obs.get("result", {})
+        if name == "compare_listings":
+            add(r["가장_싼_매물"], "최저가")
+            add(r["가장_넓은_매물"], "가장 넓음")
+            add(r["평당가가_가장_낮은_매물"], "평당가 최저")
+        elif name == "check_land_use" and "가능" in r:
+            add(r["id"], f"{r['용도']} {'가능' if r['가능'] else '어려움'}")
+        elif name == "record_feedback":
+            add(r["id"], "관심" if r.get("기록") == "like" else "제외")
+    return badges
 
 
 # ---------------------------------------------------------------------- Agent 루프
@@ -277,16 +314,40 @@ class ToolAgent:
                               ms=_ms(t0)))
             messages.append({"role": "assistant", "content": answer})
 
-        result = AgentResult(question, answer or NOT_FOUND_MESSAGE, steps, self._mentioned(answer, seen_before), policy,
-                             stopped, round((time.perf_counter() - started) * 1000, 1), uuid.uuid4().hex[:12])
+        start = max(i for i, m in enumerate(messages) if m["role"] == "user")
+        done = [(m["name"], _loads(m["content"])) for m in messages[start:] if m["role"] == "tool"]
+        badges = {}
+        for key, values in listing_badges(done).items():  # 도구 id(공개용) -> 실제 매물 id
+            badges[self.registry.resolve(key) or key] = values
+        result = AgentResult(question, answer or NOT_FOUND_MESSAGE, steps, self._cards(done, answer, seen_before), policy,
+                             stopped, round((time.perf_counter() - started) * 1000, 1), uuid.uuid4().hex[:12],
+                             badges)
         self._log(result)
         return result, trim_history(messages)
+
+    def _cards(self, done: list[tuple[str, dict]], answer: str, seen_before: int) -> list[str]:
+        """화면 카드로 보여줄 매물: 이번 질문의 마지막 비교(없으면 검색) 결과 순서대로 + 답변에서 따로 말한 매물."""
+        base: list[str] = []
+        for name, obs in reversed(done):
+            if obs.get("ok") and name in {"compare_listings", "search_listings"}:
+                base = [x["id"] for x in obs["result"].get("매물", [])]
+                break
+        if not base:
+            base = [obs["result"]["id"] for name, obs in done
+                    if obs.get("ok") and name in {"get_listing", "check_land_use"} and "id" in obs.get("result", {})]
+        if answer.strip() == NOT_FOUND_MESSAGE:
+            return []
+        base = [self.registry.resolve(i) or i for i in base]
+        extra = [i for i in self._mentioned(answer, seen_before) if i not in base]
+        return list(dict.fromkeys(base + extra))[:6]
 
     def _mentioned(self, answer: str, seen_before: int = 0) -> list[str]:
         """답변에 나온 매물 (id 또는 매물번호) - 없으면 이번 질문에서 도구로 본 매물."""
         ids = []
+        from ..agent import public_office_no
+
         for l in self.agent.listings():
-            for key in {l.listing_id, l.office_no} - {""}:
+            for key in {l.listing_id, l.office_no, public_office_no(l.office_no)} - {""}:
                 if re.search(rf"(?<![\w-]){re.escape(key)}(?![\w-])", answer):
                     ids.append((answer.find(key), l.listing_id))
                     break

@@ -23,17 +23,28 @@
     <div class="bubble a">
       <p class="answer">{{ t.answer }}</p>
       {% if t.cards %}
-      <div class="mini-cards">
+      <ol class="mini-cards">
         {% for c in t.cards %}
-        <div class="mini">
-          <p class="mini-no">{% if c.office_no %}매물번호 <strong>{{ c.office_no }}</strong>{% else %}<span class="muted">{{ c.id }}</span>{% endif %}</p>
-          <p class="mini-addr">{{ c.address }}</p>
-          <p class="mini-facts"><strong class="price">{{ c.price }}</strong> · {{ c.pyeong }}평 · {{ c.jimok }} · {{ c.zoning }}</p>
-          {% if c.features %}<p class="mini-feat">{{ c.features }}</p>{% endif %}
+        <li class="mini">
+          <div class="mini-head">
+            <span class="mini-rank">{{ loop.index }}</span>
+            <span class="mini-no">{% if c.office_no %}매물번호 <strong>{{ c.office_no }}</strong>{% else %}{{ c.id }}{% endif %}</span>
+            {% for b in c.badges %}<span class="badge{% if '어려움' in b or b == '제외' %} warn{% endif %}">{{ b }}</span>{% endfor %}
+          </div>
+          <p class="mini-addr">{{ c.address }}{% if c.use_tag %} <span class="tag use">{{ c.use_tag }}</span>{% endif %}</p>
+          <dl class="mini-facts">
+            <div><dt>가격</dt><dd class="price">{{ c.price }}<small>평당 {{ c.ppp }}만원</small></dd></div>
+            <div><dt>면적</dt><dd>{{ c.pyeong }}평<small>{{ c.m2 }}㎡</small></dd></div>
+            <div><dt>지목</dt><dd>{{ c.jimok }}</dd></div>
+            <div><dt>용도지역</dt><dd>{{ c.zoning }}</dd></div>
+          </dl>
+          {% if c.features %}
+          <ul class="mini-feat">{% for f in c.features %}<li>{{ f }}</li>{% endfor %}</ul>
+          {% endif %}
           {% if is_admin %}<p class="mini-admin">연락처 {{ c.contact or "-" }} · <a href="{{ url_for('admin_listing_edit', id=c.id) }}">수정</a></p>{% endif %}
-        </div>
+        </li>
         {% endfor %}
-      </div>
+      </ol>
       {% endif %}
       <details class="trace">
         <summary>🔎 에이전트 실행 과정 · 도구 {{ t.tool_calls }}회{% if t.tool_errors %} (오류 {{ t.tool_errors }}회 → 스스로 수정){% endif %} · {{ "%.1f"|format(t.total_ms / 1000) }}초 · {{ t.policy }}</summary>

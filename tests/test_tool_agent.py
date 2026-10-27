@@ -108,7 +108,7 @@ def test_failover_to_rule_policy_mid_run(agent):
     result, _ = ToolAgent(agent, llm=router(fake)).run("음성군 창고 땅")
     kinds = [s.kind for s in result.steps]
     assert "fallback" in kinds and result.policy == "rule" and result.stopped == "answer"
-    assert result.answer.startswith("조건(")  # 규칙 기반이 이미 받은 검색 결과로 답을 마무리
+    assert "조건에 맞는 매물" in result.answer  # 규칙 기반이 이미 받은 검색 결과로 답을 마무리
 
 
 def test_repeated_calls_and_step_limit(agent):
@@ -132,7 +132,7 @@ def test_feedback_tool_excludes_rejected_in_same_conversation(agent):
 def test_rule_policy_compare_flow_and_run_log(agent, tmp_path):
     result, _ = ToolAgent(agent).run("양평 땅 2개 비교해줘")
     assert [s.tool for s in result.steps if s.kind == "tool"] == ["search_listings", "compare_listings"]
-    assert "비교:" in result.answer and len(result.listing_ids) == 2
+    assert "가장 싼 매물은" in result.answer and len(result.listing_ids) == 2
     row = json.loads((tmp_path / "logs" / "agent_runs.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert row["tool_calls"] == 2 and row["policy"] == "rule" and row["total_ms"] >= 0
 
@@ -204,7 +204,7 @@ def test_openai_client_sends_tools(monkeypatch):
 def test_step_limit_falls_back_to_rule_summary_if_model_keeps_calling_tools(agent):
     keep = lambda _m: call("search_listings", query="양평 땅", limit=2)  # noqa: E731
     result, _ = ToolAgent(agent, llm=router(ScriptedLLM([keep] * 5)), max_steps=3).run("양평 땅")
-    assert result.stopped == "max_steps" and result.policy == "rule" and result.answer.startswith("조건(")
+    assert result.stopped == "max_steps" and result.policy == "rule" and "조건에 맞는 매물" in result.answer
 
 
 def test_rule_policy_sorts_by_price_when_asked_for_cheap(agent):
@@ -214,3 +214,50 @@ def test_rule_policy_sorts_by_price_when_asked_for_cheap(agent):
     obs = ToolRegistry(agent).run("search_listings", {"query": "음성군 땅", "sort": "price_asc", "limit": 5})
     prices = [x["가격_만원"] for x in obs["result"]["매물"]]
     assert prices == sorted(prices)
+
+
+def test_public_address_shows_only_province_and_city():
+    from real_estate_agent.agent import mask_address, public_office_no
+
+    assert mask_address("음성군 금왕읍 각회리 210-3") == "충청북도 음성군 ***"          # 시/도 채움
+    assert mask_address("경기도 양평군 서종면 수입리 210") == "경기도 양평군 ***"
+    assert mask_address("충북 음성군 생극면 차곡리 7 외 1필지") == "충청북도 음성군 ***"
+    assert mask_address("서울특별시 강남구 테헤란로 152 강남파이낸스센터 21층 2101호") == "서울특별시 강남구 ***"
+    assert mask_address("충청북도 청주시 흥덕구 오송읍 오송생명로 123") == "충청북도 청주시 흥덕구 ***"
+    assert mask_address("감곡면 문촌리 417-2") == "***"
+    assert public_office_no("S.24250409(이재순님)") == "S.24250409" and public_office_no("T-1004") == "T-1004"
+
+
+def test_cards_and_badges_from_tool_results(agent):
+    result, _ = ToolAgent(agent).run("음성군 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘")
+    assert len(result.listing_ids) == 2
+    badges = [b for i in result.listing_ids for b in result.badges.get(i, [])]
+    assert "최저가" in badges and "가장 넓음" in badges and any(b.startswith("창고 ") for b in badges)
+    assert "\n1)" not in result.answer and "●" not in result.answer  # 목록·특징을 답변에 늘어놓지 않음
+    assert "카드" in result.answer
+
+
+def test_names_in_office_numbers_never_reach_the_ai(tmp_path):
+    """매물번호 'S.24250409(이재순님)' 의 이름이 AI 에게 가는 도구 결과·실행 과정에 나오지 않음."""
+    from openpyxl import Workbook
+
+    data = tmp_path / "매물"
+    data.mkdir()
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["매물번호", "소재지", "지목", "용도지역", "면적(평)", "매매가", "특이사항"])
+    ws.append(["S.24250409(이재순님)", "충청북도 음성군 금왕읍 각회리 123", "대", "계획관리지역", 84, "1억 3900만", "창고 가능"])
+    ws.append(["S.251229(골드)", "충청북도 음성군 생극면 차곡리 7", "임야", "계획관리지역", 605, "3억", "2차선 도로"])
+    wb.save(data / "장부.xlsx")
+    a = RealEstateAgent(Settings(data_dir=data, db_path=tmp_path / "n.db", log_dir=tmp_path / "l", llm_providers=["rule"]))
+    a.sync()
+    fake = ScriptedLLM([call("search_listings", query="음성군 창고 땅", limit=5),
+                        lambda m: call("compare_listings", listing_ids=[x["id"] for x in json.loads(m[-1]["content"])["result"]["매물"]]),
+                        call("check_land_use", listing_id="S.24250409", purpose="창고"),
+                        ToolTurn(text="S.24250409(1억 3,900만원)가 가장 저렴합니다.")])
+    result, history = ToolAgent(a, llm=router(fake)).run("음성군 창고 땅 비교")
+    sent = json.dumps([m.get("content") for m in history], ensure_ascii=False)
+    trace = json.dumps([vars(s) for s in result.steps], ensure_ascii=False)
+    assert "이재순" not in sent and "골드" not in sent and "이재순" not in trace
+    assert result.listing_ids == ["S.24250409(이재순님)", "S.251229(골드)"]  # 화면 카드용 실제 id
+    assert "최저가" in result.badges["S.24250409(이재순님)"] and "창고 가능" in result.badges["S.24250409(이재순님)"]

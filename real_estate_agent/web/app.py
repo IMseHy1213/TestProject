@@ -31,7 +31,7 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, sen
 
 from ..admin_auth import MIN_LENGTH as MIN_PASSWORD_LEN
 from ..admin_auth import AdminAuth, auth_file
-from ..agent import RealEstateAgent, is_condition_change, mask_address
+from ..agent import RealEstateAgent, is_condition_change, mask_address, public_office_no
 from ..collectors.local_folder import SUPPORTED
 from ..file_uploads import DEFAULT_FOLDER as DEFAULT_UPLOAD_FOLDER
 from ..file_uploads import destination_folders, files_in, listing_folder, save_uploads
@@ -214,7 +214,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     def listing_view(s, admin: bool) -> dict:
         l = s.listing
         return {
-            "id": l.listing_id, "office_no": l.office_no,
+            "id": l.listing_id, "office_no": l.office_no if admin else public_office_no(l.office_no),
             "address": l.address if admin else mask_address(l.address),
             "jimok": l.jimok or "-", "zoning": l.zoning or "-",
             "area_m2": f"{l.area_m2:,.0f}", "area_pyeong": f"{l.area_pyeong:,.0f}",
@@ -348,14 +348,16 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     AGENT_EXAMPLES = ["음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘", "양평 전원주택 부지 3억 이하 추천해줘",
                       "E-3004 매물에 공장도 지을 수 있어?", "어느 지역 매물이 제일 많아요?"]
 
-    def agent_card(lid: str, admin: bool) -> Optional[dict]:
+    def agent_card(lid: str, admin: bool, badges: list[str]) -> Optional[dict]:
         l = agent.find_listing(lid)
         if l is None:
             return None
-        return {"id": l.listing_id, "office_no": l.office_no,
+        features = [f.lstrip("● ").strip() for f in (l.features or "").split(" / ") if f.strip()]
+        return {"id": l.listing_id, "office_no": l.office_no if admin else public_office_no(l.office_no),
                 "address": l.address if admin else mask_address(l.address), "price": format_price(l.price_manwon),
-                "pyeong": f"{l.area_pyeong:,.0f}", "jimok": l.jimok or "-", "zoning": l.zoning or "-",
-                "features": l.features, "contact": l.owner_contact if admin else ""}
+                "ppp": f"{l.price_per_pyeong:,.0f}", "pyeong": f"{l.area_pyeong:,.0f}", "m2": f"{l.area_m2:,.0f}",
+                "jimok": l.jimok or "-", "zoning": l.zoning or "-", "features": features[:5], "badges": badges,
+                "use_tag": l.use_tag, "contact": l.owner_contact if admin else ""}
 
     @app.get("/agent")
     def agent_page():
@@ -381,7 +383,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         result, conv["history"] = runner.run(q, conv["history"])
         admin = is_admin()
         with lock:
-            cards = [c for c in (agent_card(i, admin) for i in result.listing_ids) if c]
+            cards = [c for c in (agent_card(i, admin, result.badges.get(i, [])) for i in result.listing_ids) if c]
         conv["turns"].append({"question": q, "answer": result.answer, "steps": [step_dict(s) for s in result.steps],
                               "cards": cards, "policy": result.policy, "total_ms": result.total_ms,
                               "tool_calls": result.tool_calls, "tool_errors": result.tool_errors})

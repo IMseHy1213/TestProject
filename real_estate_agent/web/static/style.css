@@ -243,13 +243,28 @@ table.listings td:nth-child(2) { min-width: 240px; }
 .bubble.q { align-self: flex-end; background: var(--brand); color: var(--brand-ink); max-width: 80%; }
 .bubble.a { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
 .answer { white-space: pre-line; margin: 0 0 10px; }
-.mini-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-bottom: 10px; }
-.mini { background: var(--bg); border-radius: 10px; padding: 10px 12px; font-size: .9rem; }
-.mini p { margin: 0 0 4px; }
-.mini-no { color: var(--muted); font-size: .82rem; }
-.mini-addr { font-weight: 700; }
+.mini-cards { list-style: none; padding: 0; margin: 0 0 10px; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.mini { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 14px; font-size: .92rem;
+  display: flex; flex-direction: column; gap: 8px; }
+.mini p { margin: 0; }
+.mini-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mini-rank { width: 22px; height: 22px; border-radius: 6px; background: var(--brand); color: var(--brand-ink);
+  font-weight: 800; font-size: .8rem; display: grid; place-items: center; flex: none; }
+.mini-no { color: var(--muted); font-size: .84rem; margin-right: auto; }
+.mini-no strong { color: var(--ink); }
+.badge { font-size: .74rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+.badge.warn { background: var(--warn-bg); color: var(--warn-ink); }
+.mini-addr { font-weight: 700; font-size: 1rem; }
+.mini-facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 0; }
+.mini-facts > div { background: var(--surface); border-radius: 8px; padding: 6px 10px; }
+.mini-facts dt { font-size: .72rem; color: var(--muted); }
+.mini-facts dd { margin: 0; font-weight: 700; }
+.mini-facts dd small { display: block; font-weight: 400; color: var(--muted); font-size: .74rem; }
 .mini-facts .price { color: var(--accent); }
-.mini-feat { color: var(--muted); font-size: .84rem; }
+.mini-feat { margin: 0; padding-left: 1.1em; color: var(--ink); font-size: .86rem; display: flex; flex-direction: column; gap: 2px; }
+.mini-feat li::marker { color: var(--brand); }
 .mini-admin { font-size: .8rem; color: var(--accent); }
 .trace summary { cursor: pointer; font-size: .86rem; color: var(--brand); font-weight: 600; }
 .trace ol { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 6px; }

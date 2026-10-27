@@ -45,7 +45,7 @@ def test_name_helpers():
     assert looks_like_listing_name(f"{NAME}(물류부지)")
     assert not looks_like_listing_name("음성군") and not looks_like_listing_name("토지매물장부_2026")
     assert split_name(f"{NAME}(물류부지)") == (NAME, ["물류부지"])
-    assert mask_address(NAME) == "음성군 감곡면 문촌리 *** 외 36필지"
+    assert mask_address(NAME) == "충청북도 음성군 ***"  # 시/도 + 시/군까지만 (시/도는 채워 넣음)
 
 
 def test_parcel_list_folder_becomes_one_listing(tmp_path):

@@ -103,12 +103,19 @@ def validate_arguments(schema: dict[str, Any], args: dict[str, Any]) -> tuple[di
 
 
 # ---------------------------------------------------------------------- 매물 -> 도구 결과 (공개 정보만)
+def tool_id(l: LandListing) -> str:
+    """AI 에게 보여줄 매물 id: 매물번호 뒤 괄호 속 이름·메모를 뺀 것 ('S.24250409(이재순님)' -> 'S.24250409')."""
+    from ..agent import public_office_no
+
+    return public_office_no(l.listing_id) or l.listing_id
+
+
 def brief(l: LandListing, s: Optional[ScoredListing] = None) -> dict[str, Any]:
-    from ..agent import mask_address
+    from ..agent import mask_address, public_office_no
 
     d = {
-        "id": l.listing_id,
-        "매물번호": l.office_no or None,
+        "id": tool_id(l),
+        "매물번호": public_office_no(l.office_no) or None,
         "주소": mask_address(l.address),
         "지목": l.jimok or None,
         "용도지역": l.zoning or None,
@@ -126,6 +133,34 @@ def brief(l: LandListing, s: Optional[ScoredListing] = None) -> dict[str, Any]:
     return {k: v for k, v in d.items() if v not in (None, [], "")}
 
 
+def condition_summary(req: CustomerRequirement) -> str:
+    """손님에게 보여줄 조건 요약: '음성군 · 창고 용도 · 3억 이하 · 도로 접한 땅'"""
+    parts = []
+    if req.regions:
+        parts.append(", ".join(req.regions))
+    if req.purpose:
+        parts.append(f"{req.purpose} 용도")
+    if req.jimok:
+        parts.append("지목 " + "·".join(req.jimok))
+    if req.budget_min and req.budget_max:
+        parts.append(f"{format_price(req.budget_min)}~{format_price(req.budget_max)}")
+    elif req.budget_max:
+        parts.append(f"{format_price(req.budget_max)} 이하")
+    elif req.budget_min:
+        parts.append(f"{format_price(req.budget_min)} 이상")
+    if req.area_min_m2 and req.area_max_m2:
+        parts.append(f"{req.area_min_m2 / PYEONG_M2:,.0f}~{req.area_max_m2 / PYEONG_M2:,.0f}평")
+    elif req.area_min_m2:
+        parts.append(f"{req.area_min_m2 / PYEONG_M2:,.0f}평 이상")
+    elif req.area_max_m2:
+        parts.append(f"{req.area_max_m2 / PYEONG_M2:,.0f}평 이하")
+    if req.need_road:
+        parts.append("도로 접한 땅")
+    if req.keywords:
+        parts.append(", ".join(req.keywords))
+    return " · ".join(parts) or "전체 매물"
+
+
 class ToolRegistry:
     """도구 목록 + 실행 (인자 검사, 오류를 관찰로 변환, 실행 시간 측정)."""
 
@@ -136,6 +171,13 @@ class ToolRegistry:
         self.tools: dict[str, Tool] = {}
         for tool in build_tools(self):
             self.tools[tool.name] = tool
+
+    def resolve(self, some_id: str) -> Optional[str]:
+        """도구가 쓴 id(공개용) -> 실제 매물 id."""
+        for l in self.agent.listings() + list(getattr(self.agent, "hidden_listings", [])):
+            if some_id in {l.listing_id, tool_id(l)}:
+                return l.listing_id
+        return None
 
     def schemas(self) -> list[dict[str, Any]]:
         return [t.schema() for t in self.tools.values()]
@@ -181,9 +223,11 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
     agent, ctx = reg.agent, reg.ctx
 
     def find(listing_id: str) -> LandListing:
+        from ..agent import public_office_no
+
         key = listing_id.strip()
         for l in agent.listings():
-            if l.listing_id == key or (l.office_no and l.office_no == key):
+            if key in {l.listing_id, tool_id(l)} or (l.office_no and key in {l.office_no, public_office_no(l.office_no)}):
                 return l
         raise ToolError(f"매물 '{listing_id}' 을(를) 찾을 수 없습니다. search_listings 결과의 id 를 쓰세요.")
 
@@ -231,14 +275,15 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                 ctx.seen.append(s.listing.listing_id)
         order = {"score": "추천순", "price_asc": "가격 낮은 순", "price_desc": "가격 높은 순", "area_desc": "넓은 순",
                  "price_per_pyeong_asc": "평당가 낮은 순"}[sort]
-        out: dict[str, Any] = {"이해한_조건": req.describe(), "정렬": order, "조건에_맞는_매물_수": len(ranked),
+        out: dict[str, Any] = {"이해한_조건": req.describe(), "조건_요약": condition_summary(req), "정렬": order,
+                               "조건에_맞는_매물_수": len(ranked),
                                "매물": [brief(s.listing, s) for s in shown]}
         if not ranked:
             out["안내"] = NOT_FOUND_MESSAGE
         if req.notes:
             out["참고"] = req.notes
         if ctx.rejected:
-            out["제외한_매물"] = list(ctx.rejected)
+            out["제외한_매물"] = [tool_id(x) for x in agent.listings() if x.listing_id in ctx.rejected]
         return out
 
     def get_listing(listing_id: str) -> dict[str, Any]:
@@ -255,8 +300,8 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         l = find(listing_id)
         res = check_use(l, purpose)
         if res is None:
-            return {"id": l.listing_id, "용도": purpose, "판단": "규칙 없음"}
-        out = {"id": l.listing_id, "용도": purpose, "가능": res.ok, "근거": res.reason}
+            return {"id": tool_id(l), "용도": purpose, "판단": "규칙 없음"}
+        out = {"id": tool_id(l), "용도": purpose, "가능": res.ok, "근거": res.reason}
         if res.caution:
             out["확인필요"] = res.caution
         out["주의"] = "프로그램의 1차 판단입니다. 실제 건축 가능 여부는 토지이용계획확인원·관할 관청 확인 필요."
@@ -271,11 +316,11 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             if l.listing_id not in ctx.seen:
                 ctx.seen.append(l.listing_id)
         def pick(key):
-            return min(items, key=key).listing_id
+            return tool_id(min(items, key=key))
         return {
             "매물": rows,
             "가장_싼_매물": pick(lambda l: l.price_manwon),
-            "가장_넓은_매물": max(items, key=lambda l: l.area_m2).listing_id,
+            "가장_넓은_매물": tool_id(max(items, key=lambda l: l.area_m2)),
             "평당가가_가장_낮은_매물": pick(lambda l: l.price_per_pyeong),
             "가격차_만원": max(l.price_manwon for l in items) - min(l.price_manwon for l in items),
         }
@@ -290,7 +335,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             if l.listing_id not in ctx.liked:
                 ctx.liked.append(l.listing_id)
             note = "관심 매물로 기록했습니다."
-        return {"id": l.listing_id, "기록": action, "이유": reason or None, "안내": note}
+        return {"id": tool_id(l), "기록": action, "이유": reason or None, "안내": note}
 
     def list_regions(limit: int = 40) -> dict[str, Any]:
         counts: Counter = Counter()
