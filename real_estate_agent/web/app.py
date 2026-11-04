@@ -49,6 +49,12 @@ MAX_QUERY_LEN = 300
 MAX_UPLOAD_MB = 200  # 폴더째 올릴 때 전체 크기 (파일 하나는 20MB 까지)
 SESSION_TTL_SEC = 2 * 60 * 60
 MAX_SESSIONS = 500
+# 사무실 안내 (모든 화면 아래쪽). 바뀌면 여기만 고치면 됩니다.
+OFFICE_INFO = {
+    "address": "충청북도 음성군 대소읍 오태로 137번길 13",
+    "phone": "043-877-5242",
+    "hours": [("월~토", "10:00 ~ 21:00"), ("일요일", "10:00 ~ 18:00")],
+}
 QUICK_REASONS = ["너무 비싸요", "너무 좁아요", "위치가 별로예요", "도로가 별로예요", "채광이 별로예요"]
 EXAMPLES = ["음성군 채광이 좋은 2억원대 땅", "양평 전원주택 지을 땅 200평 정도 3억 이하",
             "여주에 창고 지을 땅 500평 이상", "귀농용 논이나 밭 1000평 2억 안쪽"]
@@ -216,7 +222,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     def inject():
         return {"csrf_token": csrf_token, "is_admin": is_admin(), "format_price": format_price,
                 "upload_folders": lambda: destination_folders(settings.data_dir),
-                "upload_accept": ",".join(sorted(SUPPORTED)), "default_upload_folder": DEFAULT_UPLOAD_FOLDER}
+                "upload_accept": ",".join(sorted(SUPPORTED)), "default_upload_folder": DEFAULT_UPLOAD_FOLDER,
+                "office": OFFICE_INFO}
 
     def current() -> Optional[tuple[RecommendationSession, str]]:
         return store.get(session.get("sid"))

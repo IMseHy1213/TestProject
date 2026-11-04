@@ -280,3 +280,11 @@ def test_agent_trace_shows_korean_arguments(make_client):
     c = make_client()
     html = c.post("/agent/ask", data={"q": "음성군 땅", "csrf": csrf(c, "/agent")}, follow_redirects=True).get_data(as_text=True)
     assert "음성군 땅" in html.split("<code>search_listings</code>")[1][:200] and "\\uc74c" not in html
+
+
+def test_office_info_on_every_page(make_client):
+    c = make_client()
+    for path in ("/", "/agent", "/admin"):
+        html = c.get(path).get_data(as_text=True)
+        assert "충청북도 음성군 대소읍 오태로 137번길 13" in html and 'href="tel:0438775242"' in html
+        assert "월~토 10:00 ~ 21:00" in html and "일요일 10:00 ~ 18:00" in html

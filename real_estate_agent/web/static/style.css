@@ -321,3 +321,16 @@ table.listings td:nth-child(2) { min-width: 240px; }
 .agent-cta .btn.cta { min-height: 52px; padding: 0 28px; font-size: 1.05rem; border-radius: 12px; }
 .agent-cta .meta { margin: 0; }
 @media (max-width: 600px) { .agent-cta .btn.cta { width: 100%; } }
+
+/* 사무실 안내 (모든 화면 아래) - 글씨는 안내문(1rem)과 제목(약 2.2rem)의 중간 */
+.foot p { margin: 0 0 16px; }
+.office { max-width: 860px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px; text-align: left; }
+.office-item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 6px; }
+.office-label { font-size: 1rem; font-weight: 700; color: var(--brand); }
+.office-value { font-size: 1.3rem; font-weight: 700; color: var(--ink); line-height: 1.45; word-break: keep-all; }
+a.office-phone { text-decoration: none; color: var(--accent); font-variant-numeric: tabular-nums; }
+a.office-phone:hover { text-decoration: underline; }
+.office-hours { display: block; }
+@media (max-width: 600px) { .office-value { font-size: 1.2rem; } }
