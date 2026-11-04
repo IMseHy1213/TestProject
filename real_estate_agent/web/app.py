@@ -356,7 +356,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
 
     # ------------------------------------------------------------ AI 상담 (Tool-use Agent)
     AGENT_EXAMPLES = ["음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘", "양평 전원주택 부지 3억 이하 추천해줘",
-                      "E-3004 매물에 공장도 지을 수 있어?", "어느 지역 매물이 제일 많아요?"]
+                      "공장 지을 수 있는 땅 중 넓은 거 3개 보여줘", "어느 지역 매물이 제일 많아요?"]
 
     def agent_card(lid: str, admin: bool, badges: list[str]) -> Optional[dict]:
         l = agent.find_listing(lid)
