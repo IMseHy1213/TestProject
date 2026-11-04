@@ -94,6 +94,7 @@ class CustomerRequirement:
 
     customer_name: str = ""
     regions: list[str] = field(default_factory=list)  # 선호 지역 (시/군/읍/면/리)
+    excluded_regions: list[str] = field(default_factory=list)  # 빼고 찾을 지역 ('음성군 말고 다른 지역')
     jimok: list[str] = field(default_factory=list)  # 원하는 지목
     zoning: list[str] = field(default_factory=list)  # 원하는 용도지역
     budget_min: Optional[int] = None  # 만원
@@ -119,6 +120,8 @@ class CustomerRequirement:
         parts = []
         if self.regions:
             parts.append("지역=" + ",".join(self.regions))
+        if self.excluded_regions:
+            parts.append("제외지역=" + ",".join(self.excluded_regions))
         if self.jimok:
             parts.append("지목=" + ",".join(self.jimok))
         if self.zoning:

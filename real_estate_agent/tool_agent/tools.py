@@ -156,6 +156,8 @@ def condition_summary(req: CustomerRequirement) -> str:
     parts = []
     if req.regions:
         parts.append(", ".join(req.regions))
+    if req.excluded_regions:
+        parts.append(", ".join(req.excluded_regions) + " 제외")
     if req.purpose:
         parts.append(f"{req.purpose} 용도")
     if req.jimok:
@@ -175,6 +177,29 @@ def condition_summary(req: CustomerRequirement) -> str:
     if req.keywords:
         parts.append(", ".join(req.keywords[:2]))
     return " · ".join(parts) or "전체"
+
+
+def shown_region(l: LandListing) -> str:
+    """매물이 있는 시/군/구 ('충청북도 음성군 ***' -> '음성군')."""
+    from ..agent import public_region
+
+    parts = public_region(l.address).split()
+    return parts[-1] if parts else ""
+
+
+def _without_regions(query: str, agent) -> str:
+    """직전 검색 문장에서 지역 이름을 지움 ('음성군 공장 땅' -> '공장 땅'): 지역만 바꿔 다시 찾을 때."""
+    import re as _re
+
+    from ..regions import find_regions
+
+    names = set(agent.known_regions()) | set(find_regions(query))
+    for name in sorted(names, key=len, reverse=True):
+        stem = _re.sub(r"(시|군|구)$", "", name)
+        query = query.replace(name, " ")
+        if len(stem) >= 2 and name[-1:] in "시군구":
+            query = _re.sub(rf"{_re.escape(stem)}(?=\s|에|의|쪽|$)", " ", query)
+    return " ".join(query.split())
 
 
 def requirement_from_args(agent, given: dict[str, Any]) -> CustomerRequirement:
@@ -207,6 +232,16 @@ def requirement_from_args(agent, given: dict[str, Any]) -> CustomerRequirement:
         req.area_max_m2 = area_max_pyeong * PYEONG_M2
     if keywords:
         req.keywords = list(dict.fromkeys(req.keywords + list(keywords)))
+    for r in given.get("exclude_regions") or []:
+        c = canonical_region(r)
+        if c not in req.excluded_regions:
+            req.excluded_regions.append(c)
+    if req.excluded_regions:
+        from ..regions import same_place
+
+        req.regions = [r for r in req.regions
+                       if r not in req.excluded_regions and not any(same_place(r, x) for x in req.excluded_regions)]
+        req.excluded_keywords = [k for k in req.excluded_keywords if canonical_region(k) not in req.excluded_regions]
     return req
 
 
@@ -287,28 +322,52 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                         purpose: str = "", budget_min_manwon: Optional[int] = None,
                         budget_max_manwon: Optional[int] = None, area_min_pyeong: Optional[float] = None,
                         area_max_pyeong: Optional[float] = None, keywords: Optional[list[str]] = None,
-                        sort: str = "score", limit: int = 5, use_previous_conditions: bool = False) -> dict[str, Any]:
+                        sort: str = "score", limit: int = 5, use_previous_conditions: bool = False,
+                        exclude_regions: Optional[list[str]] = None, other_regions: bool = False) -> dict[str, Any]:
         from ..regions import canonical_region
         from ..requirement_parser import RequirementParser
 
         given = {k: v for k, v in dict(query=query, regions=regions, jimok=jimok, purpose=purpose,
                                          budget_min_manwon=budget_min_manwon, budget_max_manwon=budget_max_manwon,
                                          area_min_pyeong=area_min_pyeong, area_max_pyeong=area_max_pyeong,
-                                         keywords=keywords).items() if v not in (None, "", [])}
-        follow_up = use_previous_conditions and bool(ctx.last_search)
+                                         keywords=keywords, exclude_regions=exclude_regions).items()
+                 if v not in (None, "", [])}
+        follow_up = (use_previous_conditions or other_regions) and bool(ctx.last_search)
         from_memory = follow_up and ctx.last_search_from_memory
+        # '다른 지역에도 있어?' -> 직전에 보여준 매물이 있던 지역(과 직전 검색 지역)을 빼고, 나머지 조건은 그대로
+        moved: list[str] = []
+        if other_regions:
+            moved = list(ctx.last_search.get("regions") or [])
+            moved += [shown_region(l) for l in agent.listings() if l.listing_id in ctx.last_shown]
+            moved = [r for r in dict.fromkeys(moved) if r]
+        # 이번 질문에서 지역을 새로 말했는지 (따로 준 인자 또는 문장: '음성군 말고', '진천군에도 있어?')
+        said = requirement_from_args(agent, {"query": given["query"]}) if given.get("query") else None
+        named_region = bool(given.get("regions") or given.get("exclude_regions")
+                            or (said and (said.regions or said.excluded_regions)))
+        region_change = other_regions or named_region
         if follow_up:  # '그 중에 넓은 건?' -> 직전 검색 조건 그대로 + 새 정렬/개수 (새로 준 조건은 덧붙임)
             merged = dict(ctx.last_search)
+            if region_change:  # 지역을 바꾸는 질문이면 직전 지역 조건(찾을 지역·뺄 지역)은 버리고 새로 말한 것만
+                merged.pop("regions", None)
+                merged.pop("exclude_regions", None)
+                merged["query"] = _without_regions(merged.get("query", ""), agent)
             for k, v in given.items():
-                merged[k] = f"{merged.get('query', '')} {v}".strip() if k == "query" else v
+                if k == "query":
+                    merged[k] = f"{merged.get('query', '')} {v}".strip()
+                elif k == "exclude_regions":
+                    merged[k] = list(dict.fromkeys(list(merged.get(k) or []) + list(v)))
+                else:
+                    merged[k] = v
             given = merged
+        if moved:
+            given["exclude_regions"] = list(dict.fromkeys(list(given.get("exclude_regions") or []) + moved))
         ctx.last_search = dict(given)
         ctx.last_search_from_memory = False
         req = requirement_from_args(agent, given)
         req.customer_name = ctx.customer
         session = agent.recommend(req)
         ranked = [s for s in session.ranked if s.listing.listing_id not in ctx.rejected]
-        pool = list(ctx.last_shown) if follow_up else []
+        pool = list(ctx.last_shown) if follow_up and not region_change else []  # 지역을 바꾸면 전체에서 다시
         if pool:  # '그 중에' -> 직전에 보여준 매물 안에서만
             ranked = [s for s in ranked if s.listing.listing_id in pool]
         if sort == "price_asc":
@@ -331,6 +390,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                  "price_per_pyeong_asc": "평당가 낮은 순"}[sort]
         out: dict[str, Any] = {"이해한_조건": req.describe(), "조건_요약": condition_summary(req), "정렬": order,
                                "앞_조건_이어서": follow_up, "앞서_보여준_매물_수": len(pool) or None,
+                               "제외_지역": req.excluded_regions or None,
                                "앞_조건_출처": "지난 상담" if from_memory else None,
                                "조건에_맞는_매물_수": len(ranked),
                                "매물": [brief(s.listing, s) for s in shown]}
@@ -435,6 +495,10 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                  "sort": {"type": "string", "enum": ["score", "price_asc", "price_desc", "area_desc",
                                                      "price_per_pyeong_asc"], "description": "정렬 (기본 추천순)"},
                  "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "최대 개수 (기본 5)"},
+                 "exclude_regions": {**string_list, "description": "빼고 찾을 지역 ('음성군 말고' -> ['음성군'])"},
+                 "other_regions": {"type": "boolean", "description":
+                     "손님이 '다른 지역에도 있어?'처럼 지역만 바꿔 달라고 하면 true: 직전 조건(용도·예산 등)은 그대로, "
+                     "직전에 보여준 매물이 있던 지역은 빼고 전체 매물에서 다시 찾음"},
                  "use_previous_conditions": {"type": "boolean", "description":
                      "손님이 '그 중에', '거기서'처럼 직전 결과를 가리키면 true: 직전에 보여준 매물들 안에서만 "
                      "sort 기준으로 다시 골라 limit(하나만 물으면 1)만큼 돌려줌"},

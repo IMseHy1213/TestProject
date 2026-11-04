@@ -144,6 +144,8 @@ def hard_filter(l: LandListing, req: CustomerRequirement, opt: RecommendOptions)
             return f"제외 조건 '{k}'"
     if req.regions and opt.strict_region and not region_match(l, req.regions):
         return "지역 불일치"
+    if req.excluded_regions and region_match(l, req.excluded_regions):
+        return "제외 지역"
     return None
 
 

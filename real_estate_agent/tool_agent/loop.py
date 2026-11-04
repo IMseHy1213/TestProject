@@ -43,6 +43,9 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
 - 가격 인자는 만원 단위입니다 (1억 = 10000).
 - 지번 전체와 소유자 연락처는 알 수 없습니다. 물으면 "상담 시 안내해 드립니다"라고 답하세요.
 - 조건에 맞는 매물이 없으면 "해당 조건에 맞는 매물이 없습니다."라고 답하세요.
+- 손님이 '다른 지역에도 있어?'라고 하면 search_listings 에 use_previous_conditions=true, other_regions=true 를,
+  '음성군 말고 다른 지역'처럼 뺄 지역을 말하면 use_previous_conditions=true, exclude_regions=["음성군"] 을 주세요.
+  (regions 에 '음성군'을 넣으면 안 됩니다. 이때는 직전에 보여준 매물로 좁히지 않고 전체에서 다시 찾습니다)
 - 손님이 '그 중에', '거기서', '그럼 넓은 건?'처럼 직전 결과를 가리키면 search_listings 에
   use_previous_conditions=true 와 sort 를 주세요 (직전에 보여준 매물 안에서만 고릅니다). 하나만 물으면 limit=1.
 - 매물을 가리킬 때는 '매물번호', 없으면 '표시이름'을 쓰세요. id(F-… 같은 내부 번호)는 손님에게 말하지 마세요.
@@ -119,6 +122,21 @@ class RulePolicy:
 
         if _mentions_past(question) and "recall_memory" not in names and "search_listings" not in names:
             return _call("recall_memory", {})  # '지난번에 찾던 거' -> 먼저 장기 기억 확인
+        if "search_listings" not in names and self.ctx and self.ctx.last_search and _region_follow_up(question):
+            # '진천군에도 있어?' / '음성은?' -> 앞 조건(용도·예산 등) 그대로, 지역만 바꿔서
+            args = {"query": question, "use_previous_conditions": True, "limit": _wanted_count(question) or 5}
+            if _sort_in(question):
+                args["sort"] = _sort_in(question)
+            return _call("search_listings", args)
+        if "search_listings" not in names and self.ctx and self.ctx.last_search and _wants_other_region(question):
+            # '음성군 말고 다른 지역에도 있어?' / '다른 지역에도 있어?' -> 앞 조건(용도 등) 그대로, 지역만 바꿔 전체에서
+            sort = _sort_in(question)
+            args = {"query": question, "use_previous_conditions": True, "limit": _wanted_count(question) or 5}
+            if not _names_excluded_region(question):
+                args["other_regions"] = True  # 지역을 말하지 않았으면 방금 보여준 지역을 뺌
+            if sort:
+                args["sort"] = sort
+            return _call("search_listings", args)
         if "search_listings" not in names:
             sort = _sort_in(question)
             if _mentions_past(question) and self.ctx and self.ctx.last_search:
@@ -158,6 +176,34 @@ def _loads(text: str) -> dict:
 
 
 _FOLLOW_UP = re.compile(r"그\s*중|이\s*중|저\s*중|거기서|그\s*가운데|둘\s*중|셋\s*중|방금|위\s*매물|그\s*매물들|그럼|그러면")
+
+
+_OTHER_REGION = re.compile(r"다른\s*(지역|곳|데|동네|시|군|쪽)|딴\s*(데|곳|지역)|(말고|빼고|외에|제외하고)\s*(다른|딴)?|아닌\s*(곳|데|지역)")
+_EXCLUDED_NAME = re.compile(r"([가-힣]{2,8}(?:시|군|구|읍|면)|[가-힣]{2,4})\s*(?:은|는|을|를)?\s*(?:말고|빼고|제외(?:하고)?|외에|아닌)")
+
+
+def _region_follow_up(q: str) -> bool:
+    """지역만 바꿔 묻는 짧은 후속 질문인지: '진천군에도 있어?', '음성은?', '대소읍 쪽은 어때?'"""
+    from ..regions import find_regions
+
+    if len(q.strip()) > 20 or _purpose_in(q) or re.search(r"\d|억|천\s*만|평|말고|빼고|외에|다른", q):
+        return False
+    return bool(find_regions(q) or re.search(r"[가-힣]{1,4}(읍|면)(에도|은|는|쪽|도|$)", q))
+
+
+def _wants_other_region(q: str) -> bool:
+    return bool(_OTHER_REGION.search(q))
+
+
+def _names_excluded_region(q: str) -> bool:
+    """'음성군 말고' 처럼 뺄 지역을 직접 말했는지."""
+    from ..regions import canonical_region, find_regions
+
+    for m in _EXCLUDED_NAME.finditer(q):
+        w = m.group(1)
+        if find_regions(w) or find_regions(canonical_region(w)) or w[-1:] in "읍면":
+            return True
+    return False
 
 
 def _mentions_past(q: str) -> bool:
@@ -239,13 +285,17 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
 
     if found and res.get("앞_조건_출처") == "지난 상담":
         lines.append(f"지난 상담에서 찾으신 조건({cond})으로 다시 찾았습니다.")
-    elif found and res.get("앞_조건_이어서"):  # 후속 질문: 한 줄로
+    elif found and res.get("제외_지역") and res.get("앞_조건_이어서") and not res.get("앞서_보여준_매물_수"):
+        lines.append(f"{', '.join(res['제외_지역'])} 말고 다른 지역에서 같은 조건으로 다시 찾았습니다.")
+    elif found and res.get("앞서_보여준_매물_수"):  # '그 중에 넓은 건?' -> 보여준 매물 안에서 골라 한 줄로
         best, kind = _BEST.get(order, _BEST["추천순"])
-        pool = f"앞서 보여드린 {res['앞서_보여준_매물_수']}건" if res.get("앞서_보여준_매물_수") else f"앞서 찾은 {cond} 매물 {total}건"
+        pool = f"앞서 보여드린 {res['앞서_보여준_매물_수']}건"
         if len(found) == 1:
             x = found[0]
             return f"{pool} 중 {best} 매물은 {names[x['id']]}({_fact(x, kind)})입니다."
         return f"{pool} 중 {best} {len(found)}건입니다."
+    elif found and res.get("앞_조건_이어서"):  # '진천군에도 있어?' -> 앞 조건 그대로 다른 곳에서
+        lines.append("앞의 조건 그대로 다시 찾았습니다.")
 
     if found:
         how = "추천 순" if order == "추천순" else order

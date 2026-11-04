@@ -67,7 +67,8 @@ SYSTEM_PROMPT = f"""당신은 한국 토지 매물 중개 보조 AI 입니다.
 - purpose: 다음 중 하나 또는 "": {", ".join(PURPOSE_KEYWORDS)}
 - need_road: 도로에 접한 땅이 필요하면 true (맹지 제외). 주택/창고/공장/근린생활 목적이면 기본 true.
 - keywords: 원하는 특징 (남향, 계곡, IC 인근 등). "채광 좋은/햇빛 잘 드는"은 "채광", 경치는 "조망"으로 쓰세요.
-- excluded_keywords: 원하지 않는 것 (예: "묘지", "고압선", "임야" 등)
+- excluded_keywords: 원하지 않는 것 (예: "묘지", "고압선", "임야" 등). 지역 이름은 넣지 마세요.
+- excluded_regions: 빼고 찾을 지역 ("음성군 말고 다른 지역" -> ["음성군"], regions 에는 넣지 않음)
 
 모르는 값은 null 또는 빈 목록으로 두고, 추측하지 마세요."""
 
@@ -130,6 +131,17 @@ class RequirementParser:
         return apply_feedback_rule_based(req, feedback, self.known_regions)
 
 
+def _region_word(w: str, known_regions: Iterable[str] = ()) -> str:
+    """'음성군' / '음성' / '대소읍' 처럼 지역 이름이면 정식 이름, 아니면 ''."""
+    if not w:
+        return ""
+    c = canonical_region(w)
+    known = set(known_regions)
+    if c in known or w in known or find_regions(w):
+        return c if (c in known or find_regions(c)) else w
+    return ""
+
+
 def narrow_regions(regions: list[str], addresses: Iterable[str]) -> list[str]:
     """'음성군 대소면' -> ['대소면']: 같이 적은 읍·면·동·리가 그 시·군 안에 있으면 좁은 쪽만 남김.
     ('여주 양평' 처럼 서로 다른 지역은 그대로 둘 다)"""
@@ -164,7 +176,12 @@ def sanitize(req: CustomerRequirement) -> CustomerRequirement:
         c = canonical_region(r)
         if c and c not in regions:
             regions.append(c)
-    req.regions = regions
+    excluded = list(dict.fromkeys(canonical_region(r) for r in _list(req.excluded_regions) if r))
+    # 같은 지역이 '찾을 지역' 과 '뺄 지역' 에 동시에 있으면 빼는 쪽으로 (예: '음성군 말고')
+    req.regions = [r for r in regions if r not in excluded and not any(same_place(r, x) for x in excluded)]
+    req.excluded_regions = excluded
+    req.excluded_keywords = [k for k in _list(req.excluded_keywords)
+                             if canonical_region(k) not in excluded and k not in excluded]
     req.jimok = [JIMOK_ALIASES.get(j, j) for j in _list(req.jimok)]
     req.jimok = [j for j in req.jimok if j in JIMOK_TYPES]
     req.zoning = [z if z.endswith("지역") else z + "지역" for z in _list(req.zoning)]
@@ -292,7 +309,9 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
     # --- 제외 조건 ---
     for m in re.finditer(r"([가-힣A-Za-z]{1,8})\s*(?:은|는|이|가)?\s*(?:제외|말고|빼고|싫어|싫고|안\s*돼|피해)", t):
         w = re.sub(r"(은|는|이|가|을|를)$", "", m.group(1))
-        if not w or w in {"맹지", "도로", "곳", "거", "것", "땅", "데", "건"}:
+        if not w or w in {"맹지", "도로", "곳", "거", "것", "땅", "데", "건", "지역", "동네"}:
+            continue
+        if _region_word(w, known_regions):  # '음성군 말고' -> 지역 제외 (그 지역으로 찾는 것이 아님)
             continue
         j = JIMOK_ALIASES.get(w, w)
         if j in req.jimok:
@@ -336,6 +355,13 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
         if big not in t and any(x != big and x[-1:] in "읍면동리" and x.startswith(stem) for x in regions):
             regions.remove(big)
     req.regions = [canonical_region(r) for r in regions]
+    # '음성군 말고 / 빼고 / 제외하고 / 외에 / 아닌 곳' -> 그 지역은 빼고 찾음
+    for m in re.finditer(r"([가-힣]{2,8})\s*(?:은|는|을|를|이|가)?\s*(?:말고|빼고|제외(?:하고|한)?|외에|외\s*(?:지역|다른)|아닌\s*(?:곳|데|지역))", t):
+        w = _region_word(re.sub(r"(은|는|을|를|이|가)$", "", m.group(1)), known_regions)
+        if w:
+            req.excluded_regions.append(w)
+            req.regions = [r for r in req.regions if not same_place(r, w) and r != w]
+    req.excluded_regions = list(dict.fromkeys(req.excluded_regions))
 
     # --- 특징 키워드 ---
     for k in FEATURE_KEYWORDS:
