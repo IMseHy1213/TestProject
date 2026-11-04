@@ -47,6 +47,9 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
   '음성군 말고 다른 지역'처럼 뺄 지역을 말하면 use_previous_conditions=true, exclude_regions=["음성군"] 을 주세요.
   여러 곳을 말하면 모두 넣으세요: '진천군이랑 음성군 말고' -> exclude_regions=["진천군", "음성군"].
   (regions 에 '음성군'을 넣으면 안 됩니다. 이때는 직전에 보여준 매물로 좁히지 않고 전체에서 다시 찾습니다)
+- '정말 다른 지역에는 없어?', '진짜 없어?', '확실해?', '다시 찾아봐'는 방금 검색을 다시 확인해 달라는 뜻입니다.
+  search_listings(recheck=true) 로 직전 조건(뺀 지역 포함)을 그대로 다시 찾고, 결과 개수와 지역별 개수를 분명히 말하세요.
+  (이때 other_regions 를 쓰거나 뺀 지역을 바꾸지 마세요)
 - 손님이 '그 중에', '거기서', '그럼 넓은 건?'처럼 직전 결과를 가리키면 search_listings 에
   use_previous_conditions=true 와 sort 를 주세요 (직전에 보여준 매물 안에서만 고릅니다). 하나만 물으면 limit=1.
 - 매물을 가리킬 때는 '매물번호', 없으면 '표시이름'을 쓰세요. id(F-… 같은 내부 번호)는 손님에게 말하지 마세요.
@@ -123,6 +126,9 @@ class RulePolicy:
 
         if _mentions_past(question) and "recall_memory" not in names and "search_listings" not in names:
             return _call("recall_memory", {})  # '지난번에 찾던 거' -> 먼저 장기 기억 확인
+        if "search_listings" not in names and self.ctx and self.ctx.last_search and _wants_recheck(question):
+            # '정말 다른 지역에는 없어?' -> 방금 검색(뺀 지역 포함)을 그대로 다시 확인
+            return _call("search_listings", {"recheck": True, "limit": _wanted_count(question) or 5})
         if "search_listings" not in names and self.ctx and self.ctx.last_search and _region_follow_up(question):
             # '진천군에도 있어?' / '음성은?' -> 앞 조건(용도·예산 등) 그대로, 지역만 바꿔서
             args = {"query": question, "use_previous_conditions": True, "limit": _wanted_count(question) or 5}
@@ -181,6 +187,22 @@ _FOLLOW_UP = re.compile(r"그\s*중|이\s*중|저\s*중|거기서|그\s*가운�
 
 _OTHER_REGION = re.compile(r"다른\s*(지역|곳|데|동네|시|군|쪽)|딴\s*(데|곳|지역)|(말고|빼고|외에|제외하고)\s*(다른|딴)?|아닌\s*(곳|데|지역)")
 _EXCLUDED_NAME = re.compile(r"([가-힣]{2,8}(?:시|군|구|읍|면)|[가-힣]{2,4})\s*(?:은|는|을|를)?\s*(?:말고|빼고|제외(?:하고)?|외에|아닌)")
+
+
+_RECHECK = re.compile(r"정말|진짜|확실|혹시|다시\s*(?:한\s*번\s*)?(?:찾|확인|검색|봐|알아)|한\s*번\s*더|더\s*찾아")
+
+
+def _wants_recheck(q: str) -> bool:
+    """'정말 다른 지역에는 없어?', '진짜 없어?', '확실해?', '다시 찾아봐' -> 방금 검색을 다시 확인해 달라는 말.
+    단, 새 조건(지역·용도·예산 등)을 함께 말하면 새 검색으로 봄."""
+    if not _RECHECK.search(q):
+        return False
+    from ..regions import find_regions
+
+    stripped = re.sub(r"다른\s*(지역|곳|데|동네)", "", q)
+    if find_regions(stripped) or _purpose_in(q) or re.search(r"\d|억|천\s*만|평", q):
+        return False
+    return bool(re.search(r"없|있|맞|확실|찾|확인|검색|봐", q))
 
 
 def _region_follow_up(q: str) -> bool:
@@ -277,6 +299,8 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
         return "죄송합니다. 매물을 찾는 중 문제가 생겼습니다: " + failed.get("error", "")
     res = (search or {}).get("result", {})
     found = res.get("매물", [])
+    if res.get("다시_확인"):  # '정말 없어?' -> 없으면 왜 없는지까지
+        return _recheck_answer(res, {x["id"]: x.get("매물번호") or x.get("표시이름") or x["id"] for x in found})
     if search and not found:
         return NOT_FOUND_MESSAGE
     names = {x["id"]: x.get("매물번호") or x.get("표시이름") or x["id"] for x in found}
@@ -322,6 +346,26 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
         verdict = "건축 가능해 보입니다" if r["가능"] else "건축이 어려워 보입니다"
         lines.append(f"{names.get(r['id'], r['id'])}: {r['용도']} {verdict} (토지이용계획 확인 필요)")
     return "\n".join(lines) or "질문을 이해하지 못했습니다. 지역·용도·예산을 함께 말씀해 주세요."
+
+
+def _recheck_answer(res: dict, names: dict) -> str:
+    """'정말 없어?' 에 대한 답: 같은 조건으로 다시 찾은 결과를 개수·지역별로 분명하게."""
+    cond, total = res.get("조건_요약", "말씀하신 조건"), res.get("조건에_맞는_매물_수", 0)
+    if not total:
+        lines = [f"다시 확인해 봐도 {cond} 조건에 맞는 매물은 보유 매물 {res.get('전체_보유_매물_수', 0)}건 중 없습니다."]
+        hints = res.get("조건을_줄이면") or {}
+        if hints.get("도로_조건을_빼면"):
+            lines.append(f"도로 접함 조건을 빼면 {hints['도로_조건을_빼면']}건이 있습니다.")
+        if hints.get("용도_조건을_빼면"):
+            lines.append(f"용도 조건을 빼면 {hints['용도_조건을_빼면']}건이 있습니다.")
+        return "\n".join(lines)
+    regions = ", ".join(f"{r} {n}건" for r, n in (res.get("지역별_매물_수") or {}).items())
+    found = res.get("매물", [])
+    lines = [f"다시 확인했습니다. {cond} 조건에 맞는 매물이 {total}건 있습니다 ({regions})."]
+    if found:
+        top = found[0]
+        lines.append(f"추천 순으로 {len(found)}건을 보여드립니다. 1순위 {names[top['id']]}({_fact(top, 'price')})")
+    return "\n".join(lines)
 
 
 def listing_badges(done: list[tuple[str, dict]]) -> dict[str, list[str]]:

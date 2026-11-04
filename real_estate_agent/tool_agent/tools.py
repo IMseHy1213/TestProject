@@ -323,9 +323,11 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                         budget_max_manwon: Optional[int] = None, area_min_pyeong: Optional[float] = None,
                         area_max_pyeong: Optional[float] = None, keywords: Optional[list[str]] = None,
                         sort: str = "score", limit: int = 5, use_previous_conditions: bool = False,
-                        exclude_regions: Optional[list[str]] = None, other_regions: bool = False) -> dict[str, Any]:
-        from ..regions import canonical_region
-        from ..requirement_parser import RequirementParser
+                        exclude_regions: Optional[list[str]] = None, other_regions: bool = False,
+                        recheck: bool = False) -> dict[str, Any]:
+        # '정말 없어?' / '확실해?' / '다시 찾아봐' -> 방금 검색을 같은 조건(뺀 지역 포함) 그대로, 전체 매물에서 다시
+        if recheck and ctx.last_search:
+            return _recheck(limit=max(limit, 5), sort=sort)
 
         given = {k: v for k, v in dict(query=query, regions=regions, jimok=jimok, purpose=purpose,
                                          budget_min_manwon=budget_min_manwon, budget_max_manwon=budget_max_manwon,
@@ -400,6 +402,42 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             out["참고"] = req.notes
         if ctx.rejected:
             out["제외한_매물"] = [tool_id(x) for x in agent.listings() if x.listing_id in ctx.rejected]
+        return out
+
+    def _recheck(limit: int, sort: str) -> dict[str, Any]:
+        from collections import Counter as _Counter
+
+        given = dict(ctx.last_search)
+        req = requirement_from_args(agent, given)
+        req.customer_name = ctx.customer
+        ranked = [s for s in agent.recommend(req).ranked if s.listing.listing_id not in ctx.rejected]
+        if sort == "price_asc":
+            ranked.sort(key=lambda s: s.listing.price_manwon)
+        elif sort == "area_desc":
+            ranked.sort(key=lambda s: -s.listing.area_m2)
+        shown = ranked[:limit]
+        ctx.last_shown = [s.listing.listing_id for s in shown]
+        for s in shown:
+            if s.listing.listing_id not in ctx.seen:
+                ctx.seen.append(s.listing.listing_id)
+        by_region = _Counter(shown_region(s.listing) for s in ranked)
+        out: dict[str, Any] = {
+            "다시_확인": True, "이해한_조건": req.describe(), "조건_요약": condition_summary(req),
+            "제외_지역": req.excluded_regions or None, "정렬": "추천순" if sort == "score" else sort,
+            "조건에_맞는_매물_수": len(ranked), "지역별_매물_수": dict(by_region.most_common()),
+            "전체_보유_매물_수": len(agent.listings()), "매물": [brief(s.listing, s) for s in shown]}
+        if not ranked:  # 정말 없으면 어떤 조건 때문에 없는지 알려 줌
+            out["안내"] = NOT_FOUND_MESSAGE
+            hints = {}
+            if req.need_road:
+                relaxed = requirement_from_args(agent, given)
+                relaxed.need_road = False
+                hints["도로_조건을_빼면"] = len(agent.recommend(relaxed).ranked)
+            if req.purpose:
+                relaxed = requirement_from_args(agent, given)
+                relaxed.purpose, relaxed.need_road = "", False
+                hints["용도_조건을_빼면"] = len(agent.recommend(relaxed).ranked)
+            out["조건을_줄이면"] = hints
         return out
 
     def get_listing(listing_id: str) -> dict[str, Any]:
@@ -500,6 +538,9 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                  "other_regions": {"type": "boolean", "description":
                      "손님이 '다른 지역에도 있어?'처럼 지역만 바꿔 달라고 하면 true: 직전 조건(용도·예산 등)은 그대로, "
                      "직전에 보여준 매물이 있던 지역은 빼고 전체 매물에서 다시 찾음"},
+                 "recheck": {"type": "boolean", "description":
+                     "손님이 '정말 없어?', '진짜 다른 지역에는 없어?', '확실해?', '다시 찾아봐'처럼 방금 검색 결과를 "
+                     "다시 확인해 달라고 하면 true: 직전 조건(뺀 지역 포함)을 그대로 전체 매물에서 다시 찾고 지역별 개수를 돌려줌"},
                  "use_previous_conditions": {"type": "boolean", "description":
                      "손님이 '그 중에', '거기서'처럼 직전 결과를 가리키면 true: 직전에 보여준 매물들 안에서만 "
                      "sort 기준으로 다시 골라 limit(하나만 물으면 1)만큼 돌려줌"},

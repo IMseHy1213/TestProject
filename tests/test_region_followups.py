@@ -125,3 +125,51 @@ def test_users_conversation_with_two_excluded_regions(agent):
     regions = {region(agent, i) for i in r.listing_ids}
     assert r.listing_ids and not regions & {"진천군", "음성군"}
     assert r.answer.startswith("진천군, 음성군 말고 다른 지역에서")
+
+
+def run_all(agent, questions):
+    t = ToolAgent(agent, ctx=AgentContext())
+    h, results = [], []
+    for q in questions:
+        r, h = t.run(q, h)
+        results.append(r)
+    return results
+
+
+@pytest.mark.parametrize("recheck", ["정말 다른 지역에는 없어?", "진짜 없어?", "확실해?", "다시 한번 찾아봐", "혹시 다른 데는 없어?"])
+def test_recheck_keeps_previous_exclusions(agent, recheck):
+    *_, before, after = run_all(agent, ["공장 지을 수 있는 땅 중 넓은 거 3개 보여줘", "그 중에 넓은 건?",
+                                        "다른 지역에 공장 지을 수 있는 땅 있어?",
+                                        "음성군이랑 진천군 말고 다른 지역으로 있어?", recheck])
+    search = next(s for s in after.steps if s.tool == "search_listings")
+    assert search.args["recheck"] is True
+    regions = {region(agent, i) for i in after.listing_ids}
+    assert after.listing_ids and not regions & {"음성군", "진천군"}  # 뺀 지역은 계속 빠져 있음
+    assert after.answer.startswith("다시 확인했습니다. 음성군, 진천군 제외 · 공장 용도 조건에 맞는 매물이 ")
+    assert "양평군" in after.answer and "여주시" in after.answer   # 지역별 개수
+
+
+def test_recheck_when_nothing_explains_why(agent):
+    *_, r = run_all(agent, ["진천군 공장 지을 땅 10억 이상", "정말 없어?"])
+    assert r.answer.startswith("다시 확인해 봐도") and "없습니다" in r.answer and not r.listing_ids
+
+
+def test_naming_a_region_is_not_a_recheck(agent):
+    *_, r = run_all(agent, ["음성군 공장 지을 땅", "정말 진천군에는 없어?"])
+    search = next(s for s in r.steps if s.tool == "search_listings")
+    assert "recheck" not in search.args
+    assert {region(agent, i) for i in r.listing_ids} == {"진천군"}
+
+
+def test_gpt_style_recheck_argument(agent):
+    def check(messages):
+        res = json.loads(messages[-1]["content"])["result"]
+        assert res["다시_확인"] and res["제외_지역"] == ["음성군", "진천군"] and res["지역별_매물_수"]
+        return ToolTurn(text="다시 확인했습니다.")
+
+    fake = ScriptedLLM([call("search_listings", query="공장 지을 땅", exclude_regions=["음성군", "진천군"]),
+                        ToolTurn(text="찾았습니다."), call("search_listings", recheck=True), check])
+    t = ToolAgent(agent, llm=router(fake), ctx=AgentContext())
+    _, h = t.run("음성군이랑 진천군 말고 공장 지을 땅")
+    r, _ = t.run("정말 다른 지역에는 없어?", h)
+    assert r.listing_ids and not {region(agent, i) for i in r.listing_ids} & {"음성군", "진천군"}
