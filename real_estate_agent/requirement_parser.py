@@ -68,7 +68,8 @@ SYSTEM_PROMPT = f"""당신은 한국 토지 매물 중개 보조 AI 입니다.
 - need_road: 도로에 접한 땅이 필요하면 true (맹지 제외). 주택/창고/공장/근린생활 목적이면 기본 true.
 - keywords: 원하는 특징 (남향, 계곡, IC 인근 등). "채광 좋은/햇빛 잘 드는"은 "채광", 경치는 "조망"으로 쓰세요.
 - excluded_keywords: 원하지 않는 것 (예: "묘지", "고압선", "임야" 등). 지역 이름은 넣지 마세요.
-- excluded_regions: 빼고 찾을 지역 ("음성군 말고 다른 지역" -> ["음성군"], regions 에는 넣지 않음)
+- excluded_regions: 빼고 찾을 지역 모두 ("음성군 말고 다른 지역" -> ["음성군"], "진천군이랑 음성군 말고" -> ["진천군", "음성군"]).
+  regions 에는 넣지 않음
 
 모르는 값은 null 또는 빈 목록으로 두고, 추측하지 마세요."""
 
@@ -129,6 +130,39 @@ class RequirementParser:
             except LLMUnavailable as e:
                 log.info("LLM 피드백 반영 실패, 규칙 기반으로 전환: %s", e)
         return apply_feedback_rule_based(req, feedback, self.known_regions)
+
+
+_EXCLUDE_TRIGGER = re.compile(r"(?:말고|빼고|제외(?:하고|한|해)?|외에|외\s*(?:지역|다른)|아닌\s*(?:곳|데|지역))")
+_LIST_JOINER = re.compile(r"(?:이랑|랑|하고|이나|또는|및|과|와|나|,|·|/|&|\s)+$")
+_PARTICLE = re.compile(r"(?:은|는|을|를|이|가|도)$")
+
+
+def excluded_region_list(before: str, known_regions: Iterable[str] = ()) -> list[str]:
+    """'말고/빼고' 바로 앞에 나열된 지역들을 뒤에서부터 모두 읽음.
+    '진천군이랑 음성군' -> ['진천군', '음성군'], '진천·음성' -> ['진천군', '음성군'], '공장 땅 음성군' -> ['음성군']"""
+    rest = before.rstrip()
+    rest = _PARTICLE.sub("", rest).rstrip()
+    found: list[str] = []
+    while rest:
+        m = re.search(r"([가-힣]{2,8})$", rest)
+        if not m:
+            break
+        word = m.group(1)
+        hit = _region_word(word, known_regions)
+        if not hit:  # '진천군이랑' 처럼 잇는 말이 붙어 있으면 떼고 다시
+            stripped = re.sub(r"(?:이랑|랑|하고|이나|과|와|나)$", "", word)
+            hit = _region_word(stripped, known_regions) if stripped != word and len(stripped) >= 2 else ""
+            if not hit:
+                break
+            word = stripped
+            rest = rest[:m.start()] + word
+        found.append(hit)
+        rest = rest[:len(rest) - len(word)]
+        joined = _LIST_JOINER.search(rest)
+        if not joined or not joined.group(0):  # 지역 사이를 잇는 말이 없으면 목록 끝
+            break
+        rest = rest[:joined.start()]
+    return list(reversed(found))
 
 
 def _region_word(w: str, known_regions: Iterable[str] = ()) -> str:
@@ -356,9 +390,9 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
             regions.remove(big)
     req.regions = [canonical_region(r) for r in regions]
     # '음성군 말고 / 빼고 / 제외하고 / 외에 / 아닌 곳' -> 그 지역은 빼고 찾음
-    for m in re.finditer(r"([가-힣]{2,8})\s*(?:은|는|을|를|이|가)?\s*(?:말고|빼고|제외(?:하고|한)?|외에|외\s*(?:지역|다른)|아닌\s*(?:곳|데|지역))", t):
-        w = _region_word(re.sub(r"(은|는|을|를|이|가)$", "", m.group(1)), known_regions)
-        if w:
+    #   '진천군이랑 음성군 말고', '진천, 음성 빼고', '진천군과 음성군은 제외' 처럼 여러 지역을 나열해도 모두 뺌
+    for m in _EXCLUDE_TRIGGER.finditer(t):
+        for w in excluded_region_list(t[:m.start()], known_regions):
             req.excluded_regions.append(w)
             req.regions = [r for r in req.regions if not same_place(r, w) and r != w]
     req.excluded_regions = list(dict.fromkeys(req.excluded_regions))

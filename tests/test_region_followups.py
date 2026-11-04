@@ -98,3 +98,30 @@ def test_gpt_style_exclude_regions_argument(agent):
     _, h = t.run("공장 지을 땅")
     r, _ = t.run("음성군 말고 다른 지역에도 있어?", h)
     assert r.listing_ids and all(region(agent, i) != "음성군" for i in r.listing_ids)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("진천군이랑 음성군 말고 다른 지역으로 있어?", ["진천군", "음성군"]),
+    ("진천, 음성 빼고 공장 땅", ["진천군", "음성군"]),
+    ("진천군과 음성군은 제외하고", ["진천군", "음성군"]),
+    ("진천·음성·여주 말고", ["진천군", "음성군", "여주시"]),
+    ("진천군하고 음성군 외에 창고 부지", ["진천군", "음성군"]),
+    ("진천군이나 음성군 아닌 곳", ["진천군", "음성군"]),
+    ("공장 땅 음성군 말고", ["음성군"]),
+])
+def test_parser_excludes_every_listed_region(agent, text, expected):
+    p = RequirementParser(None, agent.known_regions(), [l.address for l in agent.listings()])
+    r = p.parse(text)
+    assert r.excluded_regions == expected and r.regions == []
+
+
+def test_users_conversation_with_two_excluded_regions(agent):
+    """공장 넓은 거 3개 → 그 중에 넓은 건? → 다른 지역에 공장 지을 땅 있어? → 진천군이랑 음성군 말고 다른 지역으로 있어?"""
+    t = ToolAgent(agent, ctx=AgentContext())
+    h = []
+    for q in ["공장 지을 수 있는 땅 중 넓은 거 3개 보여줘", "그 중에 넓은 건?", "다른 지역에 공장 지을 수 있는 땅 있어?"]:
+        _, h = t.run(q, h)
+    r, _ = t.run("진천군이랑 음성군 말고 다른 지역으로 있어?", h)
+    regions = {region(agent, i) for i in r.listing_ids}
+    assert r.listing_ids and not regions & {"진천군", "음성군"}
+    assert r.answer.startswith("진천군, 음성군 말고 다른 지역에서")

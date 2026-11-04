@@ -495,7 +495,8 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                  "sort": {"type": "string", "enum": ["score", "price_asc", "price_desc", "area_desc",
                                                      "price_per_pyeong_asc"], "description": "정렬 (기본 추천순)"},
                  "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "최대 개수 (기본 5)"},
-                 "exclude_regions": {**string_list, "description": "빼고 찾을 지역 ('음성군 말고' -> ['음성군'])"},
+                 "exclude_regions": {**string_list, "description":
+                     "빼고 찾을 지역 모두 ('음성군 말고' -> ['음성군'], '진천군이랑 음성군 말고' -> ['진천군', '음성군'])"},
                  "other_regions": {"type": "boolean", "description":
                      "손님이 '다른 지역에도 있어?'처럼 지역만 바꿔 달라고 하면 true: 직전 조건(용도·예산 등)은 그대로, "
                      "직전에 보여준 매물이 있던 지역은 빼고 전체 매물에서 다시 찾음"},

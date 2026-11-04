@@ -45,6 +45,7 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
 - 조건에 맞는 매물이 없으면 "해당 조건에 맞는 매물이 없습니다."라고 답하세요.
 - 손님이 '다른 지역에도 있어?'라고 하면 search_listings 에 use_previous_conditions=true, other_regions=true 를,
   '음성군 말고 다른 지역'처럼 뺄 지역을 말하면 use_previous_conditions=true, exclude_regions=["음성군"] 을 주세요.
+  여러 곳을 말하면 모두 넣으세요: '진천군이랑 음성군 말고' -> exclude_regions=["진천군", "음성군"].
   (regions 에 '음성군'을 넣으면 안 됩니다. 이때는 직전에 보여준 매물로 좁히지 않고 전체에서 다시 찾습니다)
 - 손님이 '그 중에', '거기서', '그럼 넓은 건?'처럼 직전 결과를 가리키면 search_listings 에
   use_previous_conditions=true 와 sort 를 주세요 (직전에 보여준 매물 안에서만 고릅니다). 하나만 물으면 limit=1.
