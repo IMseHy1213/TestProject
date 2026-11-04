@@ -133,16 +133,31 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     app.config["AGENT_SERVICE"] = agent_service  # 테스트용
     state = {"sync_error": ""}
 
-    def do_sync() -> None:
+    def do_sync(detect: bool = True) -> None:
         try:
             agent.sync()
             state["sync_error"] = ""
         except FileNotFoundError as e:
             state["sync_error"] = str(e)
             log.warning("매물 폴더 읽기 실패 - 저장된 매물로 계속: %s", e)
+        if detect:
+            changed("관리자 화면")
+
+    def changed(source: str) -> None:
+        """매물 목록이 바뀐 직후: 실시간 이벤트 발행 (새 매물·가격 인하 → 찾던 손님에게 알림)."""
+        hub = app.config.get("REALTIME")
+        if hub is not None:
+            hub.detect_changes(source)
 
     with lock:
-        do_sync()
+        do_sync(detect=False)
+
+    # v0.9 실시간: 이벤트 버스 + 변경 감지 + 매칭 워커 (스레드는 run() 에서 시작, 테스트에서는 직접 drain)
+    from ..realtime import RealtimeHub
+
+    realtime = RealtimeHub(agent, lock)
+    realtime.on_sync = lambda: do_sync(detect=False)
+    app.config["REALTIME"] = realtime
 
     app.config["AGENT"] = agent  # 테스트용
 
@@ -377,6 +392,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                llm_mode=agent.llm.mode(), llm_names=agent.llm.names(),
                                memory=agent_service.memory_view(owner), pending=conv.get("pending"),
                                needs_resume=agent_service.needs_resume(conv), busy=busy,
+                               prefill=(request.args.get("ask") or "")[:MAX_QUERY_LEN],
                                message=session.pop("agent_msg", ""))
 
     def _question() -> str:
@@ -434,6 +450,72 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         session["agent_msg"] = "기억을 모두 지웠습니다. 지난 상담 내용과 관심·제외 매물 기록이 삭제되었습니다."
         return redirect(url_for("agent_page"))
 
+    # ------------------------------------------------------------ v0.9 실시간 이벤트 (SSE)
+    MAX_STREAMS = 6        # 동시에 열어 둘 실시간 연결 수 (웹 서버 스레드를 다 쓰지 않게)
+    STREAM_SECONDS = 300   # 연결 하나를 이 시간 뒤 닫음 -> 브라우저가 자동으로 다시 연결 (Last-Event-ID 로 이어 받음)
+    HEARTBEAT_SECONDS = 15
+    streams = {"open": 0}
+    streams_lock = threading.Lock()
+    CUSTOMER_TOPICS = {"alert.match"}
+
+    def sse_event(ev) -> str:
+        import json as _json
+
+        return f"id: {ev.id}\nevent: {ev.topic}\ndata: {_json.dumps(ev.public(), ensure_ascii=False, default=str)}\n\n"
+
+    @app.get("/events/stream")
+    def events_stream():
+        """실시간 알림: 손님은 자기 맞춤 알림(찾던 조건의 새 매물·가격 인하)만, 관리자는 모든 이벤트."""
+        from flask import Response, stream_with_context
+
+        hub = app.config["REALTIME"]
+        owner, admin = visitor_owner(), is_admin()
+        raw = request.headers.get("Last-Event-ID") or request.args.get("since") or ""
+        last_id = int(raw) if raw.isdigit() else hub.bus.last_id()
+        headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        with streams_lock:
+            if streams["open"] >= MAX_STREAMS:  # 너무 많으면 1분 뒤 다시 연결하라고만 하고 닫음
+                return Response("retry: 60000\n\n", mimetype="text/event-stream", headers=headers)
+            streams["open"] += 1
+
+        def visible(ev) -> bool:
+            return admin or ev.topic in CUSTOMER_TOPICS
+
+        def gen():
+            import queue as _queue
+
+            q = hub.bus.subscribe(owner, see_all=admin)  # 먼저 구독한 뒤 놓친 기록을 보내 사이에 빠지는 이벤트가 없게
+            sent = last_id
+            try:
+                yield "retry: 5000\n\n"
+                for ev in hub.bus.since(last_id, owner, see_all=admin):
+                    sent = ev.id
+                    if visible(ev):
+                        yield sse_event(ev)
+                deadline = time.time() + STREAM_SECONDS
+                while time.time() < deadline:
+                    try:
+                        ev = q.get(timeout=HEARTBEAT_SECONDS)
+                    except _queue.Empty:
+                        yield ": ping\n\n"
+                        continue
+                    if ev.id > sent and visible(ev):
+                        sent = ev.id
+                        yield sse_event(ev)
+            finally:
+                hub.bus.unsubscribe(q)
+                with streams_lock:
+                    streams["open"] -= 1
+
+        return Response(stream_with_context(gen()), mimetype="text/event-stream", headers=headers)
+
+    def realtime_view() -> dict:
+        hub = app.config["REALTIME"]
+        return {"running": hub.running, "interval": hub.interval, "threshold": hub.threshold,
+                "subscribers": hub.bus.subscribers, "streams": streams["open"], "stats": hub.stats.as_dict(),
+                "counts": hub.bus.counts(),
+                "events": [{**e.public(), "owner": bool(e.owner)} for e in hub.bus.recent(15, see_all=True)]}
+
     # ------------------------------------------------------------ 관리자 화면
     auth = AdminAuth(auth_file(settings))
     app.config["ADMIN_AUTH"] = auth  # 테스트용
@@ -476,7 +558,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                 "synced_at": agent.last_sync_at.strftime("%Y-%m-%d %H:%M:%S") if agent.last_sync_at else "-",
                 "office": agent.office_model.describe(),
             }
-        return render_template("admin.html", data=data, data_dir=str(settings.data_dir),
+        return render_template("admin.html", data=data, data_dir=str(settings.data_dir), realtime=realtime_view(),
                                llm_status=agent.llm.status(), sync_error=state["sync_error"],
                                message=session.pop("admin_msg", ""), pw_source=auth.source,
                                min_len=MIN_PASSWORD_LEN)
@@ -647,6 +729,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         try:
             with lock:
                 listing_id, warnings = agent.add_listing(form.values)
+                changed("관리자 화면")
         except (ValueError, OSError) as e:
             return form_page("new", form.raw, errors=[str(e)], status=400)
         session["admin_msg"] = f"✅ 새 매물을 추가했습니다 (매물번호 {listing_id}). 손님 검색에 바로 나옵니다." + (
@@ -671,6 +754,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         try:
             with lock:
                 warnings = agent.edit_listing(listing_id, form.values)
+                changed("관리자 화면")
         except ValueError as e:
             return form_page("edit", form.raw, listing_id, errors=[str(e)], status=400)
         session["admin_msg"] = f"✅ 매물 {listing_id} 을(를) 수정했습니다. 손님 검색에 바로 반영됩니다." + (
@@ -697,6 +781,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                     msg = f"매물 {listing_id} 을(를) 원래 엑셀 내용으로 되돌렸습니다."
                 else:
                     abort(400)
+                changed("관리자 화면")
             session["admin_msg"] = "✅ " + msg
         except ValueError as e:
             session["admin_msg"] = f"❌ {e}"
@@ -806,7 +891,9 @@ def run(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True, se
         import webbrowser
 
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    serve(app, host=host, port=port, threads=8)
+    hub = app.config["REALTIME"].start()  # 매물 폴더 감시 + 매칭 워커 시작
+    print(f"   실시간: 매물 폴더를 {hub.interval:g}초마다 확인, 새 매물·가격 인하를 찾던 손님에게 바로 알림")
+    serve(app, host=host, port=port, threads=16)
 
 
 __all__ = ["create_app", "run", "PROJECT_ROOT"]

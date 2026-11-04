@@ -177,6 +177,39 @@ def condition_summary(req: CustomerRequirement) -> str:
     return " · ".join(parts) or "전체"
 
 
+def requirement_from_args(agent, given: dict[str, Any]) -> CustomerRequirement:
+    """search_listings 인자 (query + 따로 준 조건) -> 손님 조건. 실시간 매칭 워커도 같은 함수를 씀."""
+    from ..regions import canonical_region
+    from ..requirement_parser import RequirementParser
+
+    query, regions, jimok = given.get("query", ""), given.get("regions"), given.get("jimok")
+    purpose = given.get("purpose", "")
+    budget_min_manwon, budget_max_manwon = given.get("budget_min_manwon"), given.get("budget_max_manwon")
+    area_min_pyeong, area_max_pyeong = given.get("area_min_pyeong"), given.get("area_max_pyeong")
+    keywords = given.get("keywords")
+
+    # 문장 해석은 규칙 기반으로 (도구 안에서 LLM 을 또 부르지 않음 - 판단은 바깥의 Agent 가)
+    parser = RequirementParser(None, agent.known_regions(), [l.address for l in agent.listings()])
+    req = parser.parse(query) if query.strip() else CustomerRequirement()
+    if regions:
+        req.regions = [canonical_region(r) for r in regions]
+    if jimok:
+        req.jimok = list(jimok)
+    if purpose:
+        req.purpose = purpose
+    if budget_min_manwon is not None:
+        req.budget_min = budget_min_manwon
+    if budget_max_manwon is not None:
+        req.budget_max = budget_max_manwon
+    if area_min_pyeong is not None:
+        req.area_min_m2 = area_min_pyeong * PYEONG_M2
+    if area_max_pyeong is not None:
+        req.area_max_m2 = area_max_pyeong * PYEONG_M2
+    if keywords:
+        req.keywords = list(dict.fromkeys(req.keywords + list(keywords)))
+    return req
+
+
 class ToolRegistry:
     """도구 목록 + 실행 (인자 검사, 오류를 관찰로 변환, 실행 시간 측정)."""
 
@@ -271,31 +304,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             given = merged
         ctx.last_search = dict(given)
         ctx.last_search_from_memory = False
-        query, regions, jimok = given.get("query", ""), given.get("regions"), given.get("jimok")
-        purpose = given.get("purpose", "")
-        budget_min_manwon, budget_max_manwon = given.get("budget_min_manwon"), given.get("budget_max_manwon")
-        area_min_pyeong, area_max_pyeong = given.get("area_min_pyeong"), given.get("area_max_pyeong")
-        keywords = given.get("keywords")
-
-        # 문장 해석은 규칙 기반으로 (도구 안에서 LLM 을 또 부르지 않음 - 판단은 바깥의 Agent 가)
-        parser = RequirementParser(None, agent.known_regions(), [l.address for l in agent.listings()])
-        req = parser.parse(query) if query.strip() else CustomerRequirement()
-        if regions:
-            req.regions = [canonical_region(r) for r in regions]
-        if jimok:
-            req.jimok = list(jimok)
-        if purpose:
-            req.purpose = purpose
-        if budget_min_manwon is not None:
-            req.budget_min = budget_min_manwon
-        if budget_max_manwon is not None:
-            req.budget_max = budget_max_manwon
-        if area_min_pyeong is not None:
-            req.area_min_m2 = area_min_pyeong * PYEONG_M2
-        if area_max_pyeong is not None:
-            req.area_max_m2 = area_max_pyeong * PYEONG_M2
-        if keywords:
-            req.keywords = list(dict.fromkeys(req.keywords + list(keywords)))
+        req = requirement_from_args(agent, given)
         req.customer_name = ctx.customer
         session = agent.recommend(req)
         ranked = [s for s in session.ranked if s.listing.listing_id not in ctx.rejected]

@@ -30,6 +30,10 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="foot">매물 정보는 중개사무소 보유 자료 기준이며, 정확한 지번·연락처는 상담 시 안내해 드립니다.</footer>
+  <div id="toasts" class="toasts" aria-live="polite" aria-label="실시간 알림"></div>
   {% block scripts %}{% endblock %}
+  <script src="{{ url_for('static', filename='realtime.js') }}" defer
+          data-stream="{{ url_for('events_stream') }}" data-agent="{{ url_for('agent_page') }}"
+          data-admin="{{ '1' if is_admin else '' }}"></script>
 </body>
 </html>

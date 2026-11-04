@@ -16,9 +16,12 @@ import asyncio
 import re
 import secrets
 import threading
+import time
 from typing import Any, AsyncIterator, Literal, Optional
 
-from fastapi import FastAPI, Header, HTTPException
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -115,16 +118,27 @@ class Health(BaseModel):
 
 # ---------------------------------------------------------------------- 앱
 def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAgent] = None,
-               lock: Optional[threading.RLock] = None) -> FastAPI:
+               lock: Optional[threading.RLock] = None, start_realtime: bool = False) -> FastAPI:
+    from ..realtime import RealtimeHub
+
     settings = settings or get_settings()
     if agent is None:
         agent = RealEstateAgent(settings)
         agent.sync()
     lock = lock or threading.RLock()
     service = AgentService(agent, lock)
-    app = FastAPI(title="토지 매물 추천 Agent API", version=API_VERSION,
+    hub = RealtimeHub(agent, lock)
+
+    @asynccontextmanager
+    async def lifespan(_app):  # 서버가 켜질 때 매물 폴더 감시·매칭 워커 시작, 꺼질 때 정지
+        if start_realtime:
+            hub.start()
+        yield
+        hub.stop()
+
+    app = FastAPI(title="토지 매물 추천 Agent API", version=API_VERSION, lifespan=lifespan,
                   description="부동산 사무실 토지 매물 검색과 AI 상담(Tool-use Agent). 주소는 시/도 + 시/군/구까지만 제공합니다.")
-    app.state.agent, app.state.service = agent, service
+    app.state.agent, app.state.service, app.state.realtime = agent, service, hub
 
     def owner_of(visitor: Optional[str]) -> tuple[str, str]:
         vid = visitor if visitor and _VISITOR.match(visitor) else secrets.token_urlsafe(18)
@@ -212,6 +226,110 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         return ConversationOut(conversation_id=conv["cid"], status=conv["status"], pending_question=conv["pending"],
                                turns=[TurnOut(**{k: t.get(k) for k in TurnOut.model_fields}) for t in conv["turns"]])
 
+    # ------------------------------------------------------------------ v0.9 실시간
+    @app.get("/api/v1/realtime/stats", tags=["실시간"])
+    async def realtime_stats() -> dict[str, Any]:
+        return {"running": hub.running, "interval_sec": hub.interval, "alert_threshold": hub.threshold,
+                "subscribers": hub.bus.subscribers, "events": hub.bus.counts(), **hub.stats.as_dict()}
+
+    @app.get("/api/v1/events/stream", tags=["실시간"],
+             responses={200: {"content": {"text/event-stream": {}},
+                              "description": "listing.added / listing.price_drop / listing.changed / listing.removed / "
+                                             "system.sync / alert.match(이 방문자 맞춤)"}})
+    async def events_stream(since: Optional[int] = None, max_seconds: int = Query(300, ge=1, le=300),
+                            x_visitor_id: Optional[str] = Header(None),
+                            last_event_id: Optional[str] = Header(None)) -> StreamingResponse:
+        """연결 하나는 max_seconds(최대 5분) 뒤 닫힘 -> 클라이언트가 Last-Event-ID 로 다시 연결해 이어 받음."""
+        _, owner = owner_of(x_visitor_id)
+        start = int(last_event_id) if last_event_id and last_event_id.isdigit() else (
+            since if since is not None else hub.bus.last_id())
+
+        async def gen() -> AsyncIterator[str]:
+            q = hub.bus.subscribe(owner)
+            sent = start
+            try:
+                yield "retry: 5000\n\n"
+                for ev in await asyncio.to_thread(hub.bus.since, start, owner):
+                    sent = ev.id
+                    yield _sse(ev)
+                deadline = time.monotonic() + max_seconds
+                while time.monotonic() < deadline:
+                    ev = await _next_event(q, heartbeat=min(15.0, max(1.0, deadline - time.monotonic())))
+                    if ev is None:
+                        yield ": ping\n\n"
+                        continue
+                    if ev.id > sent:
+                        sent = ev.id
+                        yield _sse(ev)
+            finally:
+                hub.bus.unsubscribe(q)
+
+        return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+    @app.websocket("/api/v1/ws")
+    async def websocket(ws: WebSocket, visitor_id: Optional[str] = None) -> None:
+        """양방향 실시간: 서버 → 매물 이벤트·맞춤 알림을 바로 보냄 / 클라이언트 → {"type":"ask","question":...} 를
+        보내면 Agent 가 도구를 쓰는 과정을 단계마다 보내고 마지막에 답변."""
+        await ws.accept()
+        vid, owner = owner_of(visitor_id)
+        send_lock = asyncio.Lock()
+        loop = asyncio.get_running_loop()
+
+        async def send(data: dict) -> None:
+            async with send_lock:
+                await ws.send_json(data)
+
+        await send({"type": "hello", "visitor_id": vid, "last_event_id": hub.bus.last_id()})
+        q = hub.bus.subscribe(owner)
+
+        async def push_events() -> None:
+            while True:
+                ev = await _next_event(q)
+                if ev is None:
+                    await send({"type": "ping"})
+                    continue
+                await send({"type": "event", "event": ev.public()})
+
+        async def answer(msg: dict) -> None:
+            question = str(msg.get("question") or "").strip()[:300]
+            if not question:
+                await send({"type": "error", "message": "question 이 비어 있습니다"})
+                return
+            steps: asyncio.Queue = asyncio.Queue()
+            job = asyncio.ensure_future(asyncio.to_thread(
+                service.ask, owner, msg.get("conversation_id"), question,
+                lambda e: loop.call_soon_threadsafe(steps.put_nowait, e)))
+            while not job.done() or not steps.empty():
+                try:
+                    e = await asyncio.wait_for(steps.get(), 0.2)
+                except asyncio.TimeoutError:
+                    continue
+                await send({"type": "agent", "kind": e.get("type"), **{k: v for k, v in e.items() if k != "type"}})
+            try:
+                cid, turn = job.result()
+            except Busy as e:
+                await send({"type": "error", "message": str(e)})
+                return
+            listings = [listing_out(i, turn["badges"].get(i)) for i in turn["listing_ids"]]
+            await send({"type": "answer", "conversation_id": cid, "answer": turn["answer"],
+                        "listings": [x.model_dump() for x in listings if x]})
+
+        pusher = asyncio.ensure_future(push_events())
+        try:
+            while True:
+                msg = await ws.receive_json()
+                if isinstance(msg, dict) and msg.get("type") == "ask":
+                    await answer(msg)
+                elif isinstance(msg, dict) and msg.get("type") == "ping":
+                    await send({"type": "pong"})
+                else:
+                    await send({"type": "error", "message": '보낼 수 있는 메시지: {"type":"ask","question":"..."}'})
+        except WebSocketDisconnect:
+            pass
+        finally:
+            pusher.cancel()
+            hub.bus.unsubscribe(q)
+
     @app.delete("/api/v1/agent/memory", status_code=204, tags=["AI 상담"])
     async def forget(x_visitor_id: Optional[str] = Header(None)) -> None:
         if not x_visitor_id or not _VISITOR.match(x_visitor_id):
@@ -219,3 +337,23 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         await asyncio.to_thread(service.forget, "api:" + x_visitor_id)
 
     return app
+
+
+def _sse(ev) -> str:
+    import json
+
+    return f"id: {ev.id}\nevent: {ev.topic}\ndata: {json.dumps(ev.public(), ensure_ascii=False, default=str)}\n\n"
+
+
+async def _next_event(q, heartbeat: float = 15.0, poll: float = 1.0):
+    """구독 큐에서 다음 이벤트. heartbeat 초 동안 없으면 None (연결 유지용 ping).
+    스레드에서 1초씩 나눠 기다려, 연결이 끊기거나 서버가 꺼질 때 바로 정리되게 함."""
+    import queue as _queue
+
+    waited = 0.0
+    while waited < heartbeat:
+        try:
+            return await asyncio.to_thread(q.get, True, poll)
+        except _queue.Empty:
+            waited += poll
+    return None

@@ -79,6 +79,25 @@
   </div>
 </section>
 
+<section class="panel realtime-panel">
+  <h2>⚡ 실시간 이벤트 <small class="muted">v0.9</small></h2>
+  <p class="meta">
+    {% if realtime.running %}🟢 매물 폴더를 {{ "%g"|format(realtime.interval) }}초마다 확인 중{% else %}⚪ 폴더 감시 꺼짐 (웹 서비스 실행 시 자동 시작){% endif %}
+    · 실시간 연결 {{ realtime.streams }}개 · 감지 {{ realtime.stats.detected }}건 · 맞춤 알림 {{ realtime.stats.alerts }}건
+    {% if realtime.stats.match_ms_p50 is not none %}· 감지→알림 {{ realtime.stats.match_ms_p50 }}ms (p95 {{ realtime.stats.match_ms_p95 }}ms){% endif %}
+  </p>
+  <p class="meta small-note">매물을 추가·수정하거나 엑셀을 올리면(또는 매물 폴더 파일이 바뀌면) 새 매물·가격 인하를 감지해, 그 조건을 찾던 손님 화면에 바로 알림을 보냅니다. (알림 기준 점수 {{ "%g"|format(realtime.threshold) }}점)</p>
+  <ol class="event-feed" id="event-feed">
+    {% for e in realtime.events %}
+      <li class="ev ev-{{ e.topic | replace('.', '-') }}"><span class="ev-id">#{{ e.id }}</span> <code>{{ e.topic }}</code>
+        {{ e.payload.message or (e.payload.listing.name ~ ' · ' ~ e.payload.listing.price if e.payload.listing else '') or e.payload.listing_id or (e.payload.listings ~ '건' if e.payload.listings is defined else '') }}
+        <small class="muted">{{ e.created[11:19] }}{% if e.payload.source %} · {{ e.payload.source }}{% endif %}</small></li>
+    {% else %}
+      <li class="muted empty">아직 이벤트가 없습니다. 매물을 추가하거나 가격을 바꿔 보세요.</li>
+    {% endfor %}
+  </ol>
+</section>
+
 <section class="panel">
   <h2>매물 정리 보고서 (오류·중복)</h2>
   <p class="meta">{{ data.summary }}</p>

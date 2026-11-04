@@ -297,7 +297,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("API 서버에는 fastapi, uvicorn 패키지가 필요합니다. 터미널에서:  pip install fastapi uvicorn")
             return 1
         print(f"JSON API: http://{args.host}:{args.port}/docs  (끄려면 Ctrl+C)")
-        uvicorn.run(create_api(settings), host=args.host, port=args.port, log_level="warning")
+        uvicorn.run(create_api(settings, start_realtime=True), host=args.host, port=args.port, log_level="warning")
         return 0
     if cmd == "web":
         from .web import run
