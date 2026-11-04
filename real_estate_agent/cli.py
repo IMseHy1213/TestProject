@@ -180,8 +180,10 @@ def print_sync(report: SyncReport, verbose: bool = False) -> None:
 def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6) -> int:
     """v0.2 Tool-use Agent 를 터미널에서: 도구 호출 과정(행동→관찰)과 답변을 출력."""
     from .tool_agent import ToolAgent
+    from .tool_agent.memory import LongTermMemory
 
-    runner = ToolAgent(agent, max_steps=max_steps)
+    # 터미널 상담도 장기 기억 사용 (지난번에 찾던 조건, 싫다고 한 매물)
+    runner = ToolAgent(agent, max_steps=max_steps, memory=LongTermMemory(agent.storage.conn), owner="terminal")
     history: list = []
     interactive = not question
     if interactive:
@@ -240,6 +242,10 @@ def build_parser() -> argparse.ArgumentParser:
     wb.add_argument("--port", type=int, default=8000)
     wb.add_argument("--no-browser", action="store_true", help="브라우저 자동 열기 끄기")
 
+    ap = sub.add_parser("api", help="JSON API 서버 (FastAPI · async · 스트리밍). 문서: http://127.0.0.1:8001/docs")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8001)
+
     tp = sub.add_parser("template", help="매물 입력 양식(엑셀) 만들기")
     tp.add_argument("--out", default="", help="저장 위치 (기본: 매물 폴더 안)")
 
@@ -282,6 +288,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.no_llm:
         settings.llm_providers = ["rule"]
     cmd = args.command or "web"  # 아무 명령 없이 실행하면 웹 서비스
+    if cmd == "api":
+        try:
+            import uvicorn
+
+            from .api import create_api
+        except ImportError:
+            print("API 서버에는 fastapi, uvicorn 패키지가 필요합니다. 터미널에서:  pip install fastapi uvicorn")
+            return 1
+        print(f"JSON API: http://{args.host}:{args.port}/docs  (끄려면 Ctrl+C)")
+        uvicorn.run(create_api(settings), host=args.host, port=args.port, log_level="warning")
+        return 0
     if cmd == "web":
         from .web import run
 

@@ -30,6 +30,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "🔌 JSON API 서버 (FastAPI) - http://127.0.0.1:8001/docs",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["api"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "🤖 AI 상담 (Tool Agent) - 터미널 대화",
       "type": "debugpy",
       "request": "launch",

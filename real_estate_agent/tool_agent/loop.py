@@ -20,7 +20,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..llm import LLMUnavailable, ToolCall, ToolTurn
 from ..models import format_price
@@ -97,8 +97,8 @@ class LLMPolicy:
     def available(self) -> bool:
         return bool(self.llm and self.llm.available and self.llm.ready)
 
-    def next(self, messages: list[dict], tools: list[dict]) -> ToolTurn:
-        return self.llm.tool_step(SYSTEM_PROMPT, messages, tools)
+    def next(self, messages: list[dict], tools: list[dict], extra: str = "") -> ToolTurn:
+        return self.llm.tool_step(SYSTEM_PROMPT + extra, messages, tools)
 
 
 class RulePolicy:
@@ -117,8 +117,13 @@ class RulePolicy:
         last_search = next((o for n, o in reversed(done) if n == "search_listings" and o.get("ok")), None)
         found = (last_search or {}).get("result", {}).get("매물", [])
 
+        if _mentions_past(question) and "recall_memory" not in names and "search_listings" not in names:
+            return _call("recall_memory", {})  # '지난번에 찾던 거' -> 먼저 장기 기억 확인
         if "search_listings" not in names:
             sort = _sort_in(question)
+            if _mentions_past(question) and self.ctx and self.ctx.last_search:
+                return _call("search_listings", {"use_previous_conditions": True, "sort": sort or "score",
+                                                 "limit": _wanted_count(question) or 5})
             if self.ctx and self.ctx.last_search and _is_follow_up(question, sort):
                 # '그 중에 넓은 건?' -> 직전 조건 그대로, 새 기준으로 1건 (개수를 말하면 그만큼)
                 args: dict[str, Any] = {"use_previous_conditions": True, "sort": sort or "score",
@@ -153,6 +158,10 @@ def _loads(text: str) -> dict:
 
 
 _FOLLOW_UP = re.compile(r"그\s*중|이\s*중|저\s*중|거기서|그\s*가운데|둘\s*중|셋\s*중|방금|위\s*매물|그\s*매물들|그럼|그러면")
+
+
+def _mentions_past(q: str) -> bool:
+    return bool(re.search(r"지난\s*번|저번|지난\s*상담|예전에|전에\s*(찾|보|말)|찾던|보던", q))
 
 
 def _sort_in(q: str) -> str:
@@ -228,7 +237,9 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
     order = res.get("정렬", "추천순")
     lines: list[str] = []
 
-    if found and res.get("앞_조건_이어서"):  # 후속 질문: 한 줄로
+    if found and res.get("앞_조건_출처") == "지난 상담":
+        lines.append(f"지난 상담에서 찾으신 조건({cond})으로 다시 찾았습니다.")
+    elif found and res.get("앞_조건_이어서"):  # 후속 질문: 한 줄로
         best, kind = _BEST.get(order, _BEST["추천순"])
         pool = f"앞서 보여드린 {res['앞서_보여준_매물_수']}건" if res.get("앞서_보여준_매물_수") else f"앞서 찾은 {cond} 매물 {total}건"
         if len(found) == 1:
@@ -287,14 +298,21 @@ def listing_badges(done: list[tuple[str, dict]]) -> dict[str, list[str]]:
 
 # ---------------------------------------------------------------------- Agent 루프
 class ToolAgent:
+    """memory: LongTermMemory (방문자별 장기 기억), owner: 방문자 id,
+    checkpoint(messages, ctx): 단계마다 상태 저장, on_event(dict): 진행 상황 실시간 전달 (스트리밍)."""
+
     def __init__(self, agent, llm=None, ctx: Optional[AgentContext] = None, lock=None,
-                 max_steps: int = MAX_STEPS, log_dir: Optional[Path] = None):
+                 max_steps: int = MAX_STEPS, log_dir: Optional[Path] = None, memory=None, owner: str = "",
+                 checkpoint: Optional[Callable[[list, AgentContext], None]] = None,
+                 on_event: Optional[Callable[[dict], None]] = None):
         self.agent = agent
-        self.registry = ToolRegistry(agent, ctx, lock)
+        self.registry = ToolRegistry(agent, ctx, lock, memory=memory, owner=owner)
         self.llm_policy = LLMPolicy(llm if llm is not None else agent.llm)
         self.rule_policy = RulePolicy(self.registry.ctx)
         self.max_steps = max_steps
         self.log_dir = log_dir if log_dir is not None else getattr(agent.settings, "log_dir", None)
+        self.memory, self.owner = memory, owner
+        self.checkpoint, self.on_event = checkpoint, on_event
 
     @property
     def ctx(self) -> AgentContext:
@@ -302,30 +320,78 @@ class ToolAgent:
 
     def run(self, question: str, history: Optional[list[dict]] = None) -> tuple[AgentResult, list[dict]]:
         """질문 하나 처리. (결과, 갱신된 대화 기록) 반환."""
+        messages = list(history or []) + [{"role": "user", "content": question}]
+        return self._loop(question, messages, [])
+
+    def resume(self, history: list[dict]) -> tuple[AgentResult, list[dict]]:
+        """답을 만들다 끊긴 대화를 마지막 체크포인트부터 이어서 진행."""
+        from .memory import repair_for_resume
+
+        messages = repair_for_resume(history)
+        question = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        done = sum(1 for m in messages[max(i for i, m in enumerate(messages) if m["role"] == "user"):]
+                   if m["role"] == "tool")
+        return self._loop(question, messages, [Step(0, "resume", "", summary=f"끊긴 상담을 체크포인트에서 이어서 진행 "
+                                                                              f"(이미 받은 도구 결과 {done}개 재사용)")])
+
+    def _emit(self, kind: str, **data: Any) -> None:
+        if self.on_event:
+            try:
+                self.on_event({"type": kind, **data})
+            except Exception as e:  # 화면 연결이 끊겨도 Agent 는 계속
+                log.debug("event 전달 실패: %s", e)
+
+    def _save(self, messages: list[dict]) -> None:
+        if self.checkpoint:
+            try:
+                self.checkpoint(messages, self.ctx)
+            except Exception as e:
+                log.warning("체크포인트 저장 실패: %s", e)
+
+    def _add(self, steps: list[Step], step: Step) -> None:
+        steps.append(step)
+        self._emit("step", step=asdict(step))
+
+    def _loop(self, question: str, messages: list[dict], steps: list[Step]) -> tuple[AgentResult, list[dict]]:
         started = time.perf_counter()
         seen_before = len(self.ctx.seen)
-        messages = list(history or []) + [{"role": "user", "content": question}]
+        self.ctx.run_searches = []
+        extra = ""
+        if self.memory and self.owner:  # 장기 기억: 싫다고 한 매물 제외 + AI 에게 요약 전달
+            from .memory import memory_summary
+            from .tools import display_name
+
+            mem = self.memory.apply_to(self.owner, self.ctx)
+            listing = {l.listing_id: l for l in self.agent.listings()}
+            summary = memory_summary(mem, lambda i: display_name(listing[i]) if i in listing else "(지금은 없는 매물)")
+            if summary:
+                extra = "\n\n이 손님에 대한 기억(지난 상담): " + summary
+                self._add(steps, Step(0, "memory", "", summary="장기 기억 불러옴 · " + summary[:160]))
         tools = self.registry.schemas()
-        steps: list[Step] = []
+        for s in steps:
+            self._emit("step", step=asdict(s))
         use_llm = self.llm_policy.available
         if not use_llm:
-            steps.append(Step(0, "fallback", "rule", summary="AI(GPT/Claude)를 쓸 수 없어 규칙 기반 정책으로 진행"))
+            self._add(steps, Step(0, "fallback", "rule", summary="AI(GPT/Claude)를 쓸 수 없어 규칙 기반 정책으로 진행"))
         seen_calls: dict[str, int] = {}
         answer, policy, stopped = "", "rule", "max_steps"
+        self._save(messages)
 
         for n in range(1, self.max_steps + 1):
             t0 = time.perf_counter()
+            self._emit("thinking", n=n)
             try:
-                turn = self.llm_policy.next(messages, tools) if use_llm else self.rule_policy.next(messages, tools)
+                turn = (self.llm_policy.next(messages, tools, extra) if use_llm
+                        else self.rule_policy.next(messages, tools))
             except LLMUnavailable as e:
-                steps.append(Step(n, "fallback", "rule", summary=f"AI 응답 실패 → 규칙 기반으로 이어서 진행 ({e})",
-                                  ms=_ms(t0)))
+                self._add(steps, Step(n, "fallback", "rule", summary=f"AI 응답 실패 → 규칙 기반으로 이어서 진행 ({e})",
+                                      ms=_ms(t0)))
                 use_llm = False
                 continue
             policy = turn.provider or ("rule" if not use_llm else "llm")
             if not turn.tool_calls:  # 최종 답변
                 answer, stopped = turn.text.strip(), "answer"
-                steps.append(Step(n, "answer", policy, summary="최종 답변", ms=_ms(t0)))
+                self._add(steps, Step(n, "answer", policy, summary="최종 답변", ms=_ms(t0)))
                 messages.append({"role": "assistant", "content": answer})
                 break
             messages.append({"role": "assistant", "content": turn.text, "tool_calls": turn.tool_calls,
@@ -341,18 +407,21 @@ class ToolAgent:
                     obs = {"ok": False, "error": "같은 도구를 같은 인자로 이미 여러 번 불렀습니다. 결과를 바탕으로 답하세요.",
                            "ms": 0}
                 else:
+                    self._emit("tool_start", n=n, tool=call.name, args=call.arguments)
                     obs = self.registry.run(call.name, call.arguments)
-                steps.append(Step(n, "tool", policy, call.name, call.arguments, obs["ok"], summarize(call.name, obs),
-                                  obs.get("ms", 0), thought=turn.text.strip()[:300] if i == 0 else ""))
+                self._add(steps, Step(n, "tool", policy, call.name, call.arguments, obs["ok"],
+                                      summarize(call.name, obs), obs.get("ms", 0),
+                                      thought=turn.text.strip()[:300] if i == 0 else ""))
                 messages.append({"role": "tool", "call_id": call.id, "name": call.name,
                                  "content": observation_text(obs), "is_error": not obs["ok"]})
+            self._save(messages)  # 체크포인트: 여기서 끊겨도 이 도구 결과부터 이어서 진행
         else:
             # 단계 수를 다 쓰면 도구 없이 답만 받고, 그것도 안 되면 규칙으로 정리
             t0 = time.perf_counter()
             try:
                 if not use_llm:
                     raise LLMUnavailable("규칙 기반")
-                turn = self.llm_policy.llm.tool_step(SYSTEM_PROMPT + "\n이제 도구 없이 지금까지 결과로 답하세요.",
+                turn = self.llm_policy.llm.tool_step(SYSTEM_PROMPT + extra + "\n이제 도구 없이 지금까지 결과로 답하세요.",
                                                      messages, [])
                 if turn.tool_calls or not turn.text.strip():
                     raise LLMUnavailable("도구 없이 답하지 못함")
@@ -361,8 +430,8 @@ class ToolAgent:
                 start = max(i for i, m in enumerate(messages) if m["role"] == "user")
                 done = [(m["name"], _loads(m["content"])) for m in messages[start:] if m["role"] == "tool"]
                 answer, policy = rule_answer(question, done), "rule"
-            steps.append(Step(self.max_steps + 1, "guard", policy, summary=f"최대 {self.max_steps}단계 도달 → 정리해서 답변",
-                              ms=_ms(t0)))
+            self._add(steps, Step(self.max_steps + 1, "guard", policy,
+                                  summary=f"최대 {self.max_steps}단계 도달 → 정리해서 답변", ms=_ms(t0)))
             messages.append({"role": "assistant", "content": answer})
 
         start = max(i for i, m in enumerate(messages) if m["role"] == "user")
@@ -373,8 +442,14 @@ class ToolAgent:
         result = AgentResult(question, answer or NOT_FOUND_MESSAGE, steps, self._cards(done, answer, seen_before), policy,
                              stopped, round((time.perf_counter() - started) * 1000, 1), uuid.uuid4().hex[:12],
                              badges)
+        if self.memory and self.owner:  # 장기 기억 갱신 (새로 찾은 조건, 관심/제외 매물)
+            self.memory.update_after(self.owner, self.ctx, self.ctx.run_searches)
+        self.ctx.run_searches = []
         self._log(result)
-        return result, trim_history(messages)
+        history = trim_history(messages)
+        self._emit("done", answer=result.answer, listing_ids=result.listing_ids, policy=result.policy,
+                   total_ms=result.total_ms)
+        return result, history
 
     def _cards(self, done: list[tuple[str, dict]], answer: str, seen_before: int) -> list[str]:
         """화면 카드로 보여줄 매물: 이번 질문의 마지막 비교(없으면 검색) 결과 순서대로 + 답변에서 따로 말한 매물."""

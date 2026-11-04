@@ -102,33 +102,9 @@ def _secret_key(settings: Settings) -> str:
         return secrets.token_hex(32)
 
 
-class AgentConversations:
-    """접속자별 AI 상담 대화 (대화 기록 + 도구 상태 + 화면 표시용 기록). 2시간 사용 없으면 삭제."""
-
-    MAX_TURNS = 20
-
-    def __init__(self, ttl: int = SESSION_TTL_SEC, max_size: int = MAX_SESSIONS):
-        self.ttl, self.max_size = ttl, max_size
-        self._data: OrderedDict[str, dict] = OrderedDict()
-
-    def get(self, cid: Optional[str]) -> tuple[str, dict]:
-        now = time.time()
-        for k in [k for k, v in self._data.items() if now - v["ts"] > self.ttl]:
-            del self._data[k]
-        if not cid or cid not in self._data:
-            while len(self._data) >= self.max_size:
-                self._data.popitem(last=False)
-            from ..tool_agent import AgentContext
-
-            cid = secrets.token_urlsafe(16)
-            self._data[cid] = {"history": [], "ctx": AgentContext(), "turns": [], "ts": now}
-        conv = self._data[cid]
-        conv["ts"] = now
-        self._data.move_to_end(cid)
-        return cid, conv
-
-    def reset(self, cid: Optional[str]) -> None:
-        self._data.pop(cid or "", None)
+VISITOR_COOKIE = "rea_vid"          # 방문자 id (장기 기억용, 90일) - 관리자 로그인과는 별개
+VISITOR_DAYS = 90
+_VID = re.compile(r"^[A-Za-z0-9_-]{20,64}$")
 
 
 def safe_filename(name: str) -> str:
@@ -151,7 +127,10 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     )
     lock = threading.RLock()  # 매물 목록·DB·학습 모델을 여러 접속자가 동시에 바꾸지 않도록
     store = SessionStore()
-    conversations = AgentConversations()
+    from ..tool_agent.service import AgentService, Busy
+
+    agent_service = AgentService(agent, lock)
+    app.config["AGENT_SERVICE"] = agent_service  # 테스트용
     state = {"sync_error": ""}
 
     def do_sync() -> None:
@@ -182,6 +161,22 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             sent = request.form.get("csrf") or request.headers.get("X-CSRF-Token", "")
             if not sent or not hmac.compare_digest(sent, session.get("csrf", "")):
                 abort(400, "보안 토큰이 만료되었습니다. 페이지를 새로고침 해주세요.")
+
+    def visitor_owner() -> str:
+        """장기 기억 주인: 브라우저마다 붙는 방문자 id (쿠키, 90일). 없으면 새로 만들어 응답에 심음."""
+        vid = request.cookies.get(VISITOR_COOKIE, "")
+        if not _VID.match(vid):
+            vid = getattr(request, "_new_vid", "") or secrets.token_urlsafe(24)
+            request._new_vid = vid  # type: ignore[attr-defined]
+        return "web:" + vid
+
+    @app.after_request
+    def set_visitor_cookie(resp):
+        vid = getattr(request, "_new_vid", "")
+        if vid:
+            resp.set_cookie(VISITOR_COOKIE, vid, max_age=VISITOR_DAYS * 86400, httponly=True, samesite="Lax",
+                            secure=app.config["SESSION_COOKIE_SECURE"])
+        return resp
 
     @app.after_request
     def security_headers(resp):
@@ -359,40 +354,84 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                 "jimok": l.jimok or "-", "zoning": l.zoning or "-", "features": features[:5], "badges": badges,
                 "use_tag": l.use_tag, "contact": l.owner_contact if admin else ""}
 
+    def render_turns(turns: list[dict], admin: bool) -> list[dict]:
+        """저장된 질문/답변 -> 화면용 (매물 카드는 지금 매물 정보로 그때그때 만듦: 수정 내용·관리자 여부 반영)."""
+        out = []
+        with lock:
+            for t in turns:
+                cards = [c for c in (agent_card(i, admin, (t.get("badges") or {}).get(i, []))
+                                     for i in t.get("listing_ids", [])) if c]
+                out.append({**t, "cards": cards})
+        return out
+
     @app.get("/agent")
     def agent_page():
-        cid, conv = conversations.get(session.get("cid"))
-        session["cid"] = cid
+        owner = visitor_owner()
         with lock:
             agent.maybe_reconnect_llm()
-        return render_template("agent.html", turns=conv["turns"], examples=AGENT_EXAMPLES,
-                               llm_mode=agent.llm.mode(), llm_names=agent.llm.names())
+            # 브라우저에 대화가 없을 때만(브라우저를 껐다 켬) 이 방문자의 최근 대화를 이어서 보여줌
+            conv = agent_service.open(owner, session.get("cid"), reuse_recent=not session.get("cid"))
+        session["cid"] = conv["cid"]
+        busy = conv["status"] == "running" and not agent_service.needs_resume(conv)
+        return render_template("agent.html", turns=render_turns(conv["turns"], is_admin()), examples=AGENT_EXAMPLES,
+                               llm_mode=agent.llm.mode(), llm_names=agent.llm.names(),
+                               memory=agent_service.memory_view(owner), pending=conv.get("pending"),
+                               needs_resume=agent_service.needs_resume(conv), busy=busy,
+                               message=session.pop("agent_msg", ""))
+
+    def _question() -> str:
+        return (request.form.get("q") or "").strip()[:MAX_QUERY_LEN]
 
     @app.post("/agent/ask")
     def agent_ask():
-        from ..tool_agent import ToolAgent
-        from ..tool_agent.loop import step_dict
-
-        q = (request.form.get("q") or "").strip()[:MAX_QUERY_LEN]
+        """(자바스크립트가 꺼진 경우) 질문 처리 후 화면 다시 그리기."""
+        q = _question()
         if not q:
             return redirect(url_for("agent_page"))
-        cid, conv = conversations.get(session.get("cid"))
-        session["cid"] = cid
-        # LLM 호출은 잠금 밖에서, 도구 실행(매물 목록·DB 접근)만 잠금 안에서
-        runner = ToolAgent(agent, ctx=conv["ctx"], lock=lock)
-        result, conv["history"] = runner.run(q, conv["history"])
-        admin = is_admin()
-        with lock:
-            cards = [c for c in (agent_card(i, admin, result.badges.get(i, [])) for i in result.listing_ids) if c]
-        conv["turns"].append({"question": q, "answer": result.answer, "steps": [step_dict(s) for s in result.steps],
-                              "cards": cards, "policy": result.policy, "total_ms": result.total_ms,
-                              "tool_calls": result.tool_calls, "tool_errors": result.tool_errors})
-        conv["turns"] = conv["turns"][-AgentConversations.MAX_TURNS:]
+        try:
+            cid, _ = agent_service.ask(visitor_owner(), session.get("cid"), q)
+            session["cid"] = cid
+        except Busy as e:
+            session["agent_msg"] = str(e)
+        return redirect(url_for("agent_page") + "#last")
+
+    @app.post("/agent/stream")
+    def agent_stream():
+        """질문 처리 진행 상황을 실시간으로 (Server-Sent Events). 화면은 단계가 끝날 때마다 바로 표시."""
+        from flask import Response, stream_with_context
+
+        owner = visitor_owner()
+        resume = request.form.get("resume") == "1"
+        q = _question()
+        if not q and not resume:
+            abort(400)
+        conv = agent_service.open(owner, session.get("cid"), reuse_recent=not session.get("cid"))
+        session["cid"] = conv["cid"]
+        body = agent_service.stream(owner, conv["cid"], q, resume=resume)
+        return Response(stream_with_context(body), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/agent/resume")
+    def agent_resume():
+        """(자바스크립트가 꺼진 경우) 끊긴 질문 이어서 처리."""
+        try:
+            agent_service.resume(visitor_owner(), session.get("cid") or "")
+        except (Busy, ValueError) as e:
+            session["agent_msg"] = str(e)
         return redirect(url_for("agent_page") + "#last")
 
     @app.post("/agent/reset")
     def agent_reset():
-        conversations.reset(session.pop("cid", None))
+        agent_service.reset(session.pop("cid", None))
+        session["cid"] = agent_service.open(visitor_owner(), None, reuse_recent=False)["cid"]
+        return redirect(url_for("agent_page"))
+
+    @app.post("/agent/forget")
+    def agent_forget():
+        """기억 지우기: 이 브라우저의 상담 기록과 장기 기억 삭제."""
+        agent_service.forget(visitor_owner())
+        session.pop("cid", None)
+        session["agent_msg"] = "기억을 모두 지웠습니다. 지난 상담 내용과 관심·제외 매물 기록이 삭제되었습니다."
         return redirect(url_for("agent_page"))
 
     # ------------------------------------------------------------ 관리자 화면

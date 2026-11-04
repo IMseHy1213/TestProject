@@ -16,6 +16,38 @@
   {% endif %}
 </section>
 
+{% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
+
+<details class="memory-box">
+  <summary>🧠 기억하고 있는 내용{% if not memory.empty %} · 최근 조건 {{ memory.searches | length }}개 · 관심 {{ memory.liked | length }} · 제외 {{ memory.rejected | length }}{% else %} · 아직 없음{% endif %}</summary>
+  {% if memory.empty %}
+    <p class="meta">상담하신 조건과 마음에 든/안 든 매물을 이 브라우저 기준으로 기억해 다음 상담에 씁니다. (예: "지난번에 찾던 거 다시 보여줘")</p>
+  {% else %}
+    <ul class="memory-list">
+      {% if memory.searches %}<li><strong>최근에 찾은 조건</strong> {{ memory.searches | join(" / ") }}</li>{% endif %}
+      {% if memory.liked %}<li><strong>관심 매물</strong> {{ memory.liked | join(", ") }}</li>{% endif %}
+      {% if memory.rejected %}<li><strong>제외한 매물</strong> {{ memory.rejected | join(", ") }} <small class="muted">(다음 상담에서도 빼고 찾습니다)</small></li>{% endif %}
+    </ul>
+  {% endif %}
+  <form method="post" action="{{ url_for('agent_forget') }}" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <button class="link">기억 지우기</button>
+  </form>
+</details>
+
+{% if needs_resume %}
+<div class="notice warn resume-box" role="alert">
+  <span>"{{ pending }}" 질문의 답을 만들다가 중간에 끊겼습니다. 저장된 단계부터 이어서 답할 수 있어요.</span>
+  <form method="post" action="{{ url_for('agent_resume') }}" class="inline js-stream" data-resume="1"
+        data-stream="{{ url_for('agent_stream') }}" data-done="{{ url_for('agent_page') }}#last">
+    <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+    <button class="btn primary">이어서 답하기</button>
+  </form>
+</div>
+{% elif busy %}
+<p class="notice" role="status">"{{ pending }}" 질문의 답을 만드는 중입니다… 잠시 후 새로고침해 주세요.</p>
+{% endif %}
+
 <div class="chat" aria-live="polite">
   {% for t in turns %}
   <article class="turn" {% if loop.last %}id="last"{% endif %}>
@@ -68,12 +100,20 @@
     </div>
   </article>
   {% endfor %}
+  <article class="turn live" id="live" hidden>
+    <p class="bubble q" id="live-q"></p>
+    <div class="bubble a">
+      <p class="answer muted" id="live-status">AI가 도구를 고르는 중…</p>
+      <ol class="live-steps" id="live-steps"></ol>
+    </div>
+  </article>
 </div>
 
-<form method="post" action="{{ url_for('agent_ask') }}" class="search agent-ask">
+<form method="post" action="{{ url_for('agent_ask') }}" class="search agent-ask js-stream"
+      data-stream="{{ url_for('agent_stream') }}" data-done="{{ url_for('agent_page') }}#last">
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   <label for="q" class="sr-only">AI 상담 질문</label>
-  <input id="q" name="q" type="search" maxlength="300" required autocomplete="off" {% if not turns %}autofocus{% endif %}
+  <input id="q" name="q" type="search" maxlength="300" required autocomplete="off" {% if not turns and not needs_resume %}autofocus{% endif %}
          placeholder="{% if turns %}이어서 물어보세요 (예: 그 중에 더 넓은 건?){% else %}예) 음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘{% endif %}">
   <button type="submit" class="btn primary">물어보기</button>
 </form>

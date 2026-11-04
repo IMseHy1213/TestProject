@@ -8,4 +8,7 @@ anthropic>=1.0       # Claude (Sonnet 5 / Sonnet 4.6)
 openai>=2.0          # GPT (GPT-5.6 Luna 등)
 flask>=3.0           # 웹 서비스
 waitress>=3.0        # 웹 서버 (Windows 지원)
+fastapi>=0.110       # JSON API (python main.py api) - async · Pydantic · 스트리밍
+uvicorn>=0.29        # JSON API 서버
+httpx>=0.27          # API 테스트용
 pytest>=8.0

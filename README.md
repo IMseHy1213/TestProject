@@ -146,6 +146,40 @@ GPT/Claude 가 연결되어 있으면, 손님이 매물을 거절하거나 관�
 - 엑셀에 매물번호가 없는 매물은 프로그램 내부 번호(F-…) 대신 `음성군 물류부지 15,005평 매물`(지역 + 매물 종류 + 면적, 종류는 매물 폴더 이름 괄호 안의 용도·없으면 '토지') 처럼 부르고, 카드에는 '매물번호 미등록'으로 표시합니다.
 - 터미널: VS Code 실행 목록 **🤖 AI 상담 (Tool Agent)** 또는 `python main.py agent "질문"`
 
+### v0.3 상태·기억 (`tool_agent/memory.py`, `tool_agent/service.py`)
+
+| 구분 | 무엇을 기억하나 | 어디에 |
+|---|---|---|
+| 단기 기억 (대화 상태) | 대화 기록, 도구 결과, 직전에 보여준 매물('그 중에'용), 화면의 질문/답변 | SQLite `agent_conversations` |
+| 체크포인트 | Agent 가 도구를 한 번 쓸 때마다 그 시점 상태 | 같은 표 (`status=running`) |
+| 장기 기억 (방문자별) | 최근에 찾은 조건, 관심 매물, 싫다고 한 매물(이유) | SQLite `agent_memory` |
+
+- **서버를 껐다 켜도** AI 상담 대화가 그대로 남고 "그 중에 넓은 건?" 도 이어서 됩니다. (브라우저를 껐다 켜도 하루 안이면 이어서 보여줌)
+- 답을 만들다 서버가 꺼지거나 오류가 나면, 다음에 화면을 열 때 **"이어서 답하기"** 가 나옵니다.
+  이미 받은 도구 결과는 다시 실행하지 않고 마지막 체크포인트부터 이어서 답합니다.
+- 장기 기억: **"지난번에 찾던 거 다시 보여줘"** 를 알아듣고(`recall_memory` 도구), 싫다고 한 매물은 다음 상담에서도 빼고 찾습니다.
+  GPT/Claude 에게도 "이 손님에 대한 기억" 을 요약해 알려줍니다. 화면의 **🧠 기억하고 있는 내용 → 기억 지우기** 로 삭제할 수 있습니다.
+- 방문자 구분은 브라우저 쿠키(`rea_vid`, 90일)로 합니다. 관리자 로그인은 이 쿠키와 별개라, 브라우저를 닫으면 로그아웃됩니다.
+- AI 상담 화면은 답을 만드는 과정을 **실시간으로** 보여줍니다 (도구 실행 중 → 결과 → 답변, Server-Sent Events).
+
+### JSON API (FastAPI · async · 스트리밍) — `python main.py api`
+
+VS Code 실행 목록 **🔌 JSON API 서버** → 브라우저에서 http://127.0.0.1:8001/docs (Swagger 화면에서 바로 시험)
+
+| 엔드포인트 | 설명 |
+|---|---|
+| `GET /api/v1/health` | 상태 (매물 수, AI 연결) |
+| `POST /api/v1/listings/search` | 매물 검색 (조건·정렬·개수) |
+| `GET /api/v1/listings/{id}` | 매물 하나 |
+| `POST /api/v1/agent/ask` | AI 상담 질문 (`conversation_id` 로 이어서 묻기) |
+| `POST /api/v1/agent/stream` | AI 상담 진행 과정을 실시간 스트리밍 (text/event-stream) |
+| `GET /api/v1/agent/conversations/{id}` | 대화 기록 |
+| `DELETE /api/v1/agent/memory` | 장기 기억 지우기 |
+
+- 모든 엔드포인트가 `async`, 요청/응답은 Pydantic 모델(형식이 틀리면 422). 방문자 구분은 `X-Visitor-Id` 헤더.
+- 손님 화면과 같은 개인정보 기준 (주소는 시/도 + 시/군/구, 연락처 없음). 기본은 내 PC(127.0.0.1)에서만 접속됩니다.
+- 처음이면 `pip install fastapi uvicorn` (또는 `pip install -r requirements.txt`)
+
 ## 3. VS Code 에서 설치·실행하기
 
 ### 처음 한 번만 하는 준비

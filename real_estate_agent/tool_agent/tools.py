@@ -46,6 +46,8 @@ class AgentContext:
     customer: str = ""
     last_search: dict[str, Any] = field(default_factory=dict)  # 직전 검색 조건 ('그 중에 넓은 건?' 같은 후속 질문용)
     last_shown: list[str] = field(default_factory=list)  # 직전에 손님에게 보여준 매물 ('그 중' = 이 안에서 고름)
+    last_search_from_memory: bool = False  # last_search 가 장기 기억(지난 상담)에서 온 것인지
+    run_searches: list[dict] = field(default_factory=list)  # 이번 질문에서 새로 찾은 조건 (장기 기억에 저장)
 
 
 # ---------------------------------------------------------------------- 인자 검사
@@ -178,10 +180,13 @@ def condition_summary(req: CustomerRequirement) -> str:
 class ToolRegistry:
     """도구 목록 + 실행 (인자 검사, 오류를 관찰로 변환, 실행 시간 측정)."""
 
-    def __init__(self, agent, ctx: Optional[AgentContext] = None, lock: Optional[threading.RLock] = None):
+    def __init__(self, agent, ctx: Optional[AgentContext] = None, lock: Optional[threading.RLock] = None,
+                 memory=None, owner: str = ""):
         self.agent = agent
         self.ctx = ctx or AgentContext()
         self.lock = lock
+        self.memory = memory  # LongTermMemory (없으면 recall_memory 는 '기록 없음')
+        self.owner = owner
         self.tools: dict[str, Tool] = {}
         for tool in build_tools(self):
             self.tools[tool.name] = tool
@@ -258,12 +263,14 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                                          area_min_pyeong=area_min_pyeong, area_max_pyeong=area_max_pyeong,
                                          keywords=keywords).items() if v not in (None, "", [])}
         follow_up = use_previous_conditions and bool(ctx.last_search)
+        from_memory = follow_up and ctx.last_search_from_memory
         if follow_up:  # '그 중에 넓은 건?' -> 직전 검색 조건 그대로 + 새 정렬/개수 (새로 준 조건은 덧붙임)
             merged = dict(ctx.last_search)
             for k, v in given.items():
                 merged[k] = f"{merged.get('query', '')} {v}".strip() if k == "query" else v
             given = merged
         ctx.last_search = dict(given)
+        ctx.last_search_from_memory = False
         query, regions, jimok = given.get("query", ""), given.get("regions"), given.get("jimok")
         purpose = given.get("purpose", "")
         budget_min_manwon, budget_max_manwon = given.get("budget_min_manwon"), given.get("budget_max_manwon")
@@ -309,10 +316,13 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                 ctx.seen.append(s.listing.listing_id)
         if not pool:  # 새 검색이면 '보여준 매물' 갱신 (후속 질문은 같은 후보 안에서 계속 고르도록 유지)
             ctx.last_shown = [s.listing.listing_id for s in shown]
+        if not follow_up or from_memory:
+            ctx.run_searches.append({"조건": condition_summary(req), "args": dict(given)})
         order = {"score": "추천순", "price_asc": "가격 낮은 순", "price_desc": "가격 높은 순", "area_desc": "넓은 순",
                  "price_per_pyeong_asc": "평당가 낮은 순"}[sort]
         out: dict[str, Any] = {"이해한_조건": req.describe(), "조건_요약": condition_summary(req), "정렬": order,
                                "앞_조건_이어서": follow_up, "앞서_보여준_매물_수": len(pool) or None,
+                               "앞_조건_출처": "지난 상담" if from_memory else None,
                                "조건에_맞는_매물_수": len(ranked),
                                "매물": [brief(s.listing, s) for s in shown]}
         if not ranked:
@@ -375,6 +385,21 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             note = "관심 매물로 기록했습니다."
         return {"id": tool_id(l), "기록": action, "이유": reason or None, "안내": note}
 
+    def recall_memory() -> dict[str, Any]:
+        mem = reg.memory.load(reg.owner) if reg.memory and reg.owner else None
+        if not mem or not (mem["searches"] or mem["liked"] or mem["rejected"]):
+            return {"기억": "이 손님과의 지난 상담 기록이 없습니다."}
+        by_id = {l.listing_id: l for l in agent.listings() + list(getattr(agent, "hidden_listings", []))}
+        return {
+            "방문_횟수": mem.get("visits", 0), "마지막_방문": mem.get("last_seen"),
+            "최근_조건": [s["조건"] for s in reversed(mem["searches"][-5:])],
+            "관심_매물": [brief(by_id[i]) for i in list(mem["liked"])[-5:] if i in by_id],
+            "싫다고_한_매물": [{"이름": display_name(by_id[i]), "이유": (v or {}).get("reason") or None}
+                          for i, v in list(mem["rejected"].items())[-5:] if i in by_id],
+            "안내": "싫다고 한 매물은 검색에서 자동으로 빠집니다. 지난 조건으로 다시 찾으려면 "
+                  "search_listings 에 use_previous_conditions=true.",
+        }
+
     def list_regions(limit: int = 40) -> dict[str, Any]:
         counts: Counter = Counter()
         for l in agent.listings():
@@ -421,6 +446,9 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                                                "action": {"type": "string", "enum": ["like", "reject"]},
                                                "reason": {"type": "string", "description": "손님이 말한 이유"}},
               "required": ["listing_id", "action"]}, record_feedback),
+        Tool("recall_memory", "이 손님과의 지난 상담 기억(최근에 찾은 조건, 관심 매물, 싫다고 한 매물)을 불러옵니다. "
+             "손님이 '지난번', '전에 찾던' 처럼 예전 상담을 말하면 먼저 부르세요.",
+             {"type": "object", "properties": {}}, recall_memory),
         Tool("list_regions", "보유 매물이 있는 지역(시·군·읍·면)과 지역별 매물 수.",
              {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100}}},
              list_regions),

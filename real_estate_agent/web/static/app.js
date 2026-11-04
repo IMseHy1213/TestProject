@@ -42,6 +42,81 @@ document.querySelectorAll("form.upload-form").forEach(function (f) {
   });
 });
 
+// AI 상담: 답을 만드는 과정을 실시간으로 (Server-Sent Events 를 fetch 로 읽음). 실패하면 보통 방식으로 전송.
+var STEP_LABEL = { memory: "🧠 기억", fallback: "⚙️ 전환", guard: "🛡 안전장치", resume: "↩ 이어서", answer: "💬 답변" };
+document.querySelectorAll("form.js-stream").forEach(function (f) {
+  f.addEventListener("submit", function (ev) {
+    if (f.dataset.plain === "1" || !window.fetch || !window.TextDecoder) return;
+    ev.preventDefault();
+    var data = new FormData(f);
+    if (f.dataset.resume === "1") data.append("resume", "1");
+    var live = document.getElementById("live");
+    var steps = document.getElementById("live-steps");
+    var status = document.getElementById("live-status");
+    var q = data.get("q") || "(이어서 답하는 중)";
+    document.getElementById("live-q").textContent = q;
+    steps.innerHTML = "";
+    live.hidden = false;
+    live.scrollIntoView({ block: "end" });
+    f.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+    var running = null;
+
+    function show(ev) {
+      if (ev.type === "thinking") { status.textContent = "AI가 다음 행동을 고르는 중… (" + ev.n + "단계)"; }
+      if (ev.type === "tool_start") {
+        running = document.createElement("li");
+        running.className = "running";
+        running.textContent = "🔧 " + ev.tool + " 실행 중";
+        steps.appendChild(running);
+      }
+      if (ev.type === "step") {
+        var s = ev.step;
+        var li = (s.kind === "tool" && running) ? running : document.createElement("li");
+        li.className = s.ok === false ? "is-error" : "";
+        li.textContent = (s.kind === "tool" ? "🔧 " + s.tool + " → " : (STEP_LABEL[s.kind] || s.kind) + " · ") + s.summary +
+          (s.ms ? " (" + s.ms + "ms)" : "");
+        if (li !== running) steps.appendChild(li);
+        running = null;
+      }
+      if (ev.type === "done" || ev.type === "saved") { status.textContent = "답변 정리 완료 — 화면을 새로 그립니다…"; }
+      if (ev.type === "error") { status.textContent = ev.message; status.classList.remove("muted"); }
+    }
+
+    fetch(f.dataset.stream, { method: "POST", body: data, credentials: "same-origin",
+                              headers: { "X-CSRF-Token": data.get("csrf") || "" } })
+      .then(function (r) {
+        if (!r.ok || !r.body) throw new Error("stream");
+        var reader = r.body.getReader(), dec = new TextDecoder(), buf = "", failed = false;
+        function pump() {
+          return reader.read().then(function (res) {
+            if (res.done) {
+              if (!failed) {  // 같은 주소에 #last 만 붙이면 새로 그려지지 않으므로 주소를 바꿔 다시 불러옴
+                var parts = f.dataset.done.split("#");
+                window.location.href = parts[0] + (parts[0].indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now() +
+                  (parts[1] ? "#" + parts[1] : "");
+              }
+              else f.querySelectorAll("button").forEach(function (b) { b.disabled = false; });
+              return;
+            }
+            buf += dec.decode(res.value, { stream: true });
+            var parts = buf.split("\n\n");
+            buf = parts.pop();
+            parts.forEach(function (chunk) {
+              var line = chunk.split("\n").filter(function (l) { return l.indexOf("data: ") === 0; })[0];
+              if (!line) return;
+              var ev = JSON.parse(line.slice(6));
+              if (ev.type === "error") failed = true;
+              show(ev);
+            });
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .catch(function () { f.dataset.plain = "1"; f.submit(); });
+  });
+});
+
 // 버튼 두 번 눌림 방지
 document.querySelectorAll("form").forEach(function (f) {
   f.addEventListener("submit", function (ev) {
