@@ -73,7 +73,8 @@ class SearchResponse(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=300, examples=["음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘"])
     conversation_id: Optional[str] = Field(None, description="이어서 묻기: 앞 응답의 conversation_id")
-    mode: Literal["single", "multi"] = Field("single", description="single: Agent 하나 / multi: 총괄 → 검색·분석 Agent (v0.7)")
+    mode: Literal["single", "multi", "distributed"] = Field(
+        "single", description="single: Agent 하나 / multi: 총괄 → 검색·분석 Agent (v0.7) / distributed: 검색·분석 Agent 가 A2A 서버 (v0.8)")
 
 
 class StepOut(BaseModel):
@@ -301,7 +302,7 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             job = asyncio.ensure_future(asyncio.to_thread(
                 service.ask, owner, msg.get("conversation_id"), question,
                 lambda e: loop.call_soon_threadsafe(steps.put_nowait, e),
-                "multi" if msg.get("mode") == "multi" else "single"))
+                msg.get("mode") if msg.get("mode") in {"multi", "distributed"} else "single"))
             while not job.done() or not steps.empty():
                 try:
                     e = await asyncio.wait_for(steps.get(), 0.2)

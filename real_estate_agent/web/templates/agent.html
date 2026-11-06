@@ -81,7 +81,7 @@
       </ol>
       {% endif %}
       <details class="trace">
-        <summary>🔎 에이전트 실행 과정{% if t.mode == "multi" %} (멀티 Agent){% endif %} · 도구 {{ t.tool_calls }}회{% if t.tool_errors %} (오류 {{ t.tool_errors }}회 → 스스로 수정){% endif %} · {{ "%.1f"|format(t.total_ms / 1000) }}초 · {{ t.policy }}</summary>
+        <summary>🔎 에이전트 실행 과정{% if t.mode == "multi" %} (멀티 Agent){% elif t.mode == "distributed" %} (분산 A2A){% endif %} · 도구 {{ t.tool_calls }}회{% if t.tool_errors %} (오류 {{ t.tool_errors }}회 → 스스로 수정){% endif %} · {{ "%.1f"|format(t.total_ms / 1000) }}초 · {{ t.policy }}</summary>
         <ol>
           {% for s in t.steps %}
           <li class="step-{{ s.kind }}{% if s.ok == false %} is-error{% endif %}">
@@ -92,7 +92,7 @@
               <br><span class="obs">→ {{ s.summary }}</span> <span class="muted">{{ s.ms }}ms</span>
               {% if s.thought %}<br><small class="muted">생각: {{ s.thought }}</small>{% endif %}
             {% else %}
-              <strong>{{ {"answer": "답변", "fallback": "전환", "guard": "안전장치", "error": "오류"}[s.kind] }}</strong> {{ s.summary }}
+              <strong>{{ {"answer": "답변", "fallback": "전환", "guard": "안전장치", "error": "오류", "remote": "A2A", "memory": "기억", "resume": "이어서"}[s.kind] }}</strong> {{ s.summary }}
               {% if s.ms %}<span class="muted">{{ s.ms }}ms</span>{% endif %}
             {% endif %}
             <span class="policy">{{ s.policy }}</span>
@@ -123,6 +123,7 @@
     <span class="mode-label">상담 방식</span>
     <label><input type="radio" name="mode" value="single" {% if mode != "multi" %}checked{% endif %}> 상담원 1명</label>
     <label><input type="radio" name="mode" value="multi" {% if mode == "multi" %}checked{% endif %}> 상담팀 (총괄 → 검색·분석 Agent)</label>
+    <label><input type="radio" name="mode" value="distributed" {% if mode == "distributed" %}checked{% endif %}> 분산 상담팀 (A2A 서버)</label>
   </div>
 </form>
 {% if not turns %}

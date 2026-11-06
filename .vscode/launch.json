@@ -57,6 +57,42 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "🌐 A2A 분산 상담 시연 (a2a-demo: 서버 2개 띄우고 장애 대처까지)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["a2a-demo"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🌐 A2A 검색 Agent 서버 (:8101)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["a2a-serve", "--role", "search"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🌐 A2A 분석 Agent 서버 (:8102)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["a2a-serve", "--role", "analysis"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🌐 A2A 상담 Agent 서버 (:8100, 외부 Agent 용)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["a2a-serve", "--role", "consult"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "📊 단일 Agent vs 멀티 Agent 비교 (compare-agents)",
       "type": "debugpy",
       "request": "launch",
@@ -189,6 +225,14 @@
       "type": "promptString",
       "description": "찾는 땅 조건",
       "default": "음성군 채광이 좋은 2억원대 땅"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "🌐 분산 상담팀 한 번에: 검색·분석 Agent 서버 + 웹 서비스",
+      "configurations": ["🌐 A2A 검색 Agent 서버 (:8101)", "🌐 A2A 분석 Agent 서버 (:8102)",
+                         "🌐 웹 서비스 - 프로젝트 매물 폴더 (실제 운영)"],
+      "stopAll": true
     }
   ]
 }

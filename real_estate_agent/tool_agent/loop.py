@@ -584,6 +584,7 @@ class ToolAgent:
                              badges)
         if self.memory and self.owner:  # 장기 기억 갱신 (새로 찾은 조건, 관심/제외 매물)
             self.memory.update_after(self.owner, self.ctx, self.ctx.run_searches)
+        self.last_run_searches = list(self.ctx.run_searches)  # v0.8: 원격 Agent 가 장기 기억 갱신용으로 돌려줌
         self.ctx.run_searches = []
         self._log(result)
         history = trim_history(messages)

@@ -178,7 +178,7 @@ def print_sync(report: SyncReport, verbose: bool = False) -> None:
 
 
 def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6, use_mcp: bool = False,
-                   multi: bool = False) -> int:
+                   multi: bool = False, distributed: bool = False) -> int:
     """v0.2 Tool-use Agent 를 터미널에서: 도구 호출 과정(행동→관찰)과 답변을 출력."""
     from .tool_agent import ToolAgent
     from .tool_agent.memory import LongTermMemory
@@ -190,7 +190,14 @@ def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6, us
 
         source = McpToolSource(stdio_server_params(agent.settings)).start()
         print(f"MCP 서버에 연결: 도구 {[t.name for t in source.tools()]}")
-    if multi:  # v0.7: 총괄 Agent 가 검색 Agent · 분석 Agent 에게 나눠 맡김
+    if distributed:  # v0.8: 검색·분석 Agent 가 다른 서버(A2A). 꺼져 있으면 여기서 대신 처리
+        from .a2a.distributed import DistributedMultiAgent
+
+        runner = DistributedMultiAgent(agent, max_steps=max_steps, memory=LongTermMemory(agent.storage.conn),
+                                       owner="terminal")
+        for who, c in runner.clients.items():
+            print(f"  {who}: {c.url}")
+    elif multi:  # v0.7: 총괄 Agent 가 검색 Agent · 분석 Agent 에게 나눠 맡김
         from .tool_agent.multi import MultiAgent
 
         runner = MultiAgent(agent, max_steps=max_steps, memory=LongTermMemory(agent.storage.conn), owner="terminal")
@@ -219,6 +226,106 @@ def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6, us
         if not interactive:
             return 0
         question = ""
+
+
+def run_a2a_call(url: str, question: str, context_id: str = "") -> int:
+    """v0.8: 아무 A2A Agent 에게 질문 (Agent Card 확인 → message/stream 으로 진행 상황을 받으며 답 기다림)."""
+    import os
+
+    from .a2a import protocol as p
+    from .a2a.client import A2AClient
+
+    client = A2AClient(url, os.getenv("REA_A2A_TOKEN") or None)
+    try:
+        card = client.card()
+    except p.A2AUnavailable as e:
+        print(f"[오류] {e}\n  먼저 다른 터미널에서: python main.py a2a-serve --role consult")
+        return 1
+    print(f"Agent: {card.get('name')} (A2A {card.get('protocolVersion')}) · 기술: "
+          + ", ".join(s.get("name", "") for s in card.get("skills", [])))
+    try:
+        for ev in client.stream(question, context_id=context_id or None):
+            kind = ev.get("kind")
+            if kind == "task":
+                print(f"  task {ev['id'][:8]} 접수 (context {ev['contextId'][:8]})")
+            elif kind == "status-update":
+                msg = p.get_text(((ev.get("status") or {}).get("message") or {}).get("parts"))
+                if not ev.get("final") and msg:
+                    print("  · " + msg)
+                elif ev.get("final"):
+                    print(f"  상태: {ev['status']['state']}")
+            elif kind == "artifact-update":
+                print("\n" + p.get_text(ev["artifact"]["parts"]))
+    except (p.A2AError, p.A2AUnavailable) as e:
+        print(f"[오류] {e}")
+        return 1
+    return 0
+
+
+def run_a2a_demo(settings) -> int:
+    """v0.8 발표용: 검색·분석 Agent 서버를 따로 띄우고(프로세스 2개) 분산 상담 → 분석 서버를 끄고 장애 대처까지 보여줌."""
+    import subprocess
+    import time as _time
+
+    from .a2a.client import A2AClient
+    from .a2a.distributed import DistributedMultiAgent
+    from .config import PROJECT_ROOT
+    from .tool_agent import AgentContext
+    from .tool_agent.multi import ANALYST, SEARCHER
+
+    ports = {SEARCHER: ("search", 8111), ANALYST: ("analysis", 8112)}
+    procs = {}
+    print("① 검색 Agent · 분석 Agent 를 각각 다른 프로세스(서버)로 시작")
+    for who, (role, port) in ports.items():
+        procs[who] = subprocess.Popen(
+            [sys.executable, str(PROJECT_ROOT / "main.py"), "--data-dir", str(settings.data_dir), "--db",
+             str(settings.db_path), "--no-llm", "a2a-serve", "--role", role, "--port", str(port)],
+            cwd=str(PROJECT_ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    clients = {who: A2AClient(f"http://127.0.0.1:{port}/", timeout=30) for who, (_, port) in ports.items()}
+    try:
+        for who, c in clients.items():
+            for _ in range(80):
+                try:
+                    card = c.card()
+                    print(f"   {who}: {c.url}  → Agent Card '{card['name']}', 기술 {[s['id'] for s in card['skills']]}")
+                    break
+                except Exception:  # noqa: BLE001 - 서버가 뜰 때까지 기다림
+                    _time.sleep(0.25)
+            else:
+                print(f"[오류] {who} 서버가 시작되지 않았습니다")
+                return 1
+        agent = RealEstateAgent(settings)
+        agent.sync()
+        runner = DistributedMultiAgent(agent, clients=clients, ctx=AgentContext(), log_dir="")
+        history: list = []
+
+        def ask(q: str) -> None:
+            nonlocal history
+            r, history = runner.run(q, history)
+            print(f"\n손님> {q}")
+            for s in r.steps:
+                if s.kind in {"tool", "remote", "fallback"} and s.summary and not s.summary.startswith("AI("):
+                    print(f"   [{s.agent}] " + (f"{s.tool} → " if s.tool else f"{s.kind}: ") + s.summary[:110])
+            print("답변> " + r.answer.replace("\n", "\n      "))
+
+        print("\n② 분산 상담 (총괄 Agent 는 이 프로세스, 검색·분석은 A2A 로 다른 서버에)")
+        for q in ("음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘", "그 중에 넓은 건?",
+                  "음성군 말고 다른 지역에도 있어?"):
+            ask(q)
+        print("\n③ 분석 Agent 서버를 끔 (장애 상황)")
+        procs[ANALYST].terminate()
+        procs[ANALYST].wait(5)
+        ask("여주 공장 부지 2개 비교해줘")
+        print("\n→ 분석 서버가 없어도 이 서버의 분석 Agent 가 대신 처리해 상담이 이어졌습니다 (trace 의 '전환').")
+        return 0
+    finally:
+        for proc in procs.values():
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
 
 def run_compare_agents(agent: RealEstateAgent) -> int:
@@ -261,6 +368,17 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--max-steps", type=int, default=6)
     ag.add_argument("--mcp", action="store_true", help="도구를 MCP 서버(python main.py mcp)에 연결해서 사용")
     ag.add_argument("--multi", action="store_true", help="v0.7 멀티 Agent (총괄 → 검색 Agent · 분석 Agent)")
+    ag.add_argument("--distributed", action="store_true",
+                    help="v0.8 분산 상담팀: 검색·분석 Agent 를 A2A 서버로 (a2a-serve 로 먼저 띄우기)")
+    a2 = sub.add_parser("a2a-serve", help="v0.8 A2A Agent 서버 (search :8101 / analysis :8102 / consult :8100)")
+    a2.add_argument("--role", choices=["search", "analysis", "consult"], default="consult")
+    a2.add_argument("--host", default="127.0.0.1")
+    a2.add_argument("--port", type=int, default=0, help="기본: search 8101, analysis 8102, consult 8100")
+    ac = sub.add_parser("a2a-call", help="v0.8 A2A Agent 에게 질문 (Agent Card 확인 + 스트리밍)")
+    ac.add_argument("question")
+    ac.add_argument("--url", default="http://127.0.0.1:8100/")
+    ac.add_argument("--context", default="", help="이어서 묻기: 같은 contextId")
+    sub.add_parser("a2a-demo", help="v0.8 발표용: 검색·분석 Agent 서버를 띄워 분산 상담 + 장애 대처 시연")
     sub.add_parser("compare-agents", help="v0.7 단일 Agent vs 멀티 Agent 비교 (결과는 logs 폴더에 저장)")
 
     mc = sub.add_parser("mcp", help="MCP 서버 (Claude Desktop 등에서 매물 도구 사용). 기본 stdio")
@@ -325,6 +443,17 @@ def main(argv: Optional[list[str]] = None) -> int:
         from .mcp_server import main as mcp_main
 
         return mcp_main(settings, http=args.http, host=args.host, port=args.port)
+    if args.command == "a2a-call":
+        return run_a2a_call(args.url, args.question, args.context)
+    if args.command == "a2a-serve":
+        if args.no_llm:
+            settings.llm_providers = ["rule"]
+        from .a2a.server import main as a2a_main
+
+        return a2a_main(args.role, settings, host=args.host, port=args.port or None)
+    if args.command == "a2a-demo":
+        settings.llm_providers = ["rule"] if args.no_llm else settings.llm_providers
+        return run_a2a_demo(settings)
     if args.command == "set-admin-password":
         from .admin_auth import set_password_cli
 
@@ -359,7 +488,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(agent.llm.status())
     if cmd == "agent":
         agent.sync()
-        return run_tool_agent(agent, args.question, args.max_steps, use_mcp=args.mcp, multi=args.multi)
+        return run_tool_agent(agent, args.question, args.max_steps, use_mcp=args.mcp, multi=args.multi,
+                              distributed=args.distributed)
     if cmd == "compare-agents":
         agent.sync()
         return run_compare_agents(agent)

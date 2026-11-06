@@ -242,6 +242,48 @@ AI 상담 화면 아래 **상담 방식**에서 **상담팀**을 고르면, 총�
   → 결과는 같고, 멀티 Agent 는 일을 나누고 보고를 모으는 만큼 판단(LLM 호출)이 약 2배. 대신 Agent 마다 도구가 3~4개라 지시문이 짧고
   역할별로 따로 고치고 시험하기 쉽습니다. (GPT/Claude 로 돌리면 비용·지연 차이를 그대로 측정할 수 있습니다)
 
+### v0.8 Distributed / A2A — `a2a/`
+
+v0.7 상담팀의 검색 Agent · 분석 Agent 를 **각자 다른 서버(프로세스, 다른 컴퓨터도 가능)** 로 띄우고,
+총괄 Agent 가 **A2A(Agent2Agent) 프로토콜**로 일을 맡깁니다.
+
+```
+[웹 서버 :8000  총괄 Agent] ──A2A (JSON-RPC over HTTP)──▶ [검색 Agent 서버 :8101]   python main.py a2a-serve --role search
+        │  대화 상태를 메시지에 실어 보내고 바뀐 상태를 돌려받음  ▶ [분석 Agent 서버 :8102]   python main.py a2a-serve --role analysis
+        └─ 장기 기억(손님 개인 기록)은 웹 서버에서만 읽고 씀
+외부 Agent ──A2A──▶ [상담 Agent 서버 :8100]  python main.py a2a-serve --role consult   (다른 회사의 Agent 가 우리에게 물을 때)
+```
+
+| A2A 구성 | 우리 구현 |
+|---|---|
+| Agent Card | `GET /.well-known/agent-card.json` — 이름·설명·기술(skills)·주소·스트리밍 지원·인증 방식 |
+| 일 보내기 | `message/send` → Task (`submitted → working → completed/failed`) + 산출물(글자 답 + JSON 데이터) |
+| 진행 상황 | `message/stream` (SSE) — 도구를 쓸 때마다 `status-update`, 끝에 `artifact-update`, `final` |
+| 조회·취소 | `tasks/get`, `tasks/cancel` (끝난 Task 는 취소 불가 오류) |
+| 버전 | **A2A 0.3 과 1.0 형식을 모두 받음** (`SendMessage`, `ROLE_USER`, `TASK_STATE_COMPLETED` …). 공식 a2a-sdk 1.x 클라이언트로 확인 |
+
+**분산 시스템으로서 신경 쓴 점**
+- **상태 전달**: Agent 끼리 메모리를 함께 쓸 수 없으므로 총괄이 대화 상태(직전 조건·보여준 매물·관심/제외)를 메시지에 실어 보냄
+  → 전문 Agent 서버는 상태를 들고 있지 않아도 됨 (재시작·여러 대로 늘리기 쉬움). 이어서 묻기 결과는 v0.7 과 같습니다.
+- **장애 대처**: 원격 Agent 가 꺼져 있거나 응답이 없으면 웹 서버 안의 같은 Agent 가 대신 처리 (실행 과정에 '전환' 표시).
+  **서킷 브레이커**: 한 번 닿지 않은 서버는 30초 동안 바로 대신 처리 → 손님마다 시간 초과를 기다리지 않음.
+- **재시도와 멱등성**: 연결 실패·서버 오류는 한 번 더 보내고, 같은 messageId 는 서버가 두 번 실행하지 않고 같은 Task 를 돌려줌.
+- **시간 측정**: 원격 호출마다 `왕복 = 원격 처리 + 통신` 시간을 실행 과정에 기록 (같은 PC 에서 통신 약 2~6ms).
+- **보안·개인정보**: 기본은 내 PC(127.0.0.1)만. `.env` 에 `REA_A2A_TOKEN=…` 을 정하면 `Authorization: Bearer` 토큰이 있어야 일을 받음.
+  주고받는 매물 id 는 매물번호 괄호 속 이름을 뺀 공개용 id, 주소는 시/도+시/군/구까지, 연락처 없음, 대화 id 는 바꾼 값만 보냄.
+
+| 실행 | 설명 |
+|---|---|
+| `python main.py a2a-demo` | **발표용**: 검색·분석 Agent 서버를 띄워 분산 상담 3개 → 분석 서버를 끄고 대신 처리까지 시연 |
+| `python main.py a2a-serve --role search` (`analysis`, `consult`) | A2A Agent 서버 하나 실행 |
+| 웹 AI 상담 → 상담 방식 **분산 상담팀 (A2A 서버)** | 위 두 서버를 띄워 두면 원격으로, 없으면 웹 서버가 대신 처리 |
+| `python main.py agent --distributed` | 터미널에서 분산 상담 |
+| `python main.py a2a-call "음성군 창고 땅" --url http://127.0.0.1:8100/` | 아무 A2A Agent 에게 질문 (Agent Card 확인 + 진행 상황 스트리밍) |
+| API `"mode": "distributed"` | JSON API 에서도 같은 방식 |
+
+- 다른 컴퓨터에 서버를 둘 때: `a2a-serve --host 0.0.0.0` + `.env` 에 `REA_A2A_TOKEN`, 웹 서버 쪽 `.env` 에
+  `REA_A2A_SEARCH_URL=http://그컴퓨터:8101/`, `REA_A2A_ANALYSIS_URL=…:8102/`, `REA_A2A_TOKEN=…` (같은 값).
+
 ### v0.9 실시간 · 이벤트 기반 Agent (`realtime/`) — 11주차
 
 ```

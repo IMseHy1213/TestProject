@@ -18,7 +18,7 @@ from .memory import ConversationStore, LongTermMemory, is_incomplete
 from .tools import AgentContext
 
 MAX_TURNS = 20  # 화면에 남길 질문/답변 수
-MODES = ("single", "multi")  # 단일 Agent / v0.7 멀티 Agent (총괄 → 검색·분석)
+MODES = ("single", "multi", "distributed")  # 단일 / v0.7 멀티 Agent / v0.8 분산(A2A) 멀티 Agent
 _CID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
@@ -68,7 +68,7 @@ class AgentService:
         except Exception:
             self._interrupted(conv, question, runner)
             raise
-        return conv["cid"], self._finish(conv, result, history)
+        return conv["cid"], self._finish(conv, result, history, getattr(runner, "mode", "single"))
 
     def resume(self, owner: str, cid: str, on_event: Optional[Callable[[dict], None]] = None,
                mode: str = "single") -> tuple[str, dict]:
@@ -86,7 +86,7 @@ class AgentService:
         except Exception:
             self._interrupted(conv, question, runner)
             raise
-        return conv["cid"], self._finish(conv, result, history)
+        return conv["cid"], self._finish(conv, result, history, getattr(runner, "mode", "single"))
 
     def reset(self, cid: Optional[str]) -> None:
         """새 상담 시작 (대화만 지움, 장기 기억은 유지)."""
@@ -153,6 +153,12 @@ class AgentService:
         def checkpoint(messages: list[dict], ctx: AgentContext) -> None:
             self.store.save(conv["cid"], conv["owner"], messages, ctx, conv["turns"], "running", question)
 
+        if mode == "distributed":  # 검색·분석 Agent 가 다른 서버에 있음 (꺼져 있으면 여기서 대신 처리)
+            from ..a2a.distributed import DistributedMultiAgent, context_id_for
+
+            return DistributedMultiAgent(self.agent, ctx=conv["ctx"], lock=self.lock, memory=self.memory,
+                                         owner=conv["owner"], checkpoint=checkpoint, on_event=on_event,
+                                         context_id=context_id_for(conv["cid"]))
         if mode == "multi":
             from .multi import MultiAgent
 
@@ -166,12 +172,12 @@ class AgentService:
         history = latest["history"] if latest else conv["history"]
         self.store.save(conv["cid"], conv["owner"], history, runner.ctx, conv["turns"], "interrupted", question)
 
-    def _finish(self, conv: dict, result, history: list[dict]) -> dict:
+    def _finish(self, conv: dict, result, history: list[dict], mode: str = "single") -> dict:
         turn = {"question": result.question, "answer": result.answer,
                 "steps": [step_dict(s) for s in result.steps], "listing_ids": result.listing_ids,
                 "badges": result.badges, "policy": result.policy, "total_ms": result.total_ms,
                 "tool_calls": result.tool_calls, "tool_errors": result.tool_errors,
-                "mode": "multi" if any(s.agent for s in result.steps) else "single",
+                "mode": mode,
                 "at": datetime.now().isoformat(timespec="seconds")}
         conv["turns"] = (conv["turns"] + [turn])[-MAX_TURNS:]
         self.store.save(conv["cid"], conv["owner"], history, conv["ctx"], conv["turns"], "idle", None)

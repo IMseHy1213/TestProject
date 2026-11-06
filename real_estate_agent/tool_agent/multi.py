@@ -115,7 +115,10 @@ class MultiAgent:
 
     def delegate(self, who: str, task: str, listing_ids: Optional[list[str]] = None) -> dict[str, Any]:
         """전문 Agent 하나에게 일을 맡기고 보고를 받음 (총괄 Agent 의 도구)."""
-        worker = self.searcher if who == SEARCHER else self.analyst
+        return self._run_local(who, self._target(task, listing_ids))
+
+    def _target(self, task: str, listing_ids: Optional[list[str]]) -> str:
+        """총괄이 고른 대상 매물을 확인해 대화 상태에 표시하고, 맡길 일에 덧붙임."""
         if listing_ids:
             real = [self.supervisor.registry.resolve(i) for i in listing_ids]
             if not all(real):
@@ -123,9 +126,17 @@ class MultiAgent:
                 raise ToolError(f"없는 매물 id: {', '.join(bad)}. 검색 Agent 가 돌려준 id 를 쓰세요.")
             self.ctx.last_shown = list(dict.fromkeys(real))  # 분석 대상 = 총괄이 고른 매물
             task = f"{task}\n(대상 매물 id: {', '.join(listing_ids)})"
+        return task
+
+    def _run_local(self, who: str, task: str) -> dict[str, Any]:
+        worker = self.searcher if who == SEARCHER else self.analyst
         result, messages = worker.run(task, self.history)
         start = max(i for i, m in enumerate(messages) if m["role"] == "user")
         obs = [(m["name"], _loads(m["content"])) for m in messages[start:] if m["role"] == "tool"]
+        return self._record(who, result, obs)
+
+    def _record(self, who: str, result: AgentResult, obs: list[tuple[str, dict]]) -> dict[str, Any]:
+        """전문 Agent 의 결과를 기록하고 총괄 Agent 에게 줄 보고로 정리 (v0.8 원격 Agent 도 같은 모양)."""
         self.done.extend(obs)
         self.reports[who] = result
         listings = [self.agent.find_listing(i) for i in result.listing_ids]
@@ -150,12 +161,12 @@ class MultiAgent:
             for lid, values in (r.badges if r else {}).items():
                 badges.setdefault(lid, [])
                 badges[lid] += [v for v in values if v not in badges[lid]]
-        steps, fallback_shown = [], False
-        for s in self.trace:  # 'AI 를 쓸 수 없어 규칙으로' 안내는 한 번만
+        steps, notes = [], set()
+        for s in self.trace:  # 같은 '전환' 안내(AI 를 쓸 수 없어 규칙으로 …)는 한 번만
             if s.kind == "fallback" and s.n == 0:
-                if fallback_shown:
+                if s.summary in notes:
                     continue
-                fallback_shown = True
+                notes.add(s.summary)
             steps.append(s)
         result = AgentResult(sup.question, sup.answer, steps, ids[:6], sup.policy, sup.stopped,
                              sup.total_ms, sup.run_id, badges)

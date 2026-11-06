@@ -43,7 +43,7 @@ document.querySelectorAll("form.upload-form").forEach(function (f) {
 });
 
 // AI 상담: 답을 만드는 과정을 실시간으로 (Server-Sent Events 를 fetch 로 읽음). 실패하면 보통 방식으로 전송.
-var STEP_LABEL = { memory: "🧠 기억", fallback: "⚙️ 전환", guard: "🛡 안전장치", resume: "↩ 이어서", answer: "💬 답변" };
+var STEP_LABEL = { memory: "🧠 기억", fallback: "⚙️ 전환", guard: "🛡 안전장치", resume: "↩ 이어서", answer: "💬 답변", remote: "🌐 A2A" };
 document.querySelectorAll("form.js-stream").forEach(function (f) {
   f.addEventListener("submit", function (ev) {
     if (f.dataset.plain === "1" || !window.fetch || !window.TextDecoder) return;
