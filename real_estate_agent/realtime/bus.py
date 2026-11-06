@@ -58,6 +58,7 @@ class Event:
 
 class EventBus:
     def __init__(self, conn: sqlite3.Connection, lock: Optional[threading.RLock] = None):
+        self.display = None  # 다시 보내는 예전 이벤트를 화면용으로 거르기 (지금 없는 매물 알림은 빼기 등)
         self.conn = conn
         self.lock = lock or threading.RLock()
         self._subs: list[tuple[queue.Queue, Optional[str], bool]] = []  # (큐, owner, 전체 보기)
@@ -111,6 +112,11 @@ class EventBus:
             return len(self._subs)
 
     # ------------------------------------------------------------------ 기록 조회
+    def _shown(self, events: list[Event]) -> list[Event]:
+        if self.display is None:
+            return events
+        return [e for e in (self.display(ev) for ev in events) if e is not None]
+
     def since(self, last_id: int, owner: Optional[str] = None, see_all: bool = False,
               limit: int = 100) -> list[Event]:
         """놓친 이벤트 (다시 연결했을 때)."""
@@ -123,7 +129,7 @@ class EventBus:
         args.append(limit)
         with self.lock:
             rows = self.conn.execute(sql, args).fetchall()
-        return [Event(r["id"], r["topic"], json.loads(r["payload"]), r["owner"], r["created"]) for r in rows]
+        return self._shown([Event(r["id"], r["topic"], json.loads(r["payload"]), r["owner"], r["created"]) for r in rows])
 
     def recent(self, limit: int = 20, owner: Optional[str] = None, see_all: bool = False,
                topics: Optional[tuple[str, ...]] = None) -> list[Event]:
@@ -139,7 +145,7 @@ class EventBus:
         args.append(limit)
         with self.lock:
             rows = self.conn.execute(sql, args).fetchall()
-        return [Event(r["id"], r["topic"], json.loads(r["payload"]), r["owner"], r["created"]) for r in rows]
+        return self._shown([Event(r["id"], r["topic"], json.loads(r["payload"]), r["owner"], r["created"]) for r in rows])
 
     def last_id(self) -> int:
         with self.lock:

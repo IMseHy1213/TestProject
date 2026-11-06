@@ -56,6 +56,7 @@
     <p class="bubble q">{{ t.question }}</p>
     <div class="bubble a">
       <p class="answer">{{ t.answer }}</p>
+      {% if t.stale %}<p class="meta small-note">이 답변의 일부 매물은 지금 매물 목록에 없어 가렸습니다.</p>{% endif %}
       {% if t.cards %}
       <ol class="mini-cards">
         {% for c in t.cards %}

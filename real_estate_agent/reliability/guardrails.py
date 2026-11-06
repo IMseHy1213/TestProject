@@ -160,6 +160,11 @@ def check_answer(answer: str, evidence: Evidence, agent=None) -> list[str]:
                 unseen.append(key)  # 확인하지 않은 매물을 말함 (도구 결과에 없는 매물번호)
         if unseen:
             problems.append("확인하지 않은 매물: " + ", ".join(sorted(unseen)[:3]))
+        from ..listing_numbers import known_numbers, unknown_in
+
+        missing = unknown_in(a, known_numbers(agent))
+        if missing:  # 매물 장부에 아예 없는 번호 (AI 가 지어냄)
+            problems.append("없는 매물번호: " + ", ".join(sorted(set(missing))[:3]))
     bad_prices = sorted(p for p in prices_in(a) if p not in prices)
     if bad_prices:
         from ..models import format_price

@@ -146,7 +146,7 @@ class RulePolicy:
         have = {t["name"] for t in tools} if tools else None  # 멀티 Agent: 이 Agent 가 가진 도구만 씀
         if have is not None and "search_listings" not in have:
             return self._analyze(question, done, names, have)
-        named = _named_listing(self.ctx_agent, question)  # v1.3: 'T-1004에 공장 지을 수 있어?' → 그 매물을 바로 확인
+        named = _named_listing(self.ctx_agent, question)  # v1.3: '(매물번호)에 공장 지을 수 있어?' → 그 매물을 바로 확인
         if (named and _purpose_in(question) and _asks_buildable(question) and "check_land_use" not in names
                 and (have is None or "check_land_use" in have)):
             return _call("check_land_use", {"listing_id": named, "purpose": _purpose_in(question)})

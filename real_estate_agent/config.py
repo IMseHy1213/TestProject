@@ -100,9 +100,24 @@ class Settings:
     watch_interval_sec: int = field(default_factory=lambda: int(os.getenv("REA_WATCH_INTERVAL", "600")))
 
 
+SAMPLE_DATA_DIR = PROJECT_ROOT / "sample_data"  # 연습용 가짜 매물 (실제 사무실 매물 아님)
+SAMPLE_DB_PATH = PROJECT_ROOT / "data" / "sample.db"
+
+
+def is_sample_data(data_dir) -> bool:
+    try:
+        return Path(data_dir).resolve().is_relative_to(SAMPLE_DATA_DIR.resolve())
+    except (OSError, ValueError):
+        return False
+
+
 def get_settings(**overrides) -> Settings:
     s = Settings()
     for k, v in overrides.items():
         if v is not None:
             setattr(s, k, Path(v) if k in {"data_dir", "db_path", "log_dir"} else v)
+    # 연습용 샘플 매물로 실행하면 실제 운영 DB(data/agent.db)와 섞이지 않게 따로 저장
+    # (예전에는 같은 DB 를 써서, 샘플 매물번호가 실제 상담 기록·알림에 남아 보였음)
+    if overrides.get("db_path") is None and not os.getenv("REA_DB_PATH") and is_sample_data(s.data_dir):
+        s.db_path = SAMPLE_DB_PATH
     return s

@@ -412,3 +412,4 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 .bar-cell { width: 40%; }
 .model-desc { white-space: pre-wrap; font-size: .84rem; background: var(--bg); padding: 10px; border-radius: 8px; }
 @media (max-width: 600px) { .mode-help dl { grid-template-columns: 1fr; } }
+.sample-banner { margin-top: 12px; }

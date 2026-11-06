@@ -149,6 +149,9 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     lock = lock or threading.RLock()
     service = AgentService(agent, lock)
     hub = RealtimeHub(agent, lock)
+    from ..web.app import shown_event
+
+    hub.bus.display = lambda ev: shown_event(agent, ev)  # 예전(샘플·지운) 매물 알림은 다시 보내지 않음
 
     @asynccontextmanager
     async def lifespan(_app):  # 서버가 켜질 때 매물 폴더 감시·매칭 워커 시작, 꺼질 때 정지
@@ -287,8 +290,12 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         conv = await asyncio.to_thread(service.store.load, conversation_id)
         if conv is None or conv["owner"] != owner:
             raise HTTPException(404, "대화를 찾을 수 없습니다 (X-Visitor-Id 확인)")
+        from ..listing_numbers import hide_in, known_numbers
+
+        known = known_numbers(agent)  # 지금 없는 매물번호는 가림
+        turns = [hide_in({k: t.get(k) for k in TurnOut.model_fields}, known) for t in conv["turns"]]
         return ConversationOut(conversation_id=conv["cid"], status=conv["status"], pending_question=conv["pending"],
-                               turns=[TurnOut(**{k: t.get(k) for k in TurnOut.model_fields}) for t in conv["turns"]])
+                               turns=[TurnOut(**t) for t in turns])
 
     # ------------------------------------------------------------------ v0.9 실시간
     @app.get("/api/v1/realtime/stats", tags=["실시간"])

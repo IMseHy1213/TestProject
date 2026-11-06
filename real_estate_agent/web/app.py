@@ -39,7 +39,7 @@ from ..listing_editor import HIDDEN, STATUSES as LISTING_STATUSES, WEB_FOLDER
 from ..listing_editor import describe_changes, form_defaults, parse_form, web_file
 from ..models import JIMOK_TYPES
 from ..requirement_parser import ZONING_TYPES
-from ..config import PROJECT_ROOT, Settings, get_settings
+from ..config import PROJECT_ROOT, Settings, get_settings, is_sample_data
 from ..models import format_price
 from ..recommender import EXHAUSTED_MESSAGE, NOT_FOUND_MESSAGE, RecommendationSession
 
@@ -120,6 +120,18 @@ def safe_filename(name: str) -> str:
     return name or "upload"
 
 
+def shown_event(agent, ev):
+    """화면·알림으로 다시 보낼 이벤트: 지금 없는 매물에 대한 손님 알림은 빼고, 나머지는 없는 매물번호만 가림."""
+    from dataclasses import replace
+
+    from ..listing_numbers import event_listing_exists, hide_in, known_numbers
+
+    known = known_numbers(agent)
+    if ev.topic == "alert.match" and not event_listing_exists(ev.payload, known):
+        return None
+    return replace(ev, payload=hide_in(ev.payload, known))
+
+
 def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAgent] = None) -> Flask:
     settings = settings or get_settings()
     agent = agent or RealEstateAgent(settings)
@@ -163,7 +175,9 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
 
     realtime = RealtimeHub(agent, lock)
     realtime.on_sync = lambda: do_sync(detect=False)
+    realtime.bus.display = lambda ev: shown_event(agent, ev)  # 예전(샘플·지운) 매물 이벤트는 다시 보내지 않음
     app.config["REALTIME"] = realtime
+    app.config["SAMPLE_MODE"] = is_sample_data(settings.data_dir)
 
     app.config["AGENT"] = agent  # 테스트용
 
@@ -253,7 +267,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         return {"csrf_token": csrf_token, "is_admin": is_admin(), "format_price": format_price,
                 "upload_folders": lambda: destination_folders(settings.data_dir),
                 "upload_accept": ",".join(sorted(SUPPORTED)), "default_upload_folder": DEFAULT_UPLOAD_FOLDER,
-                "office": OFFICE_INFO}
+                "office": OFFICE_INFO, "sample_mode": app.config.get("SAMPLE_MODE", False)}
 
     def current() -> Optional[tuple[RecommendationSession, str]]:
         return store.get(session.get("sid"))
@@ -409,6 +423,15 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                 "use_tag": l.use_tag, "contact": l.owner_contact if admin else ""}
 
     def render_turns(turns: list[dict], admin: bool, ctx=None) -> list[dict]:
+        """(지금 매물 목록에 없는 매물번호는 '(지금 없는 매물)' 로 가려서 보여줌)"""
+        from ..listing_numbers import hide_in, hide_unknown, known_numbers
+
+        known = known_numbers(agent)
+        turns = [{**t, "answer": hide_unknown(t.get("answer", ""), known), "steps": hide_in(t.get("steps", []), known),
+                  "stale": hide_unknown(t.get("answer", ""), known) != t.get("answer", "")} for t in turns]
+        return _render_turns(turns, admin, ctx)
+
+    def _render_turns(turns: list[dict], admin: bool, ctx=None) -> list[dict]:
         """저장된 질문/답변 -> 화면용 (매물 카드는 지금 매물 정보로 그때그때 만듦: 수정 내용·관리자 여부 반영).
         v1.2: 손님이 ♡/✕ 한 매물은 카드에 표시."""
         out = []

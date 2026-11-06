@@ -26,6 +26,7 @@
     </nav>
   </header>
   <main class="wrap">
+    {% if sample_mode %}<p class="notice warn sample-banner" role="status">연습용 <strong>샘플 매물</strong>로 실행 중입니다 — 여기 나오는 매물과 매물번호는 실제 사무실 매물이 아닙니다. 실제 운영은 "웹 서비스 - 프로젝트 매물 폴더"로 실행하세요.</p>{% endif %}
     {% block content %}{% endblock %}
   </main>
   <footer class="foot">

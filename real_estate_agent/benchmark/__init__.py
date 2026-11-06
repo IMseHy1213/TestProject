@@ -389,4 +389,8 @@ def markdown(report: dict, load: Optional[list[dict]] = None, load_ai: Optional[
                       f"{r['errors']} | {r['limit']} |" for r in rows_]
     if regressions is not None:
         lines += ["", "## 기준선 비교", ""] + ([f"- ❌ {r}" for r in regressions] or ["- ✅ 기준선보다 나빠진 점 없음"])
-    return "\n".join(lines)
+    lines += ["", "※ 벤치마크는 연습용 샘플 매물(sample_data)로 돌기 때문에, 보고서에서는 매물번호를 '(샘플 매물)' 로 가립니다 "
+                  "(실제 사무실 매물번호가 아님). 원래 번호는 logs 의 .json 에 있습니다."]
+    from ..listing_numbers import NUMBER
+
+    return NUMBER.sub("(샘플 매물)", "\n".join(lines))
