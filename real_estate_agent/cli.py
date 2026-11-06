@@ -459,6 +459,49 @@ def run_benchmark_cli(agent: RealEstateAgent, configs: str = "", load: bool = Tr
     return 0
 
 
+def run_clean_practice(settings, yes: bool = False, dry_run: bool = False) -> int:
+    """실제 운영 DB 에 섞인 연습용 샘플 매물 기록만 지움 (지우기 전 백업)."""
+    import sqlite3
+
+    from .config import is_sample_data
+    from .practice_cleanup import clean, scan, summary
+
+    if is_sample_data(settings.data_dir):
+        print("연습용(샘플) 저장 파일은 정리할 필요가 없습니다. 실제 운영 DB 를 정리하려면 --data-dir 없이 실행하세요.")
+        return 1
+    db = Path(settings.db_path)
+    if not db.exists():
+        print(f"실제 운영 DB 가 아직 없습니다: {db}")
+        return 0
+    conn = sqlite3.connect(str(db), timeout=10)
+    try:
+        plan = scan(conn)
+        rows = summary(plan)
+        print(f"실제 운영 DB: {db}")
+        if not any(n for _, n in rows):
+            print("✅ 연습 기록이 없습니다. 정리할 것이 없습니다.")
+            return 0
+        print("\n지울 연습 기록 (연습용 샘플 매물이 나오는 기록만):")
+        for label, n in rows:
+            if n:
+                print(f"  · {label}: {n}")
+        if plan["protected"]:
+            print(f"  (실제 매물에도 있는 번호 {len(plan['protected'])}개는 건드리지 않음)")
+        print("지우지 않는 것: 실제 매물, 실제 매물이 나온 상담, 손님 목록, 관리자 비밀번호, 설정")
+        if dry_run:
+            print("\n(--dry-run: 아무것도 지우지 않았습니다)")
+            return 0
+        if not yes and input("\n지울까요? 지우기 전에 DB 전체를 data/backup/ 에 복사해 둡니다. (y/N) ").strip().lower() not in {"y", "yes", "ㅛ"}:
+            print("취소했습니다.")
+            return 0
+        result = clean(conn, db)
+        print(f"\n🧹 정리했습니다. 백업: {result['backup']}")
+        print("되돌리려면 프로그램을 끄고 백업 파일을 data/agent.db 로 복사하세요.")
+        return 0
+    finally:
+        conn.close()
+
+
 def run_compare_agents(agent: RealEstateAgent) -> int:
     """v0.7: 같은 대화를 단일 Agent / 멀티 Agent 로 돌려 비교표를 출력하고 logs 에 저장."""
     from datetime import datetime
@@ -512,6 +555,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("a2a-demo", help="v0.8 발표용: 검색·분석 Agent 서버를 띄워 분산 상담 + 장애 대처 시연")
     tr = sub.add_parser("trace", help="v1.1 질문 하나의 처리 과정을 시간 막대로 (기본: 가장 최근)")
     tr.add_argument("trace_id", nargs="?", default="last")
+    cp = sub.add_parser("clean-practice", help="실제 운영 DB 에 섞인 연습용 샘플 매물 기록만 지움 (지우기 전 백업)")
+    cp.add_argument("--yes", action="store_true", help="묻지 않고 바로 정리")
+    cp.add_argument("--dry-run", action="store_true", help="무엇을 지울지만 보여줌")
     bm = sub.add_parser("benchmark", help="v1.3 벤치마크 (문제지로 품질·속도·처리량 측정, 기준선 비교)")
     bm.add_argument("--configs", default="", help="쉼표로: single,multi,distributed,mcp (기본: 모두)")
     bm.add_argument("--no-load", action="store_true", help="동시 처리량 측정은 건너뜀")
@@ -591,6 +637,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         from .mcp_server import main as mcp_main
 
         return mcp_main(settings, http=args.http, host=args.host, port=args.port)
+    if args.command == "clean-practice":
+        return run_clean_practice(settings, args.yes, args.dry_run)
     if args.command == "a2a-call":
         return run_a2a_call(args.url, args.question, args.context)
     if args.command == "a2a-serve":

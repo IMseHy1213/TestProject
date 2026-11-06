@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}연습 기록 정리{% endblock %}
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin') }}">← 관리자</a></p>
+<h1>🧹 연습 기록 정리</h1>
+<p class="meta">예전에 '샘플 데이터로 연습'이 실제 운영과 같은 저장 파일을 써서, <strong>연습용 가짜 매물</strong>(sample_data 폴더)과
+  그 매물로 나눈 상담·알림 기록이 섞였을 수 있습니다. 그 기록만 골라 지웁니다. 지금은 연습용 저장 파일이 <code>data/sample.db</code> 로 따로 있습니다.</p>
+<section class="panel">
+  {% if sample_mode %}
+    <p class="notice">지금은 연습용(샘플) 저장 파일로 실행 중이라 정리할 필요가 없습니다.</p>
+  {% elif nothing %}
+    <p class="notice">✅ 연습 기록이 없습니다. 정리할 것이 없습니다.</p>
+  {% else %}
+    <h2>지울 기록</h2>
+    <table class="obs-table"><tbody>
+      {% for label, n in rows if n %}<tr><td>{{ label }}</td><td><strong>{{ n }}</strong></td></tr>{% endfor %}
+    </tbody></table>
+    {% if protected %}<p class="meta">실제 매물에도 있는 번호 {{ protected }}개는 건드리지 않습니다.</p>{% endif %}
+    <p class="meta">지우지 않는 것: 실제 매물(매물 폴더), 실제 매물이 나온 상담, 손님 목록, 관리자 비밀번호, 설정.<br>
+      연습과 실제 질문이 섞인 대화는 연습 질문만 빼고 남깁니다. 지우기 전에 DB 전체를 <code>data/backup/</code> 에 복사해 둡니다.</p>
+    <form method="post" action="{{ url_for('admin_clean_practice_run') }}">
+      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+      <button class="btn primary">백업하고 연습 기록 지우기</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

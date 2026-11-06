@@ -536,6 +536,36 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             session["agent_msg"] = str(e)
         return redirect(url_for("agent_page") + "#last")
 
+    @app.get("/admin/clean-practice")
+    def admin_clean_practice():
+        """연습 기록 정리: 지울 것 미리 보기."""
+        from ..practice_cleanup import scan, summary
+
+        if not is_admin():
+            return login_page()
+        plan = scan(agent.storage.conn, lock)
+        return render_template("clean_practice.html", rows=summary(plan), protected=len(plan["protected"]),
+                               sample_mode=app.config.get("SAMPLE_MODE", False),
+                               nothing=not any(n for _, n in summary(plan)))
+
+    @app.post("/admin/clean-practice")
+    def admin_clean_practice_run():
+        """연습 기록 정리 실행 (지우기 전 DB 백업)."""
+        from ..practice_cleanup import clean
+
+        if not is_admin():
+            abort(403)
+        if app.config.get("SAMPLE_MODE"):
+            session["admin_msg"] = "연습용(샘플) 저장 파일은 정리할 필요가 없습니다."
+            return redirect(url_for("admin"))
+        result = clean(agent.storage.conn, Path(settings.db_path), lock)
+        with lock:
+            do_sync(detect=False)  # 매물 목록 다시 읽기 (지운 샘플 매물이 남아 보이지 않게)
+        n = sum(c for _, c in result["removed"])
+        session["admin_msg"] = (f"🧹 연습 기록 {n}건을 정리했습니다. 백업: {result['backup']}" if n
+                                else "정리할 연습 기록이 없습니다.")
+        return redirect(url_for("admin"))
+
     @app.get("/admin/online")
     def admin_online():
         """v1.2 온라인 학습·평가: 만족도, '자동' 방식의 실험 현황, 배운 취향, 아쉬웠던 답."""

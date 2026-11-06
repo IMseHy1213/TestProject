@@ -3,11 +3,11 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "🌐 웹 서비스 - 샘플 데이터로 연습 (브라우저가 열림)",
+      "name": "🌐 웹 서비스 - 샘플 데이터로 연습 (연습용 저장 파일 data/sample.db)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
-      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "web"],
+      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "--db", "${workspaceFolder}/data/sample.db", "web"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     },
@@ -138,6 +138,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "🧹 연습 기록 정리 (실제 운영 DB 에 섞인 샘플 매물 기록만 지움)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["clean-practice"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "📊 단일 Agent vs 멀티 Agent 비교 (compare-agents)",
       "type": "debugpy",
       "request": "launch",
@@ -196,7 +205,7 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
-      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "llm-check"],
+      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "--db", "${workspaceFolder}/data/sample.db", "llm-check"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     },
@@ -205,7 +214,7 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
-      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "chat"],
+      "args": ["--data-dir", "${workspaceFolder}/sample_data/토지", "--db", "${workspaceFolder}/data/sample.db", "chat"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     },
