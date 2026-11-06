@@ -288,7 +288,25 @@ class ToolRegistry:
         return [t.schema() for t in self.tools.values()]
 
     def run(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        """도구 실행 -> {'ok': bool, 'result' 또는 'error', 'ms'}"""
+        """도구 실행 -> {'ok': bool, 'result' 또는 'error', 'ms'}. v1.1: 도구 호출 하나 = span 하나 + 지표."""
+        from ..observability.metrics import TOOL_CALLS, TOOL_LATENCY
+        from ..observability.tracing import TRACER
+
+        with TRACER.span(f"tool.{name}", tool=name, remote=self.external or None,
+                         args=json.dumps(args or {}, ensure_ascii=False, default=str)[:200]) as sp:
+            out = self._run(name, args)
+            sp.set(ok=out["ok"])
+            if out["ok"]:
+                r = out.get("result")
+                if isinstance(r, dict) and isinstance(r.get("매물"), list):
+                    sp.set(results=len(r["매물"]))
+            else:
+                sp.error(out.get("error", ""))
+        TOOL_CALLS.inc(tool=name if name in self.tools else "unknown", ok=str(out["ok"]).lower())
+        TOOL_LATENCY.observe(out["ms"] / 1000, tool=name if name in self.tools else "unknown")
+        return out
+
+    def _run(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         started = time.perf_counter()
         tool = self.tools.get(name)
         if tool is None:

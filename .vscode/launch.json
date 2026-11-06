@@ -102,6 +102,24 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "📈 관측 요약 (observe: 질문 수·응답 시간·AI 토큰·도구)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["observe"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "⏱ 가장 최근 질문의 추적 (trace)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["trace"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "📊 단일 Agent vs 멀티 Agent 비교 (compare-agents)",
       "type": "debugpy",
       "request": "launch",

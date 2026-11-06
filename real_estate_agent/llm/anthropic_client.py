@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from .base import LLMClient, LLMUnavailable, ToolCall, ToolTurn
+from .base import LLMClient, LLMUnavailable, ToolCall, ToolTurn, record_usage
 
 log = logging.getLogger(__name__)
 
@@ -55,12 +55,14 @@ class AnthropicLLM(LLMClient):
     def _create(self, **kwargs):
         a = self._anthropic
         try:
-            return self.client.messages.create(
+            resp = self.client.messages.create(
                 model=self.model,
                 # 요구사항 추출/설명 생성은 단순 작업이라 effort 를 낮춰 비용·지연을 줄임
                 output_config={"effort": "low"},
                 **kwargs,
             )
+            record_usage(resp)  # v1.1: 토큰 수
+            return resp
         except a.AuthenticationError as e:
             raise LLMUnavailable("Anthropic API 키가 올바르지 않습니다", permanent=True) from e
         except a.NotFoundError as e:

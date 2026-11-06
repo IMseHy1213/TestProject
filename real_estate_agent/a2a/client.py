@@ -59,7 +59,12 @@ class A2AClient:
             cls._open_until.clear()
 
     def _headers(self) -> dict[str, str]:
+        from ..observability.tracing import traceparent
+
         h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+        tp = traceparent()
+        if tp:
+            h["traceparent"] = tp  # W3C Trace Context: 상대 서버가 같은 trace 로 이어서 기록
         if self.token:
             h["Authorization"] = f"Bearer {self.token}"
         return h
@@ -81,6 +86,32 @@ class A2AClient:
         raise p.A2AUnavailable(f"Agent Card 를 받지 못했습니다: {self.url} ({last or 'not found'})")
 
     def call(self, method: str, params: dict[str, Any]) -> Any:
+        """v1.1: 원격 호출 하나 = span 하나 (traceparent 헤더로 상대 서버의 span 이 이 아래에 이어짐) + 지표."""
+        from ..observability.metrics import A2A_CALLS, A2A_LATENCY
+        from ..observability.tracing import TRACER
+
+        started = time.perf_counter()
+        outcome = "error"
+        with TRACER.span("a2a.client", method=method, url=self.url) as sp:
+            try:
+                result = self._call(method, params)
+                outcome = "ok"
+                if isinstance(result, dict):
+                    sp.set(task_id=result.get("id"), state=(result.get("status") or {}).get("state"))
+                return result
+            except p.A2AUnavailable as e:
+                outcome = "unavailable"
+                sp.error(str(e))
+                raise
+            except p.A2AError as e:
+                outcome = "rejected"
+                sp.error(e.message)
+                raise
+            finally:
+                A2A_CALLS.inc(url=self.url, method=method, outcome=outcome)
+                A2A_LATENCY.observe(time.perf_counter() - started, url=self.url)
+
+    def _call(self, method: str, params: dict[str, Any]) -> Any:
         import httpx
 
         if not self.available():
@@ -97,6 +128,10 @@ class A2AClient:
             except httpx.TimeoutException:
                 last = f"시간 초과 ({self.timeout:.0f}초)"
                 break  # 오래 걸리는 상대에게 또 보내면 손님이 두 배로 기다림
+            except httpx.ConnectError as e:
+                # v1.1 관측으로 찾은 개선: 연결 거부 = 서버가 꺼져 있음 → 0.2초 쉬고 다시 보내 봐야 소용없음
+                last = f"{type(e).__name__}: {e}"
+                break
             except httpx.HTTPError as e:
                 last = f"{type(e).__name__}: {e}"
                 continue

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}추적{% endblock %}
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin_observe') }}">← 관측</a></p>
+<h1>⏱ 추적 <small class="muted"><code>{{ trace_id }}</code></small></h1>
+<p class="meta">전체 {{ "{:,.1f}".format(total_ms) }}ms · span {{ rows|length }}개 · 서버 {{ services|join(", ") }}</p>
+<section class="panel">
+  <ol class="waterfall">
+  {% for r in rows %}
+    <li class="wf-row depth-{{ [r.depth, 8]|min }}{% if r.status == 'error' %} is-error{% endif %} kind-{{ r.name.split('.')[0] }}">
+      <div class="wf-label">
+        <span class="wf-name">{{ r.name }}</span>
+        {% set who = r.attrs.agent or r.attrs.role or r.attrs.provider %}{% if who %}<span class="wf-who">{{ who }}</span>{% endif %}
+        <span class="wf-svc">{{ r.service }}</span>
+      </div>
+      <svg class="wf-bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect x="{{ r.offset_pct }}" y="1" width="{{ r.width_pct }}" height="8" rx="1"></rect></svg>
+      <div class="wf-ms">{{ "{:,.1f}".format(r.dur_ms) }}ms</div>
+      <details class="wf-detail"><summary>자세히</summary>
+        <dl>
+          <dt>시작</dt><dd>+{{ r.offset_ms }}ms</dd>
+          {% for k, v in r.attrs.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}
+          {% if r.status_msg %}<dt>오류</dt><dd>{{ r.status_msg }}</dd>{% endif %}
+          {% for e in r.events %}<dt>사건</dt><dd>{{ e.name }}</dd>{% endfor %}
+        </dl>
+      </details>
+    </li>
+  {% endfor %}
+  </ol>
+  <p class="meta small-note">agent.run = Agent 하나가 질문을 처리 · llm.* = GPT/Claude 호출 · tool.* = 도구 · a2a.client → a2a.serve = 다른 서버(A2A)로 넘어간 부분 (traceparent 헤더로 이어짐)</p>
+</section>
+{% endblock %}

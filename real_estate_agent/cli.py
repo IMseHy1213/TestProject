@@ -263,7 +263,7 @@ def run_a2a_call(url: str, question: str, context_id: str = "") -> int:
     return 0
 
 
-def run_a2a_demo(settings) -> int:
+def run_a2a_demo(settings) -> int:  # noqa: C901
     """v0.8 발표용: 검색·분석 Agent 서버를 따로 띄우고(프로세스 2개) 분산 상담 → 분석 서버를 끄고 장애 대처까지 보여줌."""
     import subprocess
     import time as _time
@@ -297,12 +297,17 @@ def run_a2a_demo(settings) -> int:
                 return 1
         agent = RealEstateAgent(settings)
         agent.sync()
+        from . import observability
+
+        observability.setup(settings, "demo-supervisor", json_logs=False)  # v1.1: 세 프로세스의 span 이 같은 DB 로
         runner = DistributedMultiAgent(agent, clients=clients, ctx=AgentContext(), log_dir="")
         history: list = []
+        traces: list[str] = []
 
         def ask(q: str) -> None:
             nonlocal history
             r, history = runner.run(q, history)
+            traces.append(r.trace_id)
             print(f"\n손님> {q}")
             for s in r.steps:
                 if s.kind in {"tool", "remote", "fallback"} and s.summary and not s.summary.startswith("AI("):
@@ -318,6 +323,13 @@ def run_a2a_demo(settings) -> int:
         procs[ANALYST].wait(5)
         ask("여주 공장 부지 2개 비교해줘")
         print("\n→ 분석 서버가 없어도 이 서버의 분석 Agent 가 대신 처리해 상담이 이어졌습니다 (trace 의 '전환').")
+        print("\n④ v1.1 분산 추적: 첫 질문이 세 프로세스(총괄·검색·분석)를 거친 과정 (traceparent 로 한 trace 로 이어짐)\n")
+        observability.TRACER.flush(3)
+        _time.sleep(1.2)  # 검색 서버가 자기 span 을 저장할 시간
+        from .observability.dashboard import text_waterfall, trace_tree
+
+        print(text_waterfall(trace_tree(agent.storage.conn, None, traces[0])))
+        print(f"\n   python main.py trace {traces[0]}  (또는 관리자 화면 → 📈 관측)")
         return 0
     finally:
         for proc in procs.values():
@@ -346,6 +358,48 @@ def run_reliability_test(agent: RealEstateAgent, seeds: int = 3, deadline: float
     (out / f"reliability_{stamp}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n저장: {out / f'reliability_{stamp}.md'}")
     return 0 if all(r["success"] == 100.0 for r in report["rows"] if r["guards"]) else 1
+
+
+def run_trace(agent: RealEstateAgent, trace_id: str = "") -> int:
+    """v1.1: trace 하나를 터미널 폭포 그림으로 (비우면 가장 최근 질문)."""
+    from .observability.dashboard import recent, text_waterfall, trace_tree
+
+    conn = agent.storage.conn
+    if not trace_id or trace_id == "last":
+        last = recent(conn, None, 1)
+        if not last:
+            print("아직 기록된 질문이 없습니다. 먼저 python main.py agent \"질문\" 또는 웹 AI 상담을 써 보세요.")
+            return 1
+        trace_id = last[0]["trace_id"]
+    rows = trace_tree(conn, None, trace_id)
+    if not rows:
+        print(f"trace {trace_id} 를 찾을 수 없습니다.")
+        return 1
+    root = rows[0]
+    print(f"trace {trace_id}  ·  {root['attrs'].get('question', '')}  ·  "
+          f"{max(r['offset_ms'] + r['dur_ms'] for r in rows):,.1f}ms  ·  span {len(rows)}개\n")
+    print(text_waterfall(rows))
+    return 0
+
+
+def run_observe(agent: RealEstateAgent, hours: float = 24) -> int:
+    """v1.1: 최근 상담 지표 요약 (관리자 '관측' 화면과 같은 숫자)."""
+    from .observability.dashboard import recent, summary
+
+    s = summary(agent.storage.conn, None, hours)
+    print(f"최근 {hours:g}시간: 질문 {s['questions']}건 · 성공률 {s['success_rate']}% · 응답 p50 {s['p50_ms']}ms / "
+          f"p95 {s['p95_ms']}ms · AI 비율 {s['ai_share']}% · 토큰 {s['tokens']:,} · 도구 오류율 {s['tool_error_rate']}%")
+    if s["reliability"]:
+        print("안전장치: " + ", ".join(f"{k} {v}" for k, v in s["reliability"].items()))
+    for t in s["tools"]:
+        print(f"  tool {t['tool']:<18} {t['calls']:>4}회  오류 {t['errors']}  p50 {t['p50_ms']}ms  p95 {t['p95_ms']}ms")
+    for r in s["llm"]:
+        print(f"  AI   {r['provider']:<18} {r['calls']:>4}회  실패 {r['errors']}  p95 {r['p95_ms']}ms  "
+              f"토큰 {r['input_tokens']:,}/{r['output_tokens']:,}")
+    print("\n최근 질문:")
+    for t in recent(agent.storage.conn, None, 10):
+        print(f"  {t['time']}  {t['ms']:>8,.0f}ms  {t['mode']:<11} {t['policy']:<9} {t['trace_id'][:12]}  {t['question']}")
+    return 0
 
 
 def run_compare_agents(agent: RealEstateAgent) -> int:
@@ -399,6 +453,10 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--url", default="http://127.0.0.1:8100/")
     ac.add_argument("--context", default="", help="이어서 묻기: 같은 contextId")
     sub.add_parser("a2a-demo", help="v0.8 발표용: 검색·분석 Agent 서버를 띄워 분산 상담 + 장애 대처 시연")
+    tr = sub.add_parser("trace", help="v1.1 질문 하나의 처리 과정을 시간 막대로 (기본: 가장 최근)")
+    tr.add_argument("trace_id", nargs="?", default="last")
+    ob = sub.add_parser("observe", help="v1.1 최근 상담 지표 요약 (질문 수·성공률·응답 시간·AI 토큰·도구)")
+    ob.add_argument("--hours", type=float, default=24)
     sub.add_parser("compare-agents", help="v0.7 단일 Agent vs 멀티 Agent 비교 (결과는 logs 폴더에 저장)")
     rt = sub.add_parser("reliability-test", help="v1.0 장애 주입 시험 (AI 오류·지연·환각·도구 장애 등에서 성공률)")
     rt.add_argument("--seeds", type=int, default=3, help="같은 대화를 몇 번 돌릴지")
@@ -510,6 +568,12 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         return llm_check(agent)
     print(agent.llm.status())
+    if cmd in {"trace", "observe"}:
+        return run_trace(agent, args.trace_id) if cmd == "trace" else run_observe(agent, args.hours)
+    if cmd in {"agent", "compare-agents", "reliability-test"}:  # v1.1: 터미널 상담도 추적 기록 (관측 화면에서 보임)
+        from . import observability
+
+        observability.setup(settings, "cli", json_logs=cmd == "agent")
     if cmd == "agent":
         agent.sync()
         return run_tool_agent(agent, args.question, args.max_steps, use_mcp=args.mcp, multi=args.multi,

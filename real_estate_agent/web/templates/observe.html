@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}관측{% endblock %}
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin') }}">← 관리자</a></p>
+<h1>📈 관측 <small class="muted">v1.1</small></h1>
+<p class="meta">AI 상담이 어떻게 처리되고 있는지: 최근
+  {% for h, label in [(1, "1시간"), (24, "24시간"), (168, "7일")] %}<a class="chip-link{% if hours == h %} on{% endif %}" href="{{ url_for('admin_observe', hours=h) }}">{{ label }}</a>{% endfor %}
+  · 기록된 span {{ s.spans }}개{% if otlp %} · OTLP 전송 중 ({{ otlp }}){% endif %}</p>
+
+<section class="kpis">
+  <div class="kpi"><span>질문 수</span><strong>{{ s.questions }}</strong></div>
+  <div class="kpi"><span>성공률</span><strong>{{ s.success_rate if s.success_rate is not none else "-" }}{% if s.success_rate is not none %}%{% endif %}</strong></div>
+  <div class="kpi"><span>응답 시간 p50 / p95</span><strong>{{ s.p50_ms if s.p50_ms is not none else "-" }} / {{ s.p95_ms if s.p95_ms is not none else "-" }}<small>ms</small></strong></div>
+  <div class="kpi"><span>AI 가 답한 비율</span><strong>{{ s.ai_share if s.ai_share is not none else "-" }}{% if s.ai_share is not none %}%{% endif %}</strong><small>나머지는 규칙 기반</small></div>
+  <div class="kpi"><span>AI 토큰</span><strong>{{ "{:,}".format(s.tokens) }}</strong>{% if s.cost_usd %}<small>추정 ${{ s.cost_usd }}</small>{% else %}<small>비용: REA_LLM_PRICES 설정 시</small>{% endif %}</div>
+  <div class="kpi"><span>도구 오류율</span><strong>{{ s.tool_error_rate if s.tool_error_rate is not none else "-" }}{% if s.tool_error_rate is not none %}%{% endif %}</strong></div>
+</section>
+
+<section class="grid">
+  <div class="panel">
+    <h2>상담 방식</h2>
+    <ul class="plain">{% for m, n in s.modes.items() %}<li>{{ {"single": "상담원 1명", "multi": "상담팀", "distributed": "분산 상담팀 (A2A)", "a2a": "외부 Agent (A2A)"}.get(m, m) }} <strong>{{ n }}</strong></li>{% else %}<li class="muted">아직 기록이 없습니다</li>{% endfor %}</ul>
+    <h2>안전장치 (v1.0)</h2>
+    <ul class="plain">{% for k, n in s.reliability.items() %}<li>{{ {"guard_fixes": "답변 검증 실패 → 다시 작성", "llm_fallbacks": "AI 오류 → 규칙 기반", "deadline_hits": "시간 예산 초과", "injections_blocked": "지시 바꾸기 시도 무시", "tool_retries": "도구 일시 오류 재시도", "remote_fallbacks": "원격 Agent 대신 처리", "rate_limited": "너무 잦은 질문", "overloaded": "상담 몰림"}.get(k, k) }} <strong>{{ n }}</strong></li>{% else %}<li class="muted">작동한 적 없음</li>{% endfor %}</ul>
+  </div>
+  <div class="panel">
+    <h2>AI 호출</h2>
+    <table class="obs-table"><thead><tr><th>AI</th><th>호출</th><th>실패</th><th>p50</th><th>p95</th><th>토큰 (읽기/쓰기)</th></tr></thead><tbody>
+    {% for r in s.llm %}<tr><td>{{ r.provider }}</td><td>{{ r.calls }}</td><td>{{ r.errors }}</td><td>{{ r.p50_ms }}ms</td><td>{{ r.p95_ms }}ms</td><td>{{ "{:,}".format(r.input_tokens) }} / {{ "{:,}".format(r.output_tokens) }}</td></tr>
+    {% else %}<tr><td colspan="6" class="muted">AI 호출 기록 없음 (규칙 기반으로만 동작)</td></tr>{% endfor %}
+    </tbody></table>
+    <h2>도구</h2>
+    <table class="obs-table"><thead><tr><th>도구</th><th>호출</th><th>오류</th><th>p50</th><th>p95</th></tr></thead><tbody>
+    {% for r in s.tools %}<tr><td><code>{{ r.tool }}</code></td><td>{{ r.calls }}</td><td>{{ r.errors }}</td><td>{{ r.p50_ms }}ms</td><td>{{ r.p95_ms }}ms</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">기록 없음</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>최근 질문 (trace)
+    <small><a class="chip-link{% if not show %} on{% endif %}" href="{{ url_for('admin_observe', hours=hours) }}">전체</a><a class="chip-link{% if show == 'slow' %} on{% endif %}" href="{{ url_for('admin_observe', hours=hours, show='slow') }}">느린 것 (2초+)</a><a class="chip-link{% if show == 'errors' %} on{% endif %}" href="{{ url_for('admin_observe', hours=hours, show='errors') }}">오류</a></small></h2>
+  <table class="obs-table traces"><thead><tr><th>시각</th><th>질문</th><th>방식</th><th>답한 쪽</th><th>시간</th><th>span</th><th></th></tr></thead><tbody>
+  {% for t in traces %}
+    <tr class="{% if t.status == 'error' %}is-error{% endif %}">
+      <td>{{ t.time }}</td>
+      <td><a href="{{ url_for('admin_trace', trace_id=t.trace_id) }}">{{ t.question or t.name }}</a></td>
+      <td>{{ t.mode }}</td><td>{{ t.policy }}{% if t.guards %} 🛡{{ t.guards }}{% endif %}</td>
+      <td>{{ "{:,.0f}".format(t.ms) }}ms</td><td>{{ t.spans }}{% if t.services > 1 %} · 서버 {{ t.services }}{% endif %}</td>
+      <td>{% if t.status == 'error' %}✘{% endif %}</td>
+    </tr>
+  {% else %}<tr><td colspan="7" class="muted">아직 기록된 질문이 없습니다. AI 상담에서 질문해 보세요.</td></tr>{% endfor %}
+  </tbody></table>
+  <p class="meta small-note">질문은 전화번호·지번을 가리고 100자까지만 기록 · 7일 지나면 삭제 · 지표(Prometheus): <a href="{{ url_for('metrics') }}">/metrics</a> · JSON 로그: logs/app.jsonl</p>
+</section>
+{% endblock %}

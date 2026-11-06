@@ -14,7 +14,7 @@ import time
 from collections import deque
 from typing import Any, Callable
 
-from .base import LLMClient, LLMUnavailable
+from .base import LLMClient, LLMUnavailable, take_usage
 
 log = logging.getLogger(__name__)
 
@@ -153,23 +153,29 @@ class LLMRouter:
         for c in candidates:
             if c not in self.clients or self._cooling(c):  # 일시적 오류 후 쉬는 중 -> 기다리지 않고 다음으로
                 continue
+            err: LLMUnavailable | None = None
             self._recent_calls.setdefault(c.name, deque()).append(time.time())
-            try:
-                result = getattr(c, fn_name)(*args, **kwargs)
-                self.last_used = c.name
-                self.usage[c.name] = self.usage.get(c.name, 0) + 1
-                self.cooldown_until.pop(c.name, None)
-                return result
-            except LLMUnavailable as e:
-                log.warning("%s 실패: %s -> 다음 LLM 시도", c.name, e)
-                last_err = e
-                self.last_error[c.name] = str(e)
-                self.last_kind[c.name] = getattr(e, "kind", "")
-                if e.permanent:  # 키 오류 등: 이번 실행 동안 사용 안 함
-                    self.clients.remove(c)
-                    self.unavailable[c.name] = str(e)
-                elif e.retry_after:  # 시간 초과 등: 잠깐만 쉬고 자동으로 다시 사용
-                    self.cooldown_until[c.name] = time.time() + e.retry_after
+            with _llm_span(fn_name, c, optional) as obs:
+                try:
+                    result = getattr(c, fn_name)(*args, **kwargs)
+                    obs.ok()
+                    self.last_used = c.name
+                    self.usage[c.name] = self.usage.get(c.name, 0) + 1
+                    self.cooldown_until.pop(c.name, None)
+                    return result
+                except LLMUnavailable as e:
+                    obs.failed(e)
+                    err = e
+            e = err  # 실패한 경우만 여기까지 옴 (성공하면 위에서 반환)
+            log.warning("%s 실패: %s -> 다음 LLM 시도", c.name, e)
+            last_err = e
+            self.last_error[c.name] = str(e)
+            self.last_kind[c.name] = getattr(e, "kind", "")
+            if e.permanent:  # 키 오류 등: 이번 실행 동안 사용 안 함
+                self.clients.remove(c)
+                self.unavailable[c.name] = str(e)
+            elif e.retry_after:  # 시간 초과 등: 잠깐만 쉬고 자동으로 다시 사용
+                self.cooldown_until[c.name] = time.time() + e.retry_after
         self.last_used = "rule"
         raise LLMUnavailable(str(last_err) if last_err else "사용 가능한 LLM 없음")
 
@@ -198,3 +204,50 @@ def _make_openai(model: str) -> LLMClient:
     from .openai_client import OpenAILLM
 
     return OpenAILLM(model)
+
+
+class _llm_span:
+    """v1.1: AI 호출 하나 = span 하나 + 지표 (제공자·모델·결과·응답 시간·토큰·추정 비용)."""
+
+    def __init__(self, fn_name: str, client: LLMClient, optional: bool):
+        from ..observability import tracing
+
+        self.fn_name, self.client, self.optional = fn_name, client, optional
+        self._cm = tracing.TRACER.span(f"llm.{fn_name}", provider=client.name, model=getattr(client, "model", ""),
+                                       optional=optional or None)
+        self.status = "error"
+
+    def __enter__(self):
+        take_usage()  # 앞 호출에서 남은 값 비우기
+        self.started = time.perf_counter()
+        self.span = self._cm.__enter__()
+        return self
+
+    def ok(self) -> None:
+        self.status = "ok"
+
+    def failed(self, e: LLMUnavailable) -> None:
+        self.status = getattr(e, "kind", "") or ("permanent" if e.permanent else "error")
+        self.span.error(str(e))
+
+    def __exit__(self, *exc):
+        from ..observability import cost_usd
+        from ..observability.metrics import LLM_CALLS, LLM_COST, LLM_LATENCY, LLM_TOKENS
+
+        seconds = time.perf_counter() - self.started
+        provider = self.client.name
+        inp, out = take_usage()
+        if exc[0] is not None and self.status == "ok":
+            self.status = "error"
+        self.span.set(status_kind=self.status, input_tokens=inp or None, output_tokens=out or None)
+        cost = cost_usd(provider, inp, out) if (inp or out) else None
+        if cost is not None:
+            self.span.set(cost_usd=cost)
+            LLM_COST.inc(cost, provider=provider)
+        LLM_CALLS.inc(provider=provider, status=self.status)
+        LLM_LATENCY.observe(seconds, provider=provider)
+        if inp:
+            LLM_TOKENS.inc(inp, provider=provider, type="input")
+        if out:
+            LLM_TOKENS.inc(out, provider=provider, type="output")
+        return self._cm.__exit__(*exc)

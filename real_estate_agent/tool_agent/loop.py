@@ -101,6 +101,7 @@ class AgentResult:
     total_ms: float
     run_id: str = ""
     badges: dict[str, list[str]] = field(default_factory=dict)  # 매물별 표시 (최저가, 창고 가능 …)
+    trace_id: str = ""        # v1.1: 이 질문의 추적 id (관리자 '관측' 화면에서 단계별 시간 확인)
 
     @property
     def tool_calls(self) -> int:
@@ -464,6 +465,7 @@ class ToolAgent:
         self.deadline = deadline if deadline is not None else DEADLINE
         self.guards = guards
         self.final_answerer = True  # 손님에게 직접 답하는 Agent (멀티 Agent 의 전문 Agent 는 False)
+        self.mode_label = "single"  # v1.1 지표용: single / multi / distributed
         # 답변 검증에 쓸 추가 근거 (멀티 Agent 총괄: 전문 Agent 들이 받은 도구 결과), 검증 실패 시 다시 쓰는 방법
         self.evidence: Callable[[], list] = lambda: []
         self.fallback_answer: Callable[[str, list], str] = rule_answer
@@ -474,7 +476,33 @@ class ToolAgent:
         return self.registry.ctx
 
     def run(self, question: str, history: Optional[list[dict]] = None) -> tuple[AgentResult, list[dict]]:
-        """질문 하나 처리. (결과, 갱신된 대화 기록) 반환."""
+        """질문 하나 처리. (결과, 갱신된 대화 기록) 반환. v1.1: 질문 하나 = span 하나 (안의 AI·도구 호출은 하위 span)."""
+        return self._traced(lambda: self._run(question, history), question)
+
+    def _traced(self, fn: Callable[[], tuple], question: str) -> tuple[AgentResult, list[dict]]:
+        from ..observability.metrics import AGENT_LATENCY, AGENT_REQUESTS
+        from ..observability.tracing import TRACER, redact
+
+        started = time.perf_counter()
+        with TRACER.span("agent.run", agent=self.name or "상담 Agent", mode=self.mode_label,
+                         question=redact(question)) as sp:
+            try:
+                result, history = fn()
+            except Exception:
+                if self.final_answerer:
+                    AGENT_REQUESTS.inc(mode=self.mode_label, policy="error", stopped="exception")
+                raise
+            result.trace_id = sp.trace_id
+            sp.set(policy=result.policy, stopped=result.stopped, steps=len(result.steps),
+                   tool_calls=result.tool_calls, tool_errors=result.tool_errors,
+                   listings=len(result.listing_ids), answer_chars=len(result.answer),
+                   guards=sum(1 for s in result.steps if s.kind == "guard") or None)
+        if self.final_answerer:
+            AGENT_REQUESTS.inc(mode=self.mode_label, policy=result.policy, stopped=result.stopped)
+            AGENT_LATENCY.observe(time.perf_counter() - started, mode=self.mode_label)
+        return result, history
+
+    def _run(self, question: str, history: Optional[list[dict]] = None) -> tuple[AgentResult, list[dict]]:
         from ..reliability.guardrails import REFUSAL, check_input
         from ..reliability.stats import STATS
 
@@ -503,6 +531,10 @@ class ToolAgent:
 
     def resume(self, history: list[dict]) -> tuple[AgentResult, list[dict]]:
         """답을 만들다 끊긴 대화를 마지막 체크포인트부터 이어서 진행."""
+        question = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+        return self._traced(lambda: self._resume(history), question)
+
+    def _resume(self, history: list[dict]) -> tuple[AgentResult, list[dict]]:
         from .memory import repair_for_resume
 
         messages = repair_for_resume(history)
@@ -661,7 +693,9 @@ class ToolAgent:
 
         if budget <= 0.05:
             raise LLMUnavailable("시간 예산을 다 씀")
-        future = _llm_pool().submit(fn, *args)
+        from ..observability.tracing import copy_context
+
+        future = _llm_pool().submit(copy_context().run, fn, *args)  # 같은 trace 를 이어 감
         try:
             return future.result(timeout=budget)
         except FutureTimeout:

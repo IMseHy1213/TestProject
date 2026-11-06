@@ -84,6 +84,7 @@ class MultiAgent:
         self.supervisor = ToolAgent(agent, lock=None, tool_source=_DelegateTools(self), system_prompt=SUPERVISOR_PROMPT,
                                     name=SUPERVISOR, checkpoint=checkpoint, on_event=on_event,
                                     rule_policy=RuleSupervisor(self), max_steps=max_steps, **common)
+        self.supervisor.mode_label = self.mode  # v1.1 지표: multi / distributed
         # v1.0: 총괄이 쓴 답은 전문 Agent 들이 받은 도구 결과로 검증하고, 실패하면 그 결과로 다시 작성
         self.supervisor.evidence = lambda: list(self.done)
         self.supervisor.fallback_answer = lambda q, done: (rule_answer(q, self.done) if self.done
@@ -174,7 +175,7 @@ class MultiAgent:
                 notes.add(s.summary)
             steps.append(s)
         result = AgentResult(sup.question, sup.answer, steps, ids[:6], sup.policy, sup.stopped,
-                             sup.total_ms, sup.run_id, badges)
+                             sup.total_ms, sup.run_id, badges, trace_id=sup.trace_id)
         if self.log_dir:
             self.supervisor.log_dir = self.log_dir
             try:

@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_file, session, url_for
 
 from ..admin_auth import MIN_LENGTH as MIN_PASSWORD_LEN
 from ..admin_auth import AdminAuth, auth_file
@@ -167,6 +167,15 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
 
     app.config["AGENT"] = agent  # 테스트용
 
+    # v1.1 관측: span 저장(SQLite·선택 OTLP) + JSON 로그 + 읽을 때 계산하는 지표
+    from .. import observability
+    from ..observability.metrics import HTTP_LATENCY, HTTP_REQUESTS, METRICS
+
+    observability.setup(settings, "web")
+    METRICS.gauge("rea_listings", "보유 매물 수", lambda: len(agent.listings()))
+    METRICS.gauge("rea_active_consultations", "지금 처리 중인 AI 상담 수", lambda: agent_service.bulkhead.active)
+    METRICS.gauge("rea_waiting_consultations", "상담 자리를 기다리는 수", lambda: agent_service.bulkhead.waiting)
+
     # ------------------------------------------------------------ 공통
     def is_admin() -> bool:
         return bool(session.get("admin"))
@@ -175,6 +184,27 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         if "csrf" not in session:
             session["csrf"] = secrets.token_urlsafe(24)
         return session["csrf"]
+
+    @app.before_request
+    def start_timer():
+        request._t0 = time.perf_counter()  # type: ignore[attr-defined]
+
+    @app.after_request
+    def http_metrics(resp):
+        route = request.url_rule.rule if request.url_rule else "other"  # 주소 패턴별 (매물 번호마다 따로 세지 않음)
+        HTTP_REQUESTS.inc(route=route, method=request.method, status=resp.status_code)
+        t0 = getattr(request, "_t0", None)
+        if t0 is not None and resp.mimetype != "text/event-stream":
+            HTTP_LATENCY.observe(time.perf_counter() - t0, route=route)
+        return resp
+
+    def metrics_allowed() -> bool:
+        """지표는 관리자 · 이 PC(127.0.0.1) · REA_METRICS_TOKEN 을 가진 수집기(Prometheus)만."""
+        token = os.getenv("REA_METRICS_TOKEN", "")
+        given = request.headers.get("Authorization", "")
+        if token and hmac.compare_digest(given.encode(), f"Bearer {token}".encode()):
+            return True
+        return is_admin() or (not token and request.remote_addr in {"127.0.0.1", "::1"})
 
     @app.before_request
     def check_csrf():
@@ -479,6 +509,50 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         import json as _json
 
         return f"id: {ev.id}\nevent: {ev.topic}\ndata: {_json.dumps(ev.public(), ensure_ascii=False, default=str)}\n\n"
+
+    # ------------------------------------------------------------ v1.1 관측
+    @app.get("/metrics")
+    def metrics():
+        if not metrics_allowed():
+            abort(403)
+        return Response(METRICS.prometheus(), mimetype="text/plain; version=0.0.4")
+
+    @app.get("/admin/observe")
+    def admin_observe():
+        """관측 화면: 질문 수·성공률·응답 시간·AI 비율·토큰·안전장치 + 최근 trace 목록."""
+        from ..observability import TRACER
+        from ..observability.dashboard import recent, summary
+
+        if not is_admin():
+            return login_page()
+        TRACER.flush(1)
+        try:
+            hours = min(24 * 7, max(1.0, float(request.args.get("hours", "24"))))
+        except ValueError:
+            hours = 24.0
+        show = request.args.get("show", "")
+        return render_template("observe.html", s=summary(agent.storage.conn, lock, hours), hours=hours, show=show,
+                               traces=recent(agent.storage.conn, lock, 40, only_errors=show == "errors",
+                                             slow_ms=2000 if show == "slow" else 0),
+                               otlp=os.getenv("REA_OTLP_ENDPOINT", ""))
+
+    @app.get("/admin/traces/<trace_id>")
+    def admin_trace(trace_id: str):
+        """trace 하나: 어느 Agent·AI·도구·원격 서버에서 얼마나 걸렸는지 폭포 그림."""
+        from ..observability import TRACER
+        from ..observability.dashboard import trace_tree
+
+        if not is_admin():
+            return login_page()
+        if not re.fullmatch(r"[0-9a-f]{32}", trace_id):
+            abort(404)
+        TRACER.flush(1)
+        rows = trace_tree(agent.storage.conn, lock, trace_id)
+        if not rows:
+            abort(404)
+        return render_template("trace.html", rows=rows, trace_id=trace_id,
+                               total_ms=max(r["offset_ms"] + r["dur_ms"] for r in rows),
+                               services=sorted({r["service"] for r in rows}))
 
     # ------------------------------------------------------------ v1.0 상태 점검 (/healthz 는 아래: 살아 있는지만)
     @app.get("/readyz")

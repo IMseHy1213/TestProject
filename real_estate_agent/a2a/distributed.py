@@ -92,6 +92,9 @@ class DistributedMultiAgent(MultiAgent):
             out = client.send(task, data={"state": public_state(self.agent, self.ctx), "history": self.history[-12:]},
                               context_id=self.context_id, metadata={"from": SUPERVISOR})
         except p.A2AUnavailable as e:
+            from ..reliability.stats import STATS
+
+            STATS.add("remote_fallbacks")
             self._note("fallback", f"원격 {who}({client.url}) 응답 없음 → 이 서버의 {who}가 대신 처리 ({e})")
             self.hops.append({"agent": who, "url": client.url, "ok": False, "error": str(e)})
             return self._run_local(who, task)

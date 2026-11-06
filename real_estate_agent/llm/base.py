@@ -7,6 +7,31 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+import threading
+
+_usage = threading.local()
+
+
+def record_usage(resp: Any) -> None:
+    """v1.1: 응답에 적힌 토큰 수를 이 스레드에 기록 (라우터가 호출 하나마다 읽어 지표·추적에 남김).
+    OpenAI(input_tokens/output_tokens), Anthropic(input_tokens/output_tokens) 모두 usage 에 있음."""
+    u = getattr(resp, "usage", None)
+    if u is None:
+        return
+    get = (lambda k: u.get(k)) if isinstance(u, dict) else (lambda k: getattr(u, k, None))
+    inp = get("input_tokens") or get("prompt_tokens") or 0
+    out = get("output_tokens") or get("completion_tokens") or 0
+    prev = getattr(_usage, "value", (0, 0))
+    _usage.value = (prev[0] + int(inp or 0), prev[1] + int(out or 0))
+
+
+def take_usage() -> tuple[int, int]:
+    """기록된 (읽은 토큰, 쓴 토큰) 을 꺼내고 비움."""
+    value = getattr(_usage, "value", (0, 0))
+    _usage.value = (0, 0)
+    return value
+
+
 class LLMUnavailable(Exception):
     """API 키 미설정, 패키지 미설치, 호출 실패 등.
 

@@ -16,7 +16,7 @@ import logging
 import re
 from typing import Any, Optional
 
-from .base import LLMClient, LLMUnavailable, ToolCall, ToolTurn, extract_json, parse_arguments
+from .base import LLMClient, LLMUnavailable, ToolCall, ToolTurn, extract_json, parse_arguments, record_usage
 
 log = logging.getLogger(__name__)
 
@@ -153,6 +153,7 @@ class OpenAILLM(LLMClient):
                 params.pop("reasoning", None)
             try:
                 resp = self.client.responses.create(model=self.model, **params)
+                record_usage(resp)  # v1.1: 토큰 수 (잘려서 다시 보내면 둘 다 더함)
                 if _truncated(resp) and params["max_output_tokens"] < MAX_OUTPUT_TOKENS:
                     # 추론하느라 한도를 다 써서 답이 잘림 -> 이번만 한도를 늘려 다시
                     params["max_output_tokens"] = min(params["max_output_tokens"] * 2, MAX_OUTPUT_TOKENS)

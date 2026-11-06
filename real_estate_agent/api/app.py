@@ -21,8 +21,8 @@ from typing import Any, AsyncIterator, Literal, Optional
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..agent import RealEstateAgent, mask_address, public_office_no
@@ -142,6 +142,37 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     app = FastAPI(title="토지 매물 추천 Agent API", version=API_VERSION, lifespan=lifespan,
                   description="부동산 사무실 토지 매물 검색과 AI 상담(Tool-use Agent). 주소는 시/도 + 시/군/구까지만 제공합니다.")
     app.state.agent, app.state.service, app.state.realtime = agent, service, hub
+
+    # v1.1 관측: span 저장 + JSON 로그 + 요청 지표
+    import hmac
+    import os
+
+    from .. import observability
+    from ..observability.metrics import HTTP_LATENCY, HTTP_REQUESTS, METRICS
+
+    observability.setup(settings if settings.db_path else agent.settings, "api")
+    METRICS.gauge("rea_listings", "보유 매물 수", lambda: len(agent.listings()))
+    METRICS.gauge("rea_active_consultations", "지금 처리 중인 AI 상담 수", lambda: service.bulkhead.active)
+
+    @app.middleware("http")
+    async def http_metrics(request, call_next):
+        t0 = time.perf_counter()
+        response = await call_next(request)
+        route = getattr(request.scope.get("route"), "path", "other")  # 주소 패턴별
+        HTTP_REQUESTS.inc(route=route, method=request.method, status=response.status_code)
+        if response.media_type != "text/event-stream":
+            HTTP_LATENCY.observe(time.perf_counter() - t0, route=route)
+        return response
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics(request: Request) -> PlainTextResponse:
+        """Prometheus 지표. 이 PC(127.0.0.1)에서만, 또는 REA_METRICS_TOKEN 을 Bearer 로."""
+        token = os.getenv("REA_METRICS_TOKEN", "")
+        given = request.headers.get("authorization", "")
+        local = request.client is not None and request.client.host in {"127.0.0.1", "::1", "testclient"}
+        if not ((token and hmac.compare_digest(given.encode(), f"Bearer {token}".encode())) or (not token and local)):
+            raise HTTPException(403, "지표는 이 PC 또는 REA_METRICS_TOKEN 으로만 볼 수 있습니다")
+        return PlainTextResponse(METRICS.prometheus(), media_type="text/plain; version=0.0.4")
 
     def owner_of(visitor: Optional[str]) -> tuple[str, str]:
         vid = visitor if visitor and _VISITOR.match(visitor) else secrets.token_urlsafe(18)

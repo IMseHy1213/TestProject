@@ -161,8 +161,21 @@ class A2AExecutor:
         self._keep(task, msg["messageId"])
         return task
 
-    def run(self, task: dict, on_update: Optional[Callable[[dict], None]] = None) -> dict:
-        """Task 를 끝까지 실행 (on_update: 진행 상황 이벤트 - 스트리밍용)."""
+    def run(self, task: dict, on_update: Optional[Callable[[dict], None]] = None,
+            traceparent: Optional[str] = None) -> dict:
+        """Task 를 끝까지 실행 (on_update: 진행 상황 이벤트 - 스트리밍용).
+        v1.1: 보낸 쪽의 traceparent 를 이어 받아 같은 trace 안에 'a2a.serve' span 으로 기록."""
+        from ..observability.tracing import TRACER
+
+        with TRACER.span("a2a.serve", traceparent=traceparent, role=self.role.key, task_id=task["id"],
+                         context_id=task["contextId"][:12]) as sp:
+            out = self._run(task, on_update)
+            sp.set(state=out["status"]["state"])
+            if out["status"]["state"] == "failed":
+                sp.error(p.task_text(out))
+            return out
+
+    def _run(self, task: dict, on_update: Optional[Callable[[dict], None]] = None) -> dict:
         from ..tool_agent import ToolAgent
         from ..tool_agent.loop import _loads
         from ..tool_agent.multi import text_history
@@ -297,6 +310,7 @@ def create_a2a_app(role_key: str = "consult", agent=None, settings=None, base_ur
             return JSONResponse(p.rpc_error(body.get("id") if isinstance(body, dict) else None, p.INVALID_REQUEST,
                                             "JSON-RPC 2.0 요청이 아닙니다"))
         req_id, method, params = body.get("id"), body["method"], body.get("params") or {}
+        traceparent = request.headers.get("traceparent")  # v1.1: 보낸 쪽 trace 를 이어 받음
         v1 = method in p.V1_METHODS  # A2A 1.0 형식으로 온 요청 -> 답도 1.0 형식으로
         if v1:
             method = p.V1_METHODS[method]
@@ -308,11 +322,11 @@ def create_a2a_app(role_key: str = "consult", agent=None, settings=None, base_ur
                 msg = executor.validate(params)
                 task = executor.existing(msg["messageId"])
                 if task is None:
-                    task = await asyncio.to_thread(executor.run, executor.start(msg))
+                    task = await asyncio.to_thread(executor.run, executor.start(msg), None, traceparent)
                 return JSONResponse(p.rpc_result(req_id, {"task": p.to_v1_task(task)} if v1 else task))
             if method == "message/stream":
                 msg = executor.validate(params)
-                return StreamingResponse(_stream(executor, msg, req_id, v1), media_type="text/event-stream",
+                return StreamingResponse(_stream(executor, msg, req_id, v1, traceparent), media_type="text/event-stream",
                                          headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
             if method == "tasks/get":
                 task = executor.get(str((params or {}).get("id", "")))
@@ -332,7 +346,7 @@ def create_a2a_app(role_key: str = "consult", agent=None, settings=None, base_ur
     return app
 
 
-async def _stream(executor: A2AExecutor, msg: dict, req_id: Any, v1: bool = False):
+async def _stream(executor: A2AExecutor, msg: dict, req_id: Any, v1: bool = False, traceparent: Optional[str] = None):
     """message/stream: Task → 진행 상황(status-update) → 산출물(artifact-update) → 끝(final) 을 SSE 로."""
     loop = asyncio.get_running_loop()
     events: asyncio.Queue = asyncio.Queue()
@@ -343,7 +357,8 @@ async def _stream(executor: A2AExecutor, msg: dict, req_id: Any, v1: bool = Fals
         return
     task = executor.start(msg)
     yield _sse(req_id, out(dict(task)))
-    job = loop.run_in_executor(None, executor.run, task, lambda e: loop.call_soon_threadsafe(events.put_nowait, e))
+    job = loop.run_in_executor(None, executor.run, task, lambda e: loop.call_soon_threadsafe(events.put_nowait, e),
+                               traceparent)
     while True:
         try:
             event = await asyncio.wait_for(events.get(), 1.0)
@@ -367,6 +382,10 @@ def main(role_key: str, settings=None, host: str = "127.0.0.1", port: Optional[i
     role = roles()[role_key]
     port = port or role.port
     shown_host = "127.0.0.1" if host in {"0.0.0.0", ""} else host
+    from .. import observability
+    from ..config import get_settings
+
+    observability.setup(settings or get_settings(), f"a2a-{role_key}")  # v1.1: 같은 DB 면 총괄과 한 trace 로 모임
     app = create_a2a_app(role_key, settings=settings, base_url=f"http://{shown_host}:{port}/")
     print(f"{role.name} (A2A) 시작: http://{shown_host}:{port}/   Agent Card: http://{shown_host}:{port}{p.CARD_PATH}")
     if os.getenv("REA_A2A_TOKEN"):

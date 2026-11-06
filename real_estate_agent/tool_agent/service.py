@@ -233,7 +233,7 @@ class AgentService:
                 "steps": [step_dict(s) for s in result.steps], "listing_ids": result.listing_ids,
                 "badges": result.badges, "policy": result.policy, "total_ms": result.total_ms,
                 "tool_calls": result.tool_calls, "tool_errors": result.tool_errors,
-                "mode": mode,
+                "mode": mode, "trace_id": getattr(result, "trace_id", ""),
                 "at": datetime.now().isoformat(timespec="seconds")}
         conv["turns"] = (conv["turns"] + [turn])[-MAX_TURNS:]
         self.store.save(conv["cid"], conv["owner"], history, conv["ctx"], conv["turns"], "idle", None)

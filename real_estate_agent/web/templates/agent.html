@@ -80,6 +80,7 @@
         {% endfor %}
       </ol>
       {% endif %}
+      {% if is_admin and t.trace_id %}<a class="trace-link" href="{{ url_for('admin_trace', trace_id=t.trace_id) }}">⏱ 추적 보기 (관리자)</a>{% endif %}
       <details class="trace">
         <summary>🔎 에이전트 실행 과정{% if t.mode == "multi" %} (멀티 Agent){% elif t.mode == "distributed" %} (분산 A2A){% endif %} · 도구 {{ t.tool_calls }}회{% if t.tool_errors %} (오류 {{ t.tool_errors }}회 → 스스로 수정){% endif %} · {{ "%.1f"|format(t.total_ms / 1000) }}초 · {{ t.policy }}</summary>
         <ol>
