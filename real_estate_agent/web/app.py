@@ -400,19 +400,26 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         if l is None:
             return None
         features = [f.lstrip("● ").strip() for f in (l.features or "").split(" / ") if f.strip()]
-        return {"id": l.listing_id, "office_no": l.office_no if admin else public_office_no(l.office_no),
+        from ..tool_agent.tools import tool_id
+
+        return {"id": l.listing_id, "pid": tool_id(l), "office_no": l.office_no if admin else public_office_no(l.office_no),
                 "address": l.address if admin else mask_address(l.address), "price": format_price(l.price_manwon),
                 "ppp": f"{l.price_per_pyeong:,.0f}", "pyeong": f"{l.area_pyeong:,.0f}", "m2": f"{l.area_m2:,.0f}",
                 "jimok": l.jimok or "-", "zoning": l.zoning or "-", "features": features[:5], "badges": badges,
                 "use_tag": l.use_tag, "contact": l.owner_contact if admin else ""}
 
-    def render_turns(turns: list[dict], admin: bool) -> list[dict]:
-        """저장된 질문/답변 -> 화면용 (매물 카드는 지금 매물 정보로 그때그때 만듦: 수정 내용·관리자 여부 반영)."""
+    def render_turns(turns: list[dict], admin: bool, ctx=None) -> list[dict]:
+        """저장된 질문/답변 -> 화면용 (매물 카드는 지금 매물 정보로 그때그때 만듦: 수정 내용·관리자 여부 반영).
+        v1.2: 손님이 ♡/✕ 한 매물은 카드에 표시."""
         out = []
+        liked = set(getattr(ctx, "liked", []) or [])
+        rejected = set((getattr(ctx, "rejected", {}) or {}).keys())
         with lock:
             for t in turns:
                 cards = [c for c in (agent_card(i, admin, (t.get("badges") or {}).get(i, []))
                                      for i in t.get("listing_ids", [])) if c]
+                for c in cards:
+                    c["state"] = "reject" if c["id"] in rejected else ("like" if c["id"] in liked else "")
                 out.append({**t, "cards": cards})
         return out
 
@@ -425,7 +432,10 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             conv = agent_service.open(owner, session.get("cid"), reuse_recent=not session.get("cid"))
         session["cid"] = conv["cid"]
         busy = conv["status"] == "running" and not agent_service.needs_resume(conv)
-        return render_template("agent.html", turns=render_turns(conv["turns"], is_admin()), examples=AGENT_EXAMPLES,
+        from ..online.feedback import DOWN_REASONS
+
+        return render_template("agent.html", turns=render_turns(conv["turns"], is_admin(), conv["ctx"]),
+                               examples=AGENT_EXAMPLES, quick_reasons=QUICK_REASONS, down_reasons=DOWN_REASONS,
                                llm_mode=agent.llm.mode(), llm_names=agent.llm.names(),
                                memory=agent_service.memory_view(owner), pending=conv.get("pending"),
                                needs_resume=agent_service.needs_resume(conv), busy=busy,
@@ -473,6 +483,51 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         body = agent_service.stream(owner, conv["cid"], q, resume=resume, mode=_mode())
         return Response(stream_with_context(body), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ------------------------------------------------------------ v1.2 손님 반응 (온라인 학습·평가)
+    @app.post("/agent/rate")
+    def agent_rate():
+        """답변 👍/👎 (+ 아쉬운 이유)."""
+        turn_id = (request.form.get("turn") or "")[:20]
+        try:
+            agent_service.rate(visitor_owner(), session.get("cid") or "", turn_id,
+                               1 if request.form.get("rating") == "1" else 0, (request.form.get("reason") or "")[:60])
+        except (Busy, ValueError) as e:
+            session["agent_msg"] = str(e)
+        return redirect(url_for("agent_page") + (f"#turn-{turn_id}" if re.fullmatch(r"[0-9a-f]{12}", turn_id) else "#last"))
+
+    @app.post("/agent/listing-feedback")
+    def agent_listing_feedback():
+        """매물 카드 ♡ 관심 / ✕ 별로예요 → 기록 + 온라인 학습 (다음 검색부터 순서에 반영)."""
+        action = "like" if request.form.get("action") == "like" else "reject"
+        reason = (request.form.get("reason") or "")[:60]
+        try:
+            r = agent_service.listing_feedback(visitor_owner(), session.get("cid") or "",
+                                               (request.form.get("id") or "")[:100], action, reason)
+            learned = ", ".join(r.get("배운_점") or [])
+            session["agent_msg"] = ("♡ 관심 매물로 기록했습니다." if action == "like" else
+                                    "✕ 이 매물은 앞으로 빼고 찾습니다.") + (
+                f" 배운 점: {learned} → 다음 검색부터 순서에 반영합니다." if learned else
+                " 다음 검색부터 손님 취향을 반영합니다.")
+        except (Busy, ValueError) as e:
+            session["agent_msg"] = str(e)
+        return redirect(url_for("agent_page") + "#last")
+
+    @app.get("/admin/online")
+    def admin_online():
+        """v1.2 온라인 학습·평가: 만족도, '자동' 방식의 실험 현황, 배운 취향, 아쉬웠던 답."""
+        from ..online.learning import model_view
+        from ..storage import OFFICE_MODEL
+
+        if not is_admin():
+            return login_page()
+        with lock:
+            learned = agent.storage.conn.execute(
+                "SELECT COUNT(*) FROM preferences WHERE name LIKE 'agent:%'").fetchone()[0]
+            office = model_view(agent, OFFICE_MODEL)
+        return render_template("online.html", s=agent_service.ratings.summary(7),
+                               arms=agent_service.bandit.stats(), negatives=agent_service.ratings.recent_negative(10),
+                               learned_visitors=learned, office_model=office)
 
     @app.post("/agent/resume")
     def agent_resume():

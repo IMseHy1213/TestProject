@@ -175,7 +175,8 @@ class MultiAgent:
                 notes.add(s.summary)
             steps.append(s)
         result = AgentResult(sup.question, sup.answer, steps, ids[:6], sup.policy, sup.stopped,
-                             sup.total_ms, sup.run_id, badges, trace_id=sup.trace_id)
+                             sup.total_ms, sup.run_id, badges, trace_id=sup.trace_id,
+                             span_id=sup.span_id)
         if self.log_dir:
             self.supervisor.log_dir = self.log_dir
             try:

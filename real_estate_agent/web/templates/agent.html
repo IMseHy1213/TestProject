@@ -52,7 +52,7 @@
 
 <div class="chat" aria-live="polite">
   {% for t in turns %}
-  <article class="turn" {% if loop.last %}id="last"{% endif %}>
+  <article class="turn" {% if loop.last %}id="last"{% elif t.id %}id="turn-{{ t.id }}"{% endif %}>
     <p class="bubble q">{{ t.question }}</p>
     <div class="bubble a">
       <p class="answer">{{ t.answer }}</p>
@@ -76,13 +76,47 @@
           <ul class="mini-feat">{% for f in c.features %}<li>{{ f }}</li>{% endfor %}</ul>
           {% endif %}
           {% if is_admin %}<p class="mini-admin">연락처 {{ c.contact or "-" }} · <a href="{{ url_for('admin_listing_edit', id=c.id) }}">수정</a></p>{% endif %}
+          <div class="mini-actions">
+            {% if c.state == "like" %}<span class="badge">♡ 관심 매물</span>
+            {% elif c.state == "reject" %}<span class="badge warn">✕ 다음부터 제외</span>
+            {% else %}
+            <form method="post" action="{{ url_for('agent_listing_feedback') }}" class="inline">
+              <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ c.pid }}">
+              <input type="hidden" name="action" value="like"><button class="mini-btn">♡ 관심</button>
+            </form>
+            <details class="mini-reject"><summary class="mini-btn">✕ 별로예요</summary>
+              <form method="post" action="{{ url_for('agent_listing_feedback') }}" class="reason-row">
+                <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="id" value="{{ c.pid }}">
+                <input type="hidden" name="action" value="reject">
+                {% for r in quick_reasons %}<button name="reason" value="{{ r }}" class="chip small">{{ r }}</button>{% endfor %}
+                <button name="reason" value="" class="chip small">그냥 별로예요</button>
+              </form>
+            </details>
+            {% endif %}
+          </div>
         </li>
         {% endfor %}
       </ol>
       {% endif %}
+      {% if t.id %}
+      <div class="rate" aria-label="이 답변 평가">
+        <span class="rate-q">{% if t.rating == 1 %}평가 감사합니다 👍{% elif t.rating == 0 %}알려 주셔서 감사합니다. 더 나아지겠습니다{% else %}이 답이 도움이 됐나요?{% endif %}</span>
+        <form method="post" action="{{ url_for('agent_rate') }}" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="turn" value="{{ t.id }}">
+          <input type="hidden" name="rating" value="1"><button class="rate-btn{% if t.rating == 1 %} on{% endif %}">👍 도움됐어요</button>
+        </form>
+        <details class="rate-down"><summary class="rate-btn{% if t.rating == 0 %} on{% endif %}">👎 아쉬워요{% if t.rating == 0 and t.rating_reason %} ({{ t.rating_reason }}){% endif %}</summary>
+          <form method="post" action="{{ url_for('agent_rate') }}" class="reason-row">
+            <input type="hidden" name="csrf" value="{{ csrf_token() }}"><input type="hidden" name="turn" value="{{ t.id }}">
+            <input type="hidden" name="rating" value="0">
+            {% for r in down_reasons %}<button name="reason" value="{{ r }}" class="chip small">{{ r }}</button>{% endfor %}
+          </form>
+        </details>
+      </div>
+      {% endif %}
       {% if is_admin and t.trace_id %}<a class="trace-link" href="{{ url_for('admin_trace', trace_id=t.trace_id) }}">⏱ 추적 보기 (관리자)</a>{% endif %}
       <details class="trace">
-        <summary>🔎 에이전트 실행 과정{% if t.mode == "multi" %} (멀티 Agent){% elif t.mode == "distributed" %} (분산 A2A){% endif %} · 도구 {{ t.tool_calls }}회{% if t.tool_errors %} (오류 {{ t.tool_errors }}회 → 스스로 수정){% endif %} · {{ "%.1f"|format(t.total_ms / 1000) }}초 · {{ t.policy }}</summary>
+        <summary>🔎 에이전트 실행 과정{% set ml = {"multi": "멀티 Agent", "distributed": "분산 A2A"}.get(t.mode, "") %}{% if (t.variant or "").startswith("auto:") %} (자동 → {{ ml or "상담원 1명" }}){% elif ml %} ({{ ml }}){% endif %} · 도구 {{ t.tool_calls }}회{% if t.tool_errors %} (오류 {{ t.tool_errors }}회 → 스스로 수정){% endif %} · {{ "%.1f"|format(t.total_ms / 1000) }}초 · {{ t.policy }}</summary>
         <ol>
           {% for s in t.steps %}
           <li class="step-{{ s.kind }}{% if s.ok == false %} is-error{% endif %}">
@@ -122,10 +156,21 @@
   <button type="submit" class="btn primary">물어보기</button>
   <div class="agent-mode" role="radiogroup" aria-label="상담 방식">
     <span class="mode-label">상담 방식</span>
-    <label><input type="radio" name="mode" value="single" {% if mode != "multi" %}checked{% endif %}> 상담원 1명</label>
+    <label><input type="radio" name="mode" value="single" {% if mode not in ("multi", "distributed", "auto") %}checked{% endif %}> 상담원 1명</label>
     <label><input type="radio" name="mode" value="multi" {% if mode == "multi" %}checked{% endif %}> 상담팀 (총괄 → 검색·분석 Agent)</label>
     <label><input type="radio" name="mode" value="distributed" {% if mode == "distributed" %}checked{% endif %}> 분산 상담팀 (A2A 서버)</label>
+    <label><input type="radio" name="mode" value="auto" {% if mode == "auto" %}checked{% endif %}> 자동 (손님 평가로 더 나은 방식을 고름)</label>
   </div>
+  <details class="mode-help">
+    <summary>상담 방식이 뭔가요?</summary>
+    <dl>
+      <dt>상담원 1명</dt><dd>AI 한 명이 매물 찾기·비교·건축 가능 여부 확인을 모두 직접 합니다. 가장 빠르고 AI 사용량이 적습니다.</dd>
+      <dt>상담팀</dt><dd>총괄 AI가 질문을 보고 일을 나눠 맡깁니다. <strong>검색 담당</strong>은 매물을 찾고, <strong>분석 담당</strong>은 비교·건축 판단을 합니다. 답은 같고, 역할이 나뉘어 있어 각자 맡은 일에 집중합니다 (AI 호출은 늘어남).</dd>
+      <dt>분산 상담팀</dt><dd>상담팀과 같지만 검색·분석 담당이 <strong>다른 서버(다른 컴퓨터)</strong>에서 일합니다 (A2A 방식으로 연락). 그 서버가 꺼져 있으면 이 서버가 대신 처리해 상담은 끊기지 않습니다.</dd>
+      <dt>자동</dt><dd>손님들의 👍·👎 평가를 보고, 만족도가 더 높은 방식을 점점 더 자주 고릅니다. 한 대화 안에서는 같은 방식을 씁니다.</dd>
+    </dl>
+    <p class="meta">어느 방식이든 찾는 매물은 같습니다. 차이는 '안에서 누가 어떻게 일하느냐' 이고, 답 아래 🔎 실행 과정에서 볼 수 있습니다.</p>
+  </details>
 </form>
 {% if not turns %}
 <div class="examples" aria-label="질문 예시">

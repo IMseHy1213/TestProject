@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}온라인 학습{% endblock %}
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin') }}">← 관리자</a> · <a href="{{ url_for('admin_observe') }}">📈 관측</a></p>
+<h1>🎯 온라인 학습·평가 <small class="muted">v1.2</small></h1>
+<p class="meta">손님 반응(👍·👎, ♡·✕)으로 운영 중에 스스로 나아지는 부분입니다. 최근 {{ s.days|int }}일 기준.</p>
+
+<section class="kpis">
+  <div class="kpi"><span>평가 받은 답</span><strong>{{ s.n }}</strong></div>
+  <div class="kpi"><span>만족도 (👍 비율)</span><strong>{{ s.rate if s.rate is not none else "-" }}{% if s.rate is not none %}%{% endif %}</strong></div>
+  <div class="kpi"><span>취향을 배운 방문자</span><strong>{{ learned_visitors }}</strong><small>♡·✕ 를 누른 방문자</small></div>
+  <div class="kpi"><span>사무실 공통 학습</span><strong>{{ office_model.n }}</strong><small>반응 수 (처음 온 손님의 기본값)</small></div>
+</section>
+
+<section class="grid">
+  <div class="panel">
+    <h2>만족도 비교</h2>
+    {% for title, rows in [("상담 방식별", s.by_mode), ("답을 만든 쪽", s.by_policy), ("v1.0 안전장치", s.by_guard), ("자동 vs 직접 고름", s.by_auto)] %}
+    <h3 class="small-h">{{ title }}</h3>
+    <table class="obs-table"><tbody>
+      {% for r in rows %}<tr><td>{{ {"single": "상담원 1명", "multi": "상담팀", "distributed": "분산 상담팀"}.get(r.name, r.name) }}</td><td>{{ r.up }}/{{ r.n }}</td>
+        <td class="bar-cell"><svg class="wf-bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="1" width="{{ r.rate }}" height="8" rx="1"></rect></svg></td><td>{{ r.rate }}%</td></tr>
+      {% else %}<tr><td class="muted">아직 평가가 없습니다</td></tr>{% endfor %}
+    </tbody></table>
+    {% endfor %}
+    {% if s.reasons %}<h3 class="small-h">👎 이유</h3><ul class="plain">{% for r, n in s.reasons %}<li>{{ r }} <strong>{{ n }}</strong></li>{% endfor %}</ul>{% endif %}
+  </div>
+  <div class="panel">
+    <h2>'자동' 상담 방식 실험 (톰슨 샘플링)</h2>
+    <p class="meta">'자동'으로 상담하면 방식마다 👍·👎 를 모아, 만족도가 높을 것 같은 방식을 점점 더 자주 고릅니다.</p>
+    <table class="obs-table"><thead><tr><th>방식</th><th>고른 횟수</th><th>👍/평가</th><th>만족도 추정 (95% 구간)</th><th>가장 좋을 확률</th></tr></thead><tbody>
+    {% for a in arms %}<tr><td>{{ {"single": "상담원 1명", "multi": "상담팀", "distributed": "분산 상담팀"}.get(a.arm, a.arm) }}</td><td>{{ a.pulls }}</td><td>{{ a.wins }}/{{ a.rated }}</td>
+      <td>{{ (a.mean * 100)|round(1) }}% ({{ (a.low * 100)|round(0)|int }}~{{ (a.high * 100)|round(0)|int }}%)</td><td><strong>{{ (a.p_best * 100)|round(0)|int }}%</strong></td></tr>{% endfor %}
+    </tbody></table>
+    <p class="meta small-note">평가가 적을 때는 구간이 넓고 '가장 좋을 확률'이 50% 근처 → 아직 판단하기 이르다는 뜻. 시뮬레이션: <code>python main.py online-sim</code></p>
+    <h2>사무실 공통 취향 (배운 것)</h2>
+    <pre class="model-desc">{{ office_model.describe }}</pre>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>최근 👎 받은 답</h2>
+  <table class="obs-table"><thead><tr><th>시각</th><th>질문</th><th>이유</th><th>방식</th><th>답한 쪽</th><th></th></tr></thead><tbody>
+  {% for n in negatives %}<tr><td>{{ n.time }}</td><td>{{ n.question }}</td><td>{{ n.reason or "-" }}</td><td>{{ n.mode }}</td><td>{{ n.policy }}</td>
+    <td>{% if n.trace_id %}<a href="{{ url_for('admin_trace', trace_id=n.trace_id) }}">⏱ 추적</a>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">없음</td></tr>{% endfor %}
+  </tbody></table>
+  <p class="meta small-note">추적을 열면 그 답이 어떤 도구·AI 를 거쳐 만들어졌는지, 손님 평가(feedback.rating)까지 한 그림으로 보입니다.</p>
+</section>
+{% endblock %}

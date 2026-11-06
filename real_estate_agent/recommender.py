@@ -76,6 +76,7 @@ class RecommendOptions:
     min_candidates: int = 3
     market_price_per_m2: dict[str, dict[str, float]] = field(default_factory=dict)  # {시군구: {지목: 만원/㎡}}
     pref: Any = None  # 이 손님의 학습 모델 (PreferenceModel)
+    feature_stats: Any = None  # v1.2: 면적·가격 표준화 기준 (수치 취향 점수에 사용)
     prior: Any = None  # 사무실 공통 학습 모델 (PreferenceModel)
     # 손님 반응으로 생긴 '방향' 조건 (예: "너무 비싸요" -> 방금 매물보다 싼 것만). 조건 완화 대상이 아님
     price_below: Optional[int] = None  # 만원, 이 가격 미만만
@@ -274,6 +275,13 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
         bonus, notes = opt.pref.attribute_bonus(l.jimok, l.zoning, _text_blob(l))
         score += bonus
         (reasons if bonus > 0 else penalties).extend(notes)
+        if getattr(opt.pref, "numeric", None) and opt.feature_stats:  # v1.2 온라인 로지스틱 회귀 (넓은/싼 땅 취향)
+            from .preference import numeric_features
+
+            nb = opt.pref.numeric_bonus(numeric_features(l, opt.feature_stats))
+            score += nb
+            if abs(nb) >= 3:
+                (reasons if nb > 0 else penalties).append("이전 반응으로 본 취향에 " + ("가까움" if nb > 0 else "멀음"))
 
     # 공공 실거래가 대비
     market = _market_ppm(l, opt.market_price_per_m2)

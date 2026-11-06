@@ -73,8 +73,8 @@ class SearchResponse(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=300, examples=["음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘"])
     conversation_id: Optional[str] = Field(None, description="이어서 묻기: 앞 응답의 conversation_id")
-    mode: Literal["single", "multi", "distributed"] = Field(
-        "single", description="single: Agent 하나 / multi: 총괄 → 검색·분석 Agent (v0.7) / distributed: 검색·분석 Agent 가 A2A 서버 (v0.8)")
+    mode: Literal["single", "multi", "distributed", "auto"] = Field(
+        "single", description="single: Agent 하나 / multi: 총괄 → 검색·분석 Agent (v0.7) / distributed: 검색·분석 Agent 가 A2A 서버 (v0.8) / auto: 평가로 더 나은 방식을 고름 (v1.2)")
 
 
 class StepOut(BaseModel):
@@ -96,6 +96,22 @@ class AskResponse(BaseModel):
     steps: list[StepOut]
     policy: str = Field(description="답을 만든 쪽: openai / anthropic / rule")
     total_ms: float
+    turn_id: str = Field("", description="v1.2: 이 답을 평가할 때 쓰는 id (POST /api/v1/agent/feedback)")
+    mode: str = Field("", description="실제로 쓴 상담 방식 ('auto' 면 고른 방식)")
+
+
+class FeedbackRequest(BaseModel):
+    conversation_id: str
+    turn_id: str = Field(min_length=1, max_length=20)
+    rating: Literal["up", "down"]
+    reason: str = Field("", max_length=60, examples=["원하는 매물이 아니에요"])
+
+
+class ListingFeedbackRequest(BaseModel):
+    conversation_id: str
+    listing_id: str = Field(min_length=1, max_length=100, description="응답의 listings[].id")
+    action: Literal["like", "reject"]
+    reason: str = Field("", max_length=60, examples=["너무 비싸요"])
 
 
 class TurnOut(BaseModel):
@@ -124,6 +140,8 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                lock: Optional[threading.RLock] = None, start_realtime: bool = False) -> FastAPI:
     from ..realtime import RealtimeHub
 
+    if settings is None and agent is not None:
+        settings = agent.settings  # 같은 DB 에 추적 기록 (v1.1)
     settings = settings or get_settings()
     if agent is None:
         agent = RealEstateAgent(settings)
@@ -236,7 +254,8 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         listings = [listing_out(i, turn["badges"].get(i)) for i in turn["listing_ids"]]
         return AskResponse(conversation_id=cid, visitor_id=vid, answer=turn["answer"],
                            listings=[x for x in listings if x], steps=[StepOut(**s) for s in turn["steps"]],
-                           policy=turn["policy"], total_ms=turn["total_ms"])
+                           policy=turn["policy"], total_ms=turn["total_ms"], turn_id=turn.get("id", ""),
+                           mode=turn.get("mode", ""))
 
     @app.post("/api/v1/agent/stream", tags=["AI 상담"],
               responses={200: {"content": {"text/event-stream": {}},
@@ -344,7 +363,7 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             job = asyncio.ensure_future(asyncio.to_thread(
                 service.ask, owner, msg.get("conversation_id"), question,
                 lambda e: loop.call_soon_threadsafe(steps.put_nowait, e),
-                msg.get("mode") if msg.get("mode") in {"multi", "distributed"} else "single"))
+                msg.get("mode") if msg.get("mode") in {"multi", "distributed", "auto"} else "single"))
             while not job.done() or not steps.empty():
                 try:
                     e = await asyncio.wait_for(steps.get(), 0.2)
@@ -375,6 +394,34 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         finally:
             pusher.cancel()
             hub.bus.unsubscribe(q)
+
+    @app.post("/api/v1/agent/feedback", tags=["v1.2 온라인 학습"])
+    async def feedback(body: FeedbackRequest, x_visitor_id: Optional[str] = Header(None)) -> dict:
+        """답변 평가 👍/👎. '자동' 방식으로 받은 답이면 그 방식의 점수(밴딧)에 반영."""
+        if not x_visitor_id or not _VISITOR.match(x_visitor_id):
+            raise HTTPException(400, "X-Visitor-Id 헤더가 필요합니다")
+        try:
+            turn = await asyncio.to_thread(service.rate, "api:" + x_visitor_id, body.conversation_id, body.turn_id,
+                                           1 if body.rating == "up" else 0, body.reason)
+        except Busy as e:
+            raise HTTPException(e.status, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        return {"ok": True, "turn_id": turn["id"], "rating": body.rating}
+
+    @app.post("/api/v1/agent/listing-feedback", tags=["v1.2 온라인 학습"])
+    async def listing_feedback(body: ListingFeedbackRequest, x_visitor_id: Optional[str] = Header(None)) -> dict:
+        """매물 관심(like)/제외(reject) → 기록 + 온라인 학습 (다음 검색부터 순서에 반영)."""
+        if not x_visitor_id or not _VISITOR.match(x_visitor_id):
+            raise HTTPException(400, "X-Visitor-Id 헤더가 필요합니다")
+        try:
+            r = await asyncio.to_thread(service.listing_feedback, "api:" + x_visitor_id, body.conversation_id,
+                                        body.listing_id, body.action, body.reason)
+        except Busy as e:
+            raise HTTPException(e.status, str(e)) from e
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        return {"ok": True, "action": body.action, "learned": r.get("배운_점") or []}
 
     @app.delete("/api/v1/agent/memory", status_code=204, tags=["AI 상담"])
     async def forget(x_visitor_id: Optional[str] = Header(None)) -> None:

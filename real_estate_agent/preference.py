@@ -33,6 +33,7 @@ LEARNING_RATE = 0.6
 REASON_BOOST = 1.4  # 거절 사유로 명시된 항목은 중요도 40% ↑
 MULT_MIN, MULT_MAX = 0.4, 3.0
 ATTR_BONUS_MAX = 6.0
+NUMERIC_BONUS_MAX = 12.0  # v1.2 수치 취향(넓은/싼 땅) 최대 가감 점수
 
 # 거절/피드백 사유 -> 항목
 REASON_RULES: list[tuple[str, str]] = [
@@ -83,6 +84,9 @@ class PreferenceModel:
         default_factory=lambda: {"jimok": {}, "zoning": {}, "feature": {}})
     n_feedback: int = 0
     ai_summary: str = ""  # 생성형 AI 가 정리한 손님 취향 (ai_learning.py)
+    # v1.2 온라인 로지스틱 회귀: 면적·가격·평당가(로그, 표준화)에 대한 '좋아할 정도' 가중치.
+    # ♡ = 1, ✕ = 0 이 올 때마다 확률적 경사하강(SGD) 한 걸음. 손님이 조건으로 말하지 않은 취향(넓은 땅, 싼 땅)도 배움
+    numeric: dict[str, float] = field(default_factory=dict)
 
     # ------------------------------------------------------------ 계산
     def weights(self, prior: Optional["PreferenceModel"] = None) -> dict[str, float]:
@@ -111,6 +115,31 @@ class PreferenceModel:
                 notes.append(f"이전 피드백상 '{value}' {'선호' if b > 0 else '비선호'}")
         bonus = max(-ATTR_BONUS_MAX, min(ATTR_BONUS_MAX, bonus))
         return bonus, notes
+
+    # ------------------------------------------------------------ v1.2 수치 취향 (온라인 로지스틱 회귀)
+    def numeric_bonus(self, x: dict[str, float]) -> float:
+        """x: 표준화된 특징 {'area','price','ppp'}. -NUMERIC_BONUS_MAX ~ +NUMERIC_BONUS_MAX 점."""
+        if not self.numeric:
+            return 0.0
+        z = self.numeric.get("bias", 0.0) + sum(self.numeric.get(k, 0.0) * v for k, v in x.items())
+        return NUMERIC_BONUS_MAX * math.tanh(z / 2)
+
+    def learn_numeric(self, x: dict[str, float], liked: bool, lr: float = 0.8, l2: float = 0.02) -> list[str]:
+        """한 번의 반응으로 경사하강 한 걸음: w ← w + lr·(y − σ(w·x))·x  (L2 로 과하게 커지지 않게)."""
+        y = 1.0 if liked else 0.0
+        z = self.numeric.get("bias", 0.0) + sum(self.numeric.get(k, 0.0) * v for k, v in x.items())
+        err = y - 1 / (1 + math.exp(-max(-30.0, min(30.0, z))))
+        before = {k: self.numeric.get(k, 0.0) for k in x}
+        for k, v in x.items():
+            w = self.numeric.get(k, 0.0)
+            self.numeric[k] = round(w + lr * (err * v - l2 * w), 4)
+        self.numeric["bias"] = round(self.numeric.get("bias", 0.0) + lr * 0.3 * err, 4)
+        out = []
+        for k, label in (("area", "넓은 땅"), ("price", "비싼 땅"), ("ppp", "평당가 높은 땅")):
+            d = self.numeric.get(k, 0.0) - before.get(k, 0.0)
+            if abs(d) >= 0.25:
+                out.append(f"{label} {'선호' if d > 0 else '비선호'} 쪽으로")
+        return out
 
     # ------------------------------------------------------------ 학습
     def learn(self, action: str, factors: dict[str, float], others: Iterable[dict[str, float]],
@@ -182,7 +211,7 @@ class PreferenceModel:
 
     def to_dict(self) -> dict[str, Any]:
         return {"multipliers": self.multipliers, "attrs": self.attrs, "n_feedback": self.n_feedback,
-                "ai_summary": self.ai_summary}
+                "ai_summary": self.ai_summary, "numeric": self.numeric}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "PreferenceModel":
@@ -192,6 +221,7 @@ class PreferenceModel:
             m.attrs[kind] = {k: [float(v[0]), float(v[1])] for k, v in values.items()}
         m.n_feedback = int(d.get("n_feedback", 0))
         m.ai_summary = str(d.get("ai_summary", ""))
+        m.numeric = {k: float(v) for k, v in (d.get("numeric") or {}).items()}
         return m
 
 
@@ -214,4 +244,28 @@ def describe_change(before: dict[str, float], after: dict[str, float]) -> list[s
             out.append(f"{CRITERIA_KO[k]} 중요도 ↑")
         elif a / b <= 0.89:
             out.append(f"{CRITERIA_KO[k]} 중요도 ↓")
+    return out
+
+
+def numeric_features(l, stats: dict[str, tuple[float, float]]) -> dict[str, float]:
+    """매물 → 표준화된 로그 특징 (보유 매물 전체의 평균·표준편차 기준)."""
+    raw = {"area": l.area_pyeong, "price": l.price_manwon, "ppp": l.price_per_pyeong}
+    out = {}
+    for k, v in raw.items():
+        mean, std = stats.get(k, (0.0, 1.0))
+        out[k] = max(-3.0, min(3.0, (math.log(max(v or 0, 1e-6)) - mean) / (std or 1.0)))
+    return out
+
+
+def feature_stats(listings) -> dict[str, tuple[float, float]]:
+    out = {}
+    for k, get in (("area", lambda l: l.area_pyeong), ("price", lambda l: l.price_manwon),
+                   ("ppp", lambda l: l.price_per_pyeong)):
+        vals = [math.log(get(l)) for l in listings if (get(l) or 0) > 0]
+        if not vals:
+            out[k] = (0.0, 1.0)
+            continue
+        mean = sum(vals) / len(vals)
+        std = math.sqrt(sum((v - mean) ** 2 for v in vals) / len(vals)) or 1.0
+        out[k] = (mean, std)
     return out

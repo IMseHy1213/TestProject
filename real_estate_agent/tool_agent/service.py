@@ -18,7 +18,7 @@ from .memory import ConversationStore, LongTermMemory, is_incomplete
 from .tools import AgentContext
 
 MAX_TURNS = 20  # 화면에 남길 질문/답변 수
-MODES = ("single", "multi", "distributed")  # 단일 / v0.7 멀티 Agent / v0.8 분산(A2A) 멀티 Agent
+MODES = ("single", "multi", "distributed", "auto")  # 단일 / v0.7 멀티 / v0.8 분산(A2A) / v1.2 자동(밴딧)
 _CID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
@@ -54,8 +54,13 @@ class AgentService:
 
         self.agent = agent
         self.lock = lock or threading.RLock()
-        self.rate = rate or RateLimiter()          # v1.0: 방문자별 1분 질문 수
+        self.rate_limiter = rate or RateLimiter()  # v1.0: 방문자별 1분 질문 수
         self.bulkhead = bulkhead or Bulkhead()     # v1.0: 동시에 처리하는 상담 수
+        from ..online.bandit import ThompsonBandit
+        from ..online.feedback import RatingStore
+
+        self.ratings = RatingStore(agent.storage.conn, self.lock)        # v1.2: 답변 👍/👎
+        self.bandit = ThompsonBandit(agent.storage.conn, self.lock)      # v1.2: '자동' 상담 방식
         self.store = ConversationStore(agent.storage.conn, self.lock)
         self.memory = LongTermMemory(agent.storage.conn, self.lock)
         self.store.prune()
@@ -92,7 +97,7 @@ class AgentService:
 
         @contextmanager
         def slot():
-            wait = self.rate.check(owner)
+            wait = self.rate_limiter.check(owner)
             if wait:
                 STATS.add("rate_limited")
                 raise RateLimited(wait)
@@ -108,6 +113,7 @@ class AgentService:
 
     def _ask(self, owner: str, cid: Optional[str], question: str, on_event, mode: str) -> tuple[str, dict]:
         conv = self._begin(owner, cid, question)
+        mode, variant = self._choose_mode(conv, mode)
         runner = self._runner(conv, question, on_event, mode)
         history = conv["history"]
         if runner.__class__.__name__ == "ToolAgent" and any(
@@ -120,7 +126,7 @@ class AgentService:
         except Exception:
             self._interrupted(conv, question, runner)
             raise
-        return conv["cid"], self._finish(conv, result, history, getattr(runner, "mode", "single"))
+        return conv["cid"], self._finish(conv, result, history, getattr(runner, "mode", "single"), variant)
 
     def resume(self, owner: str, cid: str, on_event: Optional[Callable[[dict], None]] = None,
                mode: str = "single") -> tuple[str, dict]:
@@ -134,15 +140,89 @@ class AgentService:
         if not question or not is_incomplete(conv["history"]):
             raise ValueError("이어서 처리할 질문이 없습니다.")
         conv = self._begin(owner, conv["cid"], question, resuming=True)
+        mode, variant = self._choose_mode(conv, mode)
         if any(c.name.startswith("delegate_") for m in conv["history"] for c in (m.get("tool_calls") or [])):
-            mode = "multi"  # 끊긴 질문은 시작한 방식 그대로 이어서
+            mode = "multi" if mode == "single" else mode  # 끊긴 질문은 시작한 방식 그대로 이어서
         runner = self._runner(conv, question, on_event, mode)
         try:
             result, history = runner.resume(conv["history"])
         except Exception:
             self._interrupted(conv, question, runner)
             raise
-        return conv["cid"], self._finish(conv, result, history, getattr(runner, "mode", "single"))
+        return conv["cid"], self._finish(conv, result, history, getattr(runner, "mode", "single"), variant)
+
+    # ------------------------------------------------------------------ v1.2 온라인 학습·평가
+    def _choose_mode(self, conv: dict, mode: str) -> tuple[str, str]:
+        """'자동' 이면 이 대화에 쓸 방식을 밴딧이 고름 (한 대화 안에서는 같은 방식). 방문자 학습 모델도 연결."""
+        from ..online.learning import pref_key
+
+        ctx = conv["ctx"]
+        if not ctx.pref_key:
+            ctx.pref_key = pref_key(conv["owner"])
+        if mode != "auto":
+            return mode, ""
+        if ctx.variant not in self.bandit.arms:
+            ctx.variant = self.bandit.choose()
+        return ctx.variant, "auto:" + ctx.variant
+
+    def _editable(self, owner: str, cid: str) -> dict:
+        conv = self.store.load(cid)
+        if conv is None or conv["owner"] != owner:
+            raise ValueError("대화를 찾을 수 없습니다.")
+        if conv["status"] == "running" and not ConversationStore.is_stale(conv):
+            raise Busy("답을 만드는 중입니다. 잠시 후 다시 눌러 주세요.")
+        return conv
+
+    def rate(self, owner: str, cid: str, turn_id: str, rating: int, reason: str = "") -> dict:
+        """답변 평가 (rating 1 = 👍, 0 = 👎). 다시 누르면 바뀜. 평가된 turn 을 돌려줌."""
+        from ..observability.metrics import METRICS
+        from ..observability.tracing import TRACER
+
+        if rating not in (0, 1):
+            raise ValueError("평가는 👍(1) 또는 👎(0) 입니다.")
+        with self.lock:
+            conv = self._editable(owner, cid)
+            turn = next((t for t in conv["turns"] if t.get("id") == turn_id), None)
+            if turn is None:
+                raise ValueError("평가할 답을 찾을 수 없습니다.")
+            reason = (reason or "")[:60] if rating == 0 else ""
+            previous = self.ratings.save(owner, cid, turn, rating, reason)
+            turn["rating"], turn["rating_reason"] = rating, reason
+            self.store.save(conv["cid"], owner, conv["history"], conv["ctx"], conv["turns"], conv["status"],
+                            conv.get("pending"))
+        if (turn.get("variant") or "").startswith("auto:"):
+            self.bandit.update(turn["variant"].split(":", 1)[1], rating, previous)
+        METRICS.counter("rea_feedback_total", "답변 평가 수 (방식·평가별)").inc(
+            mode=turn.get("mode", ""), rating="up" if rating else "down")
+        if turn.get("trace_id") and turn.get("span_id"):  # v1.1 추적에 손님 평가를 이어 붙임
+            with TRACER.span("feedback.rating", traceparent=f"00-{turn['trace_id']}-{turn['span_id']}-01",
+                             rating="up" if rating else "down", reason=reason or None, mode=turn.get("mode")):
+                pass
+        return turn
+
+    def listing_feedback(self, owner: str, cid: str, listing_id: str, action: str, reason: str = "") -> dict:
+        """매물 카드의 ♡ 관심 / ✕ 별로예요 → record_feedback 도구로 기록 + 온라인 학습. 도구 결과를 돌려줌."""
+        from .tools import ToolRegistry
+
+        if action not in ("like", "reject"):
+            raise ValueError("action 은 like 또는 reject 입니다.")
+        with self.lock:
+            conv = self._editable(owner, cid)
+            ctx = conv["ctx"]
+            if not ctx.pref_key:
+                from ..online.learning import pref_key
+
+                ctx.pref_key = pref_key(owner)
+            reg = ToolRegistry(self.agent, ctx, self.lock, memory=self.memory, owner=owner)
+            obs = reg.run("record_feedback", {"listing_id": listing_id, "action": action,
+                                              **({"reason": reason[:60]} if reason else {})})
+            if obs["ok"]:
+                self.memory.update_after(owner, ctx, [])  # 관심/제외는 다음 방문에도 기억
+                self.store.save(conv["cid"], owner, conv["history"], ctx, conv["turns"], conv["status"],
+                                conv.get("pending"))
+        if not obs["ok"]:
+            raise ValueError(obs["error"])
+        return obs["result"]
 
     def reset(self, cid: Optional[str]) -> None:
         """새 상담 시작 (대화만 지움, 장기 기억은 유지)."""
@@ -228,12 +308,13 @@ class AgentService:
         history = latest["history"] if latest else conv["history"]
         self.store.save(conv["cid"], conv["owner"], history, runner.ctx, conv["turns"], "interrupted", question)
 
-    def _finish(self, conv: dict, result, history: list[dict], mode: str = "single") -> dict:
-        turn = {"question": result.question, "answer": result.answer,
+    def _finish(self, conv: dict, result, history: list[dict], mode: str = "single", variant: str = "") -> dict:
+        turn = {"id": secrets.token_hex(6), "question": result.question, "answer": result.answer,
                 "steps": [step_dict(s) for s in result.steps], "listing_ids": result.listing_ids,
                 "badges": result.badges, "policy": result.policy, "total_ms": result.total_ms,
                 "tool_calls": result.tool_calls, "tool_errors": result.tool_errors,
-                "mode": mode, "trace_id": getattr(result, "trace_id", ""),
+                "mode": mode, "variant": variant, "trace_id": getattr(result, "trace_id", ""),
+                "span_id": getattr(result, "span_id", ""),
                 "at": datetime.now().isoformat(timespec="seconds")}
         conv["turns"] = (conv["turns"] + [turn])[-MAX_TURNS:]
         self.store.save(conv["cid"], conv["owner"], history, conv["ctx"], conv["turns"], "idle", None)

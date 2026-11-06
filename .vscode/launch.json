@@ -120,6 +120,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "🎯 온라인 학습 시뮬레이션 (online-sim: 반응으로 순서 학습 + '자동' 방식)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["online-sim"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "📊 단일 Agent vs 멀티 Agent 비교 (compare-agents)",
       "type": "debugpy",
       "request": "launch",

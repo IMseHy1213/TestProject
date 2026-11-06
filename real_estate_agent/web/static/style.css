@@ -392,3 +392,23 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 .wf-detail dt { color: var(--muted); } .wf-detail dd { margin: 0; overflow-wrap: anywhere; }
 .trace-link { float: right; font-size: .8rem; }
 @media (max-width: 600px) { .wf-row { grid-template-columns: 1fr 70px; } .wf-bar { grid-column: 1 / -1; grid-row: 2; } }
+/* v1.2 온라인 학습·평가 */
+.rate { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 10px 0 2px; font-size: .88rem; }
+.rate-q { color: var(--muted); margin-right: 4px; }
+.rate-btn, .mini-btn { display: inline-block; cursor: pointer; font: inherit; font-size: .84rem; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); list-style: none; }
+.rate-btn.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.rate-down summary::-webkit-details-marker, .mini-reject summary::-webkit-details-marker { display: none; }
+.rate-down[open] summary, .mini-reject[open] summary { background: var(--bg); }
+.reason-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip.small { font-size: .8rem; padding: 4px 10px; }
+.mini-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; margin-top: 10px; }
+.mini-actions form.inline { display: inline; }
+.mode-help { margin: 8px 0 0; font-size: .88rem; width: 100%; }
+.mode-help summary { cursor: pointer; color: var(--brand); font-weight: 600; }
+.mode-help dl { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; margin: 10px 0; }
+.mode-help dt { font-weight: 700; } .mode-help dd { margin: 0; color: var(--ink); }
+.small-h { font-size: .9rem; margin: 12px 0 2px; color: var(--muted); }
+.bar-cell { width: 40%; }
+.model-desc { white-space: pre-wrap; font-size: .84rem; background: var(--bg); padding: 10px; border-radius: 8px; }
+@media (max-width: 600px) { .mode-help dl { grid-template-columns: 1fr; } }

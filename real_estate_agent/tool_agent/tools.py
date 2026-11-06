@@ -48,6 +48,8 @@ class AgentContext:
     last_shown: list[str] = field(default_factory=list)  # 직전에 손님에게 보여준 매물 ('그 중' = 이 안에서 고름)
     last_search_from_memory: bool = False  # last_search 가 장기 기억(지난 상담)에서 온 것인지
     run_searches: list[dict] = field(default_factory=list)  # 이번 질문에서 새로 찾은 조건 (장기 기억에 저장)
+    pref_key: str = ""     # v1.2 온라인 학습: 이 방문자의 학습 모델 이름 (있으면 검색 순서에 반영)
+    variant: str = ""      # v1.2 '자동' 상담 방식이 이 대화에 고른 방식 (single / multi)
 
 
 # ---------------------------------------------------------------------- 인자 검사
@@ -409,7 +411,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         ctx.last_search_from_memory = False
         req = requirement_from_args(agent, given)
         req.customer_name = ctx.customer
-        session = agent.recommend(req)
+        session = agent.recommend(req, pref_key=ctx.pref_key or None)  # v1.2: 이 방문자에게서 배운 중요도로 점수
         ranked = [s for s in session.ranked if s.listing.listing_id not in ctx.rejected]
         pool = list(ctx.last_shown) if follow_up and not region_change else []  # 지역을 바꾸면 전체에서 다시
         if pool:  # '그 중에' -> 직전에 보여준 매물 안에서만
@@ -444,6 +446,12 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             out["참고"] = req.notes
         if ctx.rejected:
             out["제외한_매물"] = [tool_id(x) for x in agent.listings() if x.listing_id in ctx.rejected]
+        if sort == "score" and ranked and not pool:  # v1.2: 추천순이면 이 손님에게서 배운 중요도가 반영됨
+            from ..online.learning import learned_note
+
+            note = learned_note(agent, ctx.pref_key)
+            if note:
+                out["학습_반영"] = note
         return out
 
     def _recheck(limit: int, sort: str) -> dict[str, Any]:
@@ -532,7 +540,10 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             if l.listing_id not in ctx.liked:
                 ctx.liked.append(l.listing_id)
             note = "관심 매물로 기록했습니다."
-        return {"id": tool_id(l), "기록": action, "이유": reason or None, "안내": note}
+        from ..online.learning import learn_from_feedback
+
+        learned = learn_from_feedback(agent, ctx, l, action, reason)  # v1.2 온라인 학습: 다음 검색부터 반영
+        return {"id": tool_id(l), "기록": action, "이유": reason or None, "안내": note, "배운_점": learned or None}
 
     def recall_memory() -> dict[str, Any]:
         mem = reg.memory.load(reg.owner) if reg.memory and reg.owner else None

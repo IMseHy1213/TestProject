@@ -402,6 +402,22 @@ def run_observe(agent: RealEstateAgent, hours: float = 24) -> int:
     return 0
 
 
+def run_online_sim(agent: RealEstateAgent, p_single: float = 0.65, p_multi: float = 0.75) -> int:
+    """v1.2: 온라인 학습 시뮬레이션 (추천 순서 학습 + '자동' 상담 방식 밴딧)."""
+    from datetime import datetime
+
+    from .online.simulate import markdown, simulate_bandit, simulate_learning
+
+    md = markdown(simulate_learning(agent), simulate_bandit({"single": p_single, "multi": p_multi}))
+    print("\n" + md)
+    out = Path(agent.settings.log_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"online_sim_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    path.write_text(md, encoding="utf-8")
+    print(f"\n저장: {path}")
+    return 0
+
+
 def run_compare_agents(agent: RealEstateAgent) -> int:
     """v0.7: 같은 대화를 단일 Agent / 멀티 Agent 로 돌려 비교표를 출력하고 logs 에 저장."""
     from datetime import datetime
@@ -455,6 +471,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("a2a-demo", help="v0.8 발표용: 검색·분석 Agent 서버를 띄워 분산 상담 + 장애 대처 시연")
     tr = sub.add_parser("trace", help="v1.1 질문 하나의 처리 과정을 시간 막대로 (기본: 가장 최근)")
     tr.add_argument("trace_id", nargs="?", default="last")
+    os_ = sub.add_parser("online-sim", help="v1.2 온라인 학습 시뮬레이션 (반응으로 순서 학습 + '자동' 방식 밴딧)")
+    os_.add_argument("--p-single", type=float, default=0.65, help="가정: 상담원 1명 만족 확률")
+    os_.add_argument("--p-multi", type=float, default=0.75, help="가정: 상담팀 만족 확률")
     ob = sub.add_parser("observe", help="v1.1 최근 상담 지표 요약 (질문 수·성공률·응답 시간·AI 토큰·도구)")
     ob.add_argument("--hours", type=float, default=24)
     sub.add_parser("compare-agents", help="v0.7 단일 Agent vs 멀티 Agent 비교 (결과는 logs 폴더에 저장)")
@@ -581,6 +600,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if cmd == "compare-agents":
         agent.sync()
         return run_compare_agents(agent)
+    if cmd == "online-sim":
+        agent.sync()
+        return run_online_sim(agent, args.p_single, args.p_multi)
     if cmd == "reliability-test":
         agent.sync()
         return run_reliability_test(agent, args.seeds, args.deadline, args.delay)

@@ -102,6 +102,7 @@ class AgentResult:
     run_id: str = ""
     badges: dict[str, list[str]] = field(default_factory=dict)  # 매물별 표시 (최저가, 창고 가능 …)
     trace_id: str = ""        # v1.1: 이 질문의 추적 id (관리자 '관측' 화면에서 단계별 시간 확인)
+    span_id: str = ""         # v1.2: 이 질문의 맨 위 span (손님 평가를 같은 trace 에 이어 붙일 때)
 
     @property
     def tool_calls(self) -> int:
@@ -367,6 +368,8 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
     elif found and res.get("앞_조건_이어서"):  # '진천군에도 있어?' -> 앞 조건 그대로 다른 곳에서
         lines.append("앞의 조건 그대로 다시 찾았습니다.")
 
+    if found and res.get("학습_반영"):  # v1.2 온라인 학습
+        lines.append(res["학습_반영"] + ".")
     if found:
         how = "추천 순" if order == "추천순" else order
         lines.append(f"{cond} 매물 {total}건 중 {how}으로 {len(found)}건입니다." if total > len(found) else
@@ -492,7 +495,7 @@ class ToolAgent:
                 if self.final_answerer:
                     AGENT_REQUESTS.inc(mode=self.mode_label, policy="error", stopped="exception")
                 raise
-            result.trace_id = sp.trace_id
+            result.trace_id, result.span_id = sp.trace_id, sp.span_id
             sp.set(policy=result.policy, stopped=result.stopped, steps=len(result.steps),
                    tool_calls=result.tool_calls, tool_errors=result.tool_errors,
                    listings=len(result.listing_ids), answer_chars=len(result.answer),

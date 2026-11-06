@@ -248,7 +248,18 @@ class RealEstateAgent:
     def _options(self, customer: str) -> RecommendOptions:
         """손님별 학습 모델 + 사무실 공통 모델을 불러와 추천 옵션 구성."""
         pref = self.storage.load_preference(customer) if customer else PreferenceModel()
-        return RecommendOptions(market_price_per_m2=self.market_price, pref=pref, prior=self.office_model)
+        return RecommendOptions(market_price_per_m2=self.market_price, pref=pref, prior=self.office_model,
+                                feature_stats=self.feature_stats())
+
+    def feature_stats(self) -> dict:
+        """v1.2: 보유 매물의 면적·가격 분포 (매물 목록이 바뀌면 다시 계산)."""
+        from .preference import feature_stats
+
+        listings = self.listings()
+        key = (len(listings), sum(l.price_manwon or 0 for l in listings))
+        if getattr(self, "_fstats_key", None) != key:
+            self._fstats, self._fstats_key = feature_stats(listings), key
+        return self._fstats
 
     def _save_learning(self, session: RecommendationSession) -> None:
         if session.opt.prior is not None:
@@ -256,9 +267,11 @@ class RealEstateAgent:
         if session.req.customer_name and session.opt.pref is not None:
             self.storage.save_preference(session.req.customer_name, session.opt.pref)
 
-    def recommend(self, req: CustomerRequirement) -> RecommendationSession:
+    def recommend(self, req: CustomerRequirement, pref_key: Optional[str] = None) -> RecommendationSession:
+        """pref_key: 학습 모델 이름 (v1.2 AI 상담 방문자 모델). 없으면 손님 이름의 모델."""
         exclude = self.storage.rejected_ids(req.customer_name)
-        return RecommendationSession(self.listings(), req, self._options(req.customer_name), exclude_ids=exclude)
+        return RecommendationSession(self.listings(), req, self._options(pref_key or req.customer_name),
+                                     exclude_ids=exclude)
 
     def reject(self, session: RecommendationSession, reason: str = "", ai: bool = True) -> Optional[ScoredListing]:
         """현재 매물이 마음에 안 들 때: 거절 기록 + 취향 학습(규칙 + 생성형 AI) 후 다음 순위 매물."""
