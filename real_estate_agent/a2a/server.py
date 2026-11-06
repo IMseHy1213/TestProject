@@ -213,6 +213,7 @@ class A2AExecutor:
                                max_steps=self.role.max_steps)
             if self.role.key != "consult":
                 runner.answer_label = "총괄 Agent 에게 보고"
+                runner.final_answerer = False
             result, messages = runner.run(text, history)
             start = max(i for i, m in enumerate(messages) if m["role"] == "user")
             observations = [[m["name"], _loads(m["content"])] for m in messages[start:] if m["role"] == "tool"]

@@ -79,10 +79,15 @@ class MultiAgent:
         self.analyst = ToolAgent(agent, lock=lock, system_prompt=ANALYSIS_PROMPT, only=ANALYSIS_TOOLS, name=ANALYST,
                                  on_event=forward, max_steps=4, **common)
         self.searcher.answer_label = self.analyst.answer_label = "총괄 Agent 에게 보고"
+        self.searcher.final_answerer = self.analyst.final_answerer = False
         # 총괄의 도구(맡기기)는 잠금 없이 실행: 전문 Agent 가 매물 도구를 쓸 때만 잠금 (LLM 을 기다리는 동안 다른 손님을 막지 않게)
         self.supervisor = ToolAgent(agent, lock=None, tool_source=_DelegateTools(self), system_prompt=SUPERVISOR_PROMPT,
                                     name=SUPERVISOR, checkpoint=checkpoint, on_event=on_event,
                                     rule_policy=RuleSupervisor(self), max_steps=max_steps, **common)
+        # v1.0: 총괄이 쓴 답은 전문 Agent 들이 받은 도구 결과로 검증하고, 실패하면 그 결과로 다시 작성
+        self.supervisor.evidence = lambda: list(self.done)
+        self.supervisor.fallback_answer = lambda q, done: (rule_answer(q, self.done) if self.done
+                                                           else NOT_FOUND_MESSAGE)
         self.log_dir = log_dir if log_dir is not None else getattr(agent.settings, "log_dir", None)
 
     @property

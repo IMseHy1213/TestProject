@@ -93,6 +93,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "🛡 장애 주입 시험 (reliability-test: AI 오류·지연·환각·도구 장애)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["reliability-test"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "📊 단일 Agent vs 멀티 Agent 비교 (compare-agents)",
       "type": "debugpy",
       "request": "launch",

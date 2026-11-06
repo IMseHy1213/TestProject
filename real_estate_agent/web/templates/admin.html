@@ -98,6 +98,24 @@
   </ol>
 </section>
 
+<section class="panel reliability-panel">
+  <h2>🛡 안정성 <small class="muted">v1.0</small></h2>
+  <p class="meta">
+    {{ {"ok": "🟢 정상", "degraded": "🟡 일부 대체 모드로 동작", "fail": "🔴 손님을 받을 수 없음"}[ready.status] }}
+    {% for name, c in ready.checks.items() if not c.ok %}· {{ {"ai": "AI 미연결 → 규칙 기반", "realtime": "실시간 감시 꺼짐", "a2a_remotes": "원격 Agent 연결 쉬는 중", "capacity": "상담 자리 꽉 참", "database": "DB 오류", "listings": "매물 0건"}.get(name, name) }} {% endfor %}
+    · 동시 상담 {{ ready.checks.capacity.active }}/{{ ready.checks.capacity.limit }}
+  </p>
+  <ul class="stat-list">
+    <li><strong>{{ ready.reliability.guard_fixes }}</strong> AI 답변 검증 실패 → 다시 작성</li>
+    <li><strong>{{ ready.reliability.llm_fallbacks }}</strong> AI 오류 → 규칙 기반으로 이어서</li>
+    <li><strong>{{ ready.reliability.deadline_hits }}</strong> 시간 예산 초과 → 규칙 기반 마무리</li>
+    <li><strong>{{ ready.reliability.injections_blocked }}</strong> 지시 바꾸기 시도 무시</li>
+    <li><strong>{{ ready.reliability.tool_retries }}</strong> 도구 일시 오류 재시도</li>
+    <li><strong>{{ ready.reliability.rate_limited + ready.reliability.overloaded }}</strong> 과부하 보호 (너무 잦음·상담 몰림)</li>
+  </ul>
+  <p class="meta small-note">프로그램을 켠 뒤 누적. 자세한 상태: <a href="{{ url_for('readyz') }}">/readyz</a> · 장애 주입 시험: <code>python main.py reliability-test</code></p>
+</section>
+
 <section class="panel">
   <h2>매물 정리 보고서 (오류·중복)</h2>
   <p class="meta">{{ data.summary }}</p>

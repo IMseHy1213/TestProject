@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -328,6 +329,25 @@ def run_a2a_demo(settings) -> int:
                     proc.kill()
 
 
+def run_reliability_test(agent: RealEstateAgent, seeds: int = 3, deadline: float = 2.0, delay: float = 3.0) -> int:
+    """v1.0: 장애 주입 시험 - 고장 종류별 성공률·응답 시간 표 출력, logs 에 저장."""
+    from datetime import datetime
+
+    from .reliability.chaos import chaos_markdown, run_chaos
+
+    print(f"장애 주입 시험: 같은 대화 7개 질문 × {seeds}회, 시간 예산 {deadline}초")
+    report = run_chaos(agent, seeds=seeds, deadline=deadline, delay=delay, progress=lambda s: print("  · " + s))
+    md = chaos_markdown(report)
+    print("\n" + md)
+    out = Path(agent.settings.log_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    (out / f"reliability_{stamp}.md").write_text(md, encoding="utf-8")
+    (out / f"reliability_{stamp}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\n저장: {out / f'reliability_{stamp}.md'}")
+    return 0 if all(r["success"] == 100.0 for r in report["rows"] if r["guards"]) else 1
+
+
 def run_compare_agents(agent: RealEstateAgent) -> int:
     """v0.7: 같은 대화를 단일 Agent / 멀티 Agent 로 돌려 비교표를 출력하고 logs 에 저장."""
     from datetime import datetime
@@ -380,6 +400,10 @@ def build_parser() -> argparse.ArgumentParser:
     ac.add_argument("--context", default="", help="이어서 묻기: 같은 contextId")
     sub.add_parser("a2a-demo", help="v0.8 발표용: 검색·분석 Agent 서버를 띄워 분산 상담 + 장애 대처 시연")
     sub.add_parser("compare-agents", help="v0.7 단일 Agent vs 멀티 Agent 비교 (결과는 logs 폴더에 저장)")
+    rt = sub.add_parser("reliability-test", help="v1.0 장애 주입 시험 (AI 오류·지연·환각·도구 장애 등에서 성공률)")
+    rt.add_argument("--seeds", type=int, default=3, help="같은 대화를 몇 번 돌릴지")
+    rt.add_argument("--deadline", type=float, default=2.0, help="질문 하나의 시간 예산 (초)")
+    rt.add_argument("--delay", type=float, default=3.0, help="'AI 지연' 고장에서 멈추는 시간 (초)")
 
     mc = sub.add_parser("mcp", help="MCP 서버 (Claude Desktop 등에서 매물 도구 사용). 기본 stdio")
     mc.add_argument("--http", action="store_true", help="Streamable HTTP 로 실행 (http://127.0.0.1:8002/mcp)")
@@ -493,6 +517,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if cmd == "compare-agents":
         agent.sync()
         return run_compare_agents(agent)
+    if cmd == "reliability-test":
+        agent.sync()
+        return run_reliability_test(agent, args.seeds, args.deadline, args.delay)
 
     try:
         if cmd in {"sync", "recommend", "chat", "proactive", "export"}:

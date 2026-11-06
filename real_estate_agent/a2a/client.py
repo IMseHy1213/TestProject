@@ -47,6 +47,13 @@ class A2AClient:
             self._open_until.pop(self.url, None)
 
     @classmethod
+    def circuit_open(cls, url: str) -> bool:
+        """이 주소가 최근 연결 실패로 '쉬는 중'인지 (상태 점검용, 연결은 하지 않음)."""
+        url = url if url.endswith("/") else url + "/"
+        with cls._mu:
+            return cls._open_until.get(url, 0) > time.monotonic()
+
+    @classmethod
     def reset_all(cls) -> None:
         with cls._mu:
             cls._open_until.clear()

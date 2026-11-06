@@ -25,11 +25,37 @@ _CID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 class Busy(Exception):
     """같은 대화에서 앞 질문을 아직 처리 중."""
 
+    status = 409
+
+
+class RateLimited(Busy):
+    """v1.0: 한 방문자가 짧은 시간에 너무 많이 물음."""
+
+    status = 429
+
+    def __init__(self, wait: float):
+        super().__init__(f"질문이 너무 잦습니다. {int(wait) + 1}초 뒤에 다시 물어봐 주세요.")
+        self.retry_after = int(wait) + 1
+
+
+class Overloaded(Busy):
+    """v1.0: 동시에 상담이 너무 많아 자리가 나지 않음."""
+
+    status = 503
+    retry_after = 10
+
+    def __init__(self):
+        super().__init__("지금 상담이 몰려 있습니다. 잠시 후 다시 물어봐 주세요.")
+
 
 class AgentService:
-    def __init__(self, agent, lock: Optional[threading.RLock] = None):
+    def __init__(self, agent, lock: Optional[threading.RLock] = None, rate=None, bulkhead=None):
+        from ..reliability.limits import Bulkhead, RateLimiter
+
         self.agent = agent
         self.lock = lock or threading.RLock()
+        self.rate = rate or RateLimiter()          # v1.0: 방문자별 1분 질문 수
+        self.bulkhead = bulkhead or Bulkhead()     # v1.0: 동시에 처리하는 상담 수
         self.store = ConversationStore(agent.storage.conn, self.lock)
         self.memory = LongTermMemory(agent.storage.conn, self.lock)
         self.store.prune()
@@ -55,6 +81,32 @@ class AgentService:
     def ask(self, owner: str, cid: Optional[str], question: str,
             on_event: Optional[Callable[[dict], None]] = None, mode: str = "single") -> tuple[str, dict]:
         """질문 하나 처리 -> (대화 id, 이번 질문/답변 기록). mode: 'single' / 'multi'."""
+        with self._slot(owner):
+            return self._ask(owner, cid, question, on_event, mode)
+
+    def _slot(self, owner: str):
+        """v1.0 과부하 보호: 방문자별 횟수 제한 → 동시 상담 자리 얻기 (자리는 답이 끝나면 반납)."""
+        from contextlib import contextmanager
+
+        from ..reliability.stats import STATS
+
+        @contextmanager
+        def slot():
+            wait = self.rate.check(owner)
+            if wait:
+                STATS.add("rate_limited")
+                raise RateLimited(wait)
+            if not self.bulkhead.acquire():
+                STATS.add("overloaded")
+                raise Overloaded()
+            try:
+                yield
+            finally:
+                self.bulkhead.release()
+
+        return slot()
+
+    def _ask(self, owner: str, cid: Optional[str], question: str, on_event, mode: str) -> tuple[str, dict]:
         conv = self._begin(owner, cid, question)
         runner = self._runner(conv, question, on_event, mode)
         history = conv["history"]
@@ -73,6 +125,10 @@ class AgentService:
     def resume(self, owner: str, cid: str, on_event: Optional[Callable[[dict], None]] = None,
                mode: str = "single") -> tuple[str, dict]:
         """끊긴 질문을 마지막 체크포인트부터 이어서 처리."""
+        with self._slot(owner):
+            return self._resume(owner, cid, on_event, mode)
+
+    def _resume(self, owner: str, cid: str, on_event, mode: str) -> tuple[str, dict]:
         conv = self.open(owner, cid, reuse_recent=False)
         question = conv.get("pending")
         if not question or not is_incomplete(conv["history"]):

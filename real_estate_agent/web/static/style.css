@@ -351,3 +351,7 @@ a.office-phone:hover { text-decoration: underline; }
   .agent-analysis { background: #183a26; color: #86efac; }
 }
 .search .agent-mode input { flex: none; min-height: 0; padding: 0; margin: 0; width: auto; border: 0; }
+/* v1.0 안정성 */
+.stat-list { list-style: none; padding: 0; margin: 10px 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.stat-list li { background: var(--bg); border-radius: 10px; padding: 10px 12px; font-size: .9rem; color: var(--muted); }
+.stat-list strong { display: block; font-size: 1.3rem; color: var(--ink); }

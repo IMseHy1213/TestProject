@@ -480,6 +480,15 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
 
         return f"id: {ev.id}\nevent: {ev.topic}\ndata: {_json.dumps(ev.public(), ensure_ascii=False, default=str)}\n\n"
 
+    # ------------------------------------------------------------ v1.0 상태 점검 (/healthz 는 아래: 살아 있는지만)
+    @app.get("/readyz")
+    def readyz():
+        """손님을 받을 준비가 됐는지: DB · 매물 · AI · 실시간 · 원격 Agent · 동시 상담 자리. 실패면 503."""
+        from ..reliability.health import http_status, readiness
+
+        report = readiness(agent, lock, app.config.get("REALTIME"), agent_service)
+        return report, http_status(report)
+
     @app.get("/events/stream")
     def events_stream():
         """실시간 알림: 손님은 자기 맞춤 알림(찾던 조건의 새 매물·가격 인하)만, 관리자는 모든 이벤트."""
@@ -575,7 +584,10 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                 "synced_at": agent.last_sync_at.strftime("%Y-%m-%d %H:%M:%S") if agent.last_sync_at else "-",
                 "office": agent.office_model.describe(),
             }
+        from ..reliability.health import readiness
+
         return render_template("admin.html", data=data, data_dir=str(settings.data_dir), realtime=realtime_view(),
+                               ready=readiness(agent, lock, app.config.get("REALTIME"), agent_service),
                                llm_status=agent.llm.status(), sync_error=state["sync_error"],
                                message=session.pop("admin_msg", ""), pw_source=auth.source,
                                min_len=MIN_PASSWORD_LEN)

@@ -270,6 +270,20 @@ class ToolRegistry:
                 return l.listing_id
         return None
 
+    def _call(self, tool: "Tool", args: dict[str, Any]) -> Any:
+        """도구 실행. v1.0: DB 잠김 같은 일시 오류는 잠깐 쉬었다가 2번까지 다시 (그래도 안 되면 오류 관찰)."""
+        for attempt in range(3):
+            try:
+                with self.lock or nullcontext():  # 매물 목록·DB 는 여러 접속자가 함께 씀
+                    return tool.fn(**args)
+            except Exception as e:
+                if attempt == 2 or not _transient(e):
+                    raise
+                from ..reliability.stats import STATS
+
+                STATS.add("tool_retries")
+                time.sleep(0.05 * 2 ** attempt)
+
     def schemas(self) -> list[dict[str, Any]]:
         return [t.schema() for t in self.tools.values()]
 
@@ -285,8 +299,7 @@ class ToolRegistry:
                 out = {"ok": False, "error": "인자 오류: " + "; ".join(errors)}
             else:
                 try:
-                    with self.lock or nullcontext():  # 매물 목록·DB 는 여러 접속자가 함께 씀
-                        result = tool.fn(**clean)
+                    result = self._call(tool, clean)
                     out = {"ok": True, "result": result}
                 except ToolError as e:
                     out = {"ok": False, "error": str(e)}
@@ -294,6 +307,13 @@ class ToolRegistry:
                     out = {"ok": False, "error": f"도구 실행 중 오류: {type(e).__name__}: {e}"}
         out["ms"] = round((time.perf_counter() - started) * 1000, 1)
         return out
+
+
+def _transient(e: Exception) -> bool:
+    """잠깐 기다리면 풀리는 오류 (SQLite 'database is locked' 등)."""
+    import sqlite3
+
+    return isinstance(e, sqlite3.OperationalError) and ("locked" in str(e) or "busy" in str(e))
 
 
 class ToolError(Exception):

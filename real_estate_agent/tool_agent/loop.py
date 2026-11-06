@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -32,6 +33,20 @@ log = logging.getLogger(__name__)
 MAX_STEPS = 6          # 모델 응답(행동) 최대 횟수
 MAX_CALLS_PER_STEP = 4  # 한 번에 요청할 수 있는 도구 호출 수
 MAX_HISTORY = 40       # 대화 기록 보관 (메시지 수)
+try:  # v1.0: 질문 하나의 시간 예산 (초). 넘으면 AI 를 기다리지 않고 규칙 기반으로 마무리
+    DEADLINE = max(1.0, float(os.getenv("REA_AGENT_DEADLINE", "45")))
+except ValueError:
+    DEADLINE = 45.0
+_LLM_POOL = None  # AI 호출을 시간 제한과 함께 기다리기 위한 스레드 묶음
+
+
+def _llm_pool():
+    global _LLM_POOL
+    if _LLM_POOL is None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        _LLM_POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="llm-call")
+    return _LLM_POOL
 
 SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무소 '상담 에이전트'입니다. 손님 질문에 답하려면 도구를 사용하세요.
 
@@ -430,9 +445,11 @@ class ToolAgent:
                  checkpoint: Optional[Callable[[list, AgentContext], None]] = None,
                  on_event: Optional[Callable[[dict], None]] = None, tool_source=None,
                  system_prompt: str = SYSTEM_PROMPT, only: Optional[set[str]] = None, name: str = "",
-                 trace: Optional[list] = None, rule_policy=None):
+                 trace: Optional[list] = None, rule_policy=None, deadline: Optional[float] = None,
+                 guards: bool = True):
         """v0.7 멀티 Agent 용: system_prompt(역할 지시), only(쓸 도구), name(trace 에 표시할 이름),
-        trace(여러 Agent 가 함께 쓰는 단계 기록), rule_policy(LLM 이 없을 때 쓸 정책)."""
+        trace(여러 Agent 가 함께 쓰는 단계 기록), rule_policy(LLM 이 없을 때 쓸 정책).
+        v1.0: deadline(질문 하나의 시간 예산, 초), guards(입력·출력 가드레일 사용)."""
         self.agent = agent
         self.registry = ToolRegistry(agent, ctx, lock, memory=memory, owner=owner, tool_source=tool_source,
                                      only=only)
@@ -444,6 +461,13 @@ class ToolAgent:
         self.log_dir = log_dir if log_dir is not None else getattr(agent.settings, "log_dir", None)
         self.memory, self.owner = memory, owner
         self.checkpoint, self.on_event = checkpoint, on_event
+        self.deadline = deadline if deadline is not None else DEADLINE
+        self.guards = guards
+        self.final_answerer = True  # 손님에게 직접 답하는 Agent (멀티 Agent 의 전문 Agent 는 False)
+        # 답변 검증에 쓸 추가 근거 (멀티 Agent 총괄: 전문 Agent 들이 받은 도구 결과), 검증 실패 시 다시 쓰는 방법
+        self.evidence: Callable[[], list] = lambda: []
+        self.fallback_answer: Callable[[str, list], str] = rule_answer
+        self._input = None
 
     @property
     def ctx(self) -> AgentContext:
@@ -451,8 +475,31 @@ class ToolAgent:
 
     def run(self, question: str, history: Optional[list[dict]] = None) -> tuple[AgentResult, list[dict]]:
         """질문 하나 처리. (결과, 갱신된 대화 기록) 반환."""
-        messages = list(history or []) + [{"role": "user", "content": question}]
-        return self._loop(question, messages, [])
+        from ..reliability.guardrails import REFUSAL, check_input
+        from ..reliability.stats import STATS
+
+        self._input = check_input(question) if self.guards else None
+        pre: list[Step] = []
+        if self._input and self._input.changed:
+            STATS.add("injections_blocked")
+            pre.append(Step(0, "guard", "rule", summary="지시를 바꾸려는 문장은 무시함: "
+                                                        + " / ".join(self._input.removed)[:120]))
+        if self._input and self._input.refuse:  # 상담과 관계없는 지시만 있음 -> AI 를 부르지 않고 정해진 안내
+            started = time.perf_counter()
+            messages = list(history or []) + [{"role": "user", "content": question},
+                                              {"role": "assistant", "content": REFUSAL}]
+            for s in pre:
+                self._add([], s)
+            result = AgentResult(question, REFUSAL, pre, [], "rule", "guard",
+                                 round((time.perf_counter() - started) * 1000, 1), uuid.uuid4().hex[:12])
+            self._log(result)
+            self._emit("done", answer=REFUSAL, listing_ids=[], policy="rule", total_ms=result.total_ms)
+            return result, trim_history(messages)
+        q = self._input.question if self._input else question
+        messages = list(history or []) + [{"role": "user", "content": q}]
+        result, history_out = self._loop(q, messages, pre)
+        result.question = question  # 화면에는 손님이 쓴 그대로
+        return result, history_out
 
     def resume(self, history: list[dict]) -> tuple[AgentResult, list[dict]]:
         """답을 만들다 끊긴 대화를 마지막 체크포인트부터 이어서 진행."""
@@ -504,6 +551,10 @@ class ToolAgent:
                 self._add(steps, Step(0, "memory", "", summary="장기 기억 불러옴 · " + summary[:160]))
         tools = self.registry.schemas()
         for s in steps:
+            if self.name and not s.agent:
+                s.agent = self.name
+            if self.trace is not None and s not in self.trace:
+                self.trace.append(s)
             self._emit("step", step=asdict(s))
         use_llm = self.llm_policy.available
         if not use_llm:
@@ -512,13 +563,22 @@ class ToolAgent:
         answer, policy, stopped = "", "rule", "max_steps"
         self._save(messages)
 
+        from ..reliability.stats import STATS
+
         for n in range(1, self.max_steps + 1):
             t0 = time.perf_counter()
             self._emit("thinking", n=n)
+            remaining = self.deadline - (t0 - started)
+            if use_llm and remaining <= 0.05:  # v1.0 시간 예산: AI 를 더 기다리지 않고 규칙으로 마무리
+                STATS.add("deadline_hits")
+                self._add(steps, Step(n, "guard", "rule",
+                                      summary=f"시간 예산 {self.deadline:g}초를 다 써서 규칙 기반으로 마무리"))
+                use_llm = False
             try:
-                turn = (self.llm_policy.next(messages, tools, extra) if use_llm
+                turn = (self._llm_call(self.llm_policy.next, remaining, list(messages), tools, extra) if use_llm
                         else self.rule_policy.next(messages, tools))
             except LLMUnavailable as e:
+                STATS.add("llm_fallbacks")
                 self._add(steps, Step(n, "fallback", "rule", summary=f"AI 응답 실패 → 규칙 기반으로 이어서 진행 ({e})",
                                       ms=_ms(t0)))
                 use_llm = False
@@ -561,8 +621,10 @@ class ToolAgent:
             try:
                 if not use_llm:
                     raise LLMUnavailable("규칙 기반")
-                turn = self.llm_policy.llm.tool_step(self.llm_policy.prompt + extra + "\n이제 도구 없이 지금까지 결과로 답하세요.",
-                                                     messages, [])
+                turn = self._llm_call(self.llm_policy.llm.tool_step,
+                                      self.deadline - (time.perf_counter() - started),
+                                      self.llm_policy.prompt + extra + "\n이제 도구 없이 지금까지 결과로 답하세요.",
+                                      list(messages), [])
                 if turn.tool_calls or not turn.text.strip():
                     raise LLMUnavailable("도구 없이 답하지 못함")
                 answer, policy = turn.text.strip(), turn.provider or "llm"
@@ -576,6 +638,7 @@ class ToolAgent:
 
         start = max(i for i, m in enumerate(messages) if m["role"] == "user")
         done = [(m["name"], _loads(m["content"])) for m in messages[start:] if m["role"] == "tool"]
+        answer, policy = self._check_output(question, answer, policy, done, steps, messages)
         badges = {}
         for key, values in listing_badges(done).items():  # 도구 id(공개용) -> 실제 매물 id
             badges[self.registry.resolve(key) or key] = values
@@ -591,6 +654,48 @@ class ToolAgent:
         self._emit("done", answer=result.answer, listing_ids=result.listing_ids, policy=result.policy,
                    total_ms=result.total_ms)
         return result, history
+
+    def _llm_call(self, fn: Callable, budget: float, *args: Any) -> ToolTurn:
+        """AI 호출을 남은 시간 예산만큼만 기다림 (멈춘 AI 때문에 손님이 계속 기다리지 않게)."""
+        from concurrent.futures import TimeoutError as FutureTimeout
+
+        if budget <= 0.05:
+            raise LLMUnavailable("시간 예산을 다 씀")
+        future = _llm_pool().submit(fn, *args)
+        try:
+            return future.result(timeout=budget)
+        except FutureTimeout:
+            from ..reliability.stats import STATS
+
+            STATS.add("deadline_hits")
+            raise LLMUnavailable(f"AI 응답이 시간 예산({self.deadline:g}초) 안에 오지 않음") from None
+
+    def _check_output(self, question: str, answer: str, policy: str, done: list, steps: list[Step],
+                      messages: list[dict]) -> tuple[str, str]:
+        """v1.0 출력 가드: AI 가 쓴 답의 매물·가격·면적이 도구 결과에 있는지, 개인정보가 없는지 확인."""
+        if not self.guards:
+            return answer, policy
+        from ..reliability.guardrails import Evidence, check_answer, contact_notice
+        from ..reliability.stats import STATS
+
+        n = steps[-1].n if steps else 0
+        if answer and policy not in {"rule", ""}:
+            history_obs = [(m["name"], _loads(m["content"])) for m in messages if m["role"] == "tool"]
+            problems = check_answer(answer, Evidence.from_observations(history_obs + list(self.evidence())),
+                                    self.agent)
+            if problems:
+                STATS.add("guard_fixes")
+                fixed = self.fallback_answer(question, done)
+                self._add(steps, Step(n, "guard", "rule",
+                                      summary="답변 검증 실패 → 도구 결과로 다시 작성 (" + "; ".join(problems)[:200] + ")"))
+                answer, policy = fixed, "rule"
+        if answer and self.final_answerer and self._input and self._input.asks_contact:
+            notice = contact_notice()
+            if notice not in answer:
+                answer = answer + "\n" + notice
+        if messages and messages[-1]["role"] == "assistant" and not messages[-1].get("tool_calls"):
+            messages[-1]["content"] = answer
+        return answer, policy
 
     def _cards(self, done: list[tuple[str, dict]], answer: str, seen_before: int) -> list[str]:
         """화면 카드로 보여줄 매물: 이번 질문의 마지막 비교(없으면 검색) 결과 순서대로 + 답변에서 따로 말한 매물."""

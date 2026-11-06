@@ -163,6 +163,16 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     async def health() -> Health:
         return Health(status="ok", version=API_VERSION, listings=len(agent.listings()), llm=agent.llm.mode())
 
+    @app.get("/api/v1/ready", tags=["상태"])
+    async def ready():
+        """v1.0 준비 상태: ok / degraded(일부 대체 모드) / fail(503)."""
+        from fastapi.responses import JSONResponse
+
+        from ..reliability.health import http_status, readiness
+
+        report = await asyncio.to_thread(readiness, agent, lock, hub, service)
+        return JSONResponse(report, status_code=http_status(report))
+
     @app.post("/api/v1/listings/search", response_model=SearchResponse, tags=["매물"])
     async def search(body: SearchRequest) -> SearchResponse:
         args = {k: v for k, v in body.model_dump().items() if v not in (None, "", [])}
@@ -189,8 +199,9 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         vid, owner = owner_of(x_visitor_id)
         try:
             cid, turn = await asyncio.to_thread(service.ask, owner, body.conversation_id, body.question, None, body.mode)
-        except Busy as e:
-            raise HTTPException(409, str(e)) from e
+        except Busy as e:  # 409 같은 대화 처리 중 / 429 너무 잦음 / 503 상담 몰림 (v1.0)
+            headers = {"Retry-After": str(e.retry_after)} if getattr(e, "retry_after", None) else None
+            raise HTTPException(e.status, str(e), headers=headers) from e
         listings = [listing_out(i, turn["badges"].get(i)) for i in turn["listing_ids"]]
         return AskResponse(conversation_id=cid, visitor_id=vid, answer=turn["answer"],
                            listings=[x for x in listings if x], steps=[StepOut(**s) for s in turn["steps"]],
