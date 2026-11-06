@@ -223,8 +223,15 @@ class RuleSupervisor:
         start = max(i for i, m in enumerate(messages) if m["role"] == "user")
         done = [(m["name"], _loads(m["content"])) for m in messages[start:] if m["role"] == "tool"]
         names = [n for n, _ in done]
-        if "delegate_search" not in names:
+        from .loop import _named_listing
+
+        named = _named_listing(self.multi.agent, question)
+        if named and _purpose_in(question) and _asks_buildable(question) and not names:
+            return _call("delegate_analysis", {"task": question})  # 매물번호를 말했으면 찾을 필요 없이 분석 담당에게
+        if "delegate_search" not in names and not (named and "delegate_analysis" in names):
             return _call("delegate_search", {"task": question})
+        if "delegate_search" not in names:  # 분석만 한 경우: 분석 담당의 보고로 답
+            return ToolTurn(text=rule_answer(question, self.multi.done) if self.multi.done else "", provider="rule")
         report = next(o for n, o in done if n == "delegate_search").get("result", {})
         found = report.get("매물", [])
         needs = ((_wants_compare(question) and len(found) >= 2)

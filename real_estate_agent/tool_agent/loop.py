@@ -146,6 +146,12 @@ class RulePolicy:
         have = {t["name"] for t in tools} if tools else None  # 멀티 Agent: 이 Agent 가 가진 도구만 씀
         if have is not None and "search_listings" not in have:
             return self._analyze(question, done, names, have)
+        named = _named_listing(self.ctx_agent, question)  # v1.3: 'T-1004에 공장 지을 수 있어?' → 그 매물을 바로 확인
+        if (named and _purpose_in(question) and _asks_buildable(question) and "check_land_use" not in names
+                and (have is None or "check_land_use" in have)):
+            return _call("check_land_use", {"listing_id": named, "purpose": _purpose_in(question)})
+        if named and "check_land_use" in names and not any(n == "search_listings" for n in names):
+            return ToolTurn(text=rule_answer(question, done), provider="rule")
 
         if (_mentions_past(question) and "recall_memory" not in names and "search_listings" not in names
                 and (have is None or "recall_memory" in have)):
@@ -198,9 +204,10 @@ class RulePolicy:
             k = min(len(found), _wanted_count(question) or 2, 5)
             return _call("compare_listings", {"listing_ids": [x["id"] for x in found[:k]]})
         purpose = _purpose_in(question)
-        if (purpose and found and "check_land_use" not in names and _asks_buildable(question)
+        named = _named_listing(self.ctx_agent, question)  # 손님이 매물번호를 말했으면 그 매물이 대상
+        if (purpose and (named or found) and "check_land_use" not in names and _asks_buildable(question)
                 and can("check_land_use")):
-            return _call("check_land_use", {"listing_id": found[0]["id"], "purpose": purpose})
+            return _call("check_land_use", {"listing_id": named or found[0]["id"], "purpose": purpose})
         return ToolTurn(text=rule_answer(question, done), provider="rule")
 
     def _shown(self) -> list[dict]:
@@ -307,11 +314,27 @@ def _asks_buildable(q: str) -> bool:
     return bool(re.search(r"지을\s*수|건축|가능|되나|될까|돼요|되요", q))
 
 
+def _named_listing(agent, q: str) -> Optional[str]:
+    """질문에 나온 매물번호 (공개 id) - 없으면 None."""
+    if agent is None:
+        return None
+    from ..agent import public_office_no
+    from .tools import tool_id
+
+    for l in agent.listings():
+        for key in {public_office_no(l.office_no), tool_id(l)} - {""}:
+            if len(key) >= 3 and re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(key)}(?![A-Za-z0-9_-])", q):
+                return tool_id(l)
+    return None
+
+
 def _wanted_count(q: str) -> Optional[int]:
     m = re.search(r"(\d+|한|두|세|네|다섯)\s*(개|곳|건|군데)", q)
-    if not m:
-        return None
-    words = {"한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5}
+    if not m:  # v1.3: '넓은 걸로 하나', '두 개만' 외에 '둘만', '셋 보여줘' 도 개수로 (단 '하나도 없어?' 는 아님)
+        m = re.search(r"(?<![가-힣])(하나|둘|셋|넷)(?!도)(?=\s*(?:만|요|$|[?.!]|보여|알려|추천|찾아|줘|골라))", q)
+        if not m:
+            return None
+    words = {"한": 1, "두": 2, "세": 3, "네": 4, "다섯": 5, "하나": 1, "둘": 2, "셋": 3, "넷": 4}
     n = words.get(m.group(1)) or int(m.group(1))
     return max(1, min(n, 10))
 
@@ -757,7 +780,7 @@ class ToolAgent:
 
         for l in self.agent.listings():
             for key in {l.listing_id, l.office_no, public_office_no(l.office_no)} - {""}:
-                if re.search(rf"(?<![\w-]){re.escape(key)}(?![\w-])", answer):
+                if re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(key)}(?![A-Za-z0-9_-])", answer):
                     ids.append((answer.find(key), l.listing_id))
                     break
         ordered = [lid for _, lid in sorted(ids)]

@@ -418,6 +418,47 @@ def run_online_sim(agent: RealEstateAgent, p_single: float = 0.65, p_multi: floa
     return 0
 
 
+def run_benchmark_cli(agent: RealEstateAgent, configs: str = "", load: bool = True, check: bool = False,
+                      save_baseline: bool = False, ai_delay: float = 0.3) -> int:
+    """v1.3: 문제지로 방식별 품질·속도 측정 + 동시 처리량 + 기준선 비교."""
+    import logging as _logging
+    from datetime import datetime
+
+    from .benchmark import (BASELINE, baseline_of, compare_baseline, markdown, run_benchmark, run_load)
+
+    _logging.getLogger("real_estate_agent").setLevel(_logging.ERROR)
+    chosen = [c.strip() for c in configs.split(",") if c.strip()] or None
+    print("벤치마크 실행 중 …")
+    report = run_benchmark(agent, chosen, progress=lambda s: print("  · " + s))
+    load_rule = load_ai = None
+    if load:
+        print("  · 동시 처리량 (규칙 기반)")
+        load_rule = run_load(agent, requests_per_level=32)
+        if ai_delay > 0:
+            print(f"  · 동시 처리량 (AI 응답 {ai_delay}초 가정)")
+            load_ai = run_load(agent, requests_per_level=16, ai_delay=ai_delay)
+            load_ai += run_load(agent, levels=(16,), requests_per_level=16, ai_delay=ai_delay, limit=16)
+    regressions = None
+    if BASELINE.exists():
+        regressions = compare_baseline(report, json.loads(BASELINE.read_text(encoding="utf-8")))
+    md = markdown(report, load_rule, load_ai, regressions)
+    print("\n" + md)
+    out = Path(agent.settings.log_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    (out / f"benchmark_{stamp}.md").write_text(md, encoding="utf-8")
+    (out / f"benchmark_{stamp}.json").write_text(json.dumps({"report": report, "load": load_rule, "load_ai": load_ai},
+                                                            ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"\n저장: {out / f'benchmark_{stamp}.md'}")
+    if save_baseline:
+        BASELINE.write_text(json.dumps(baseline_of(report), ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"기준선 저장: {BASELINE}")
+    if check and regressions:
+        print("\n❌ 기준선보다 나빠졌습니다.")
+        return 1
+    return 0
+
+
 def run_compare_agents(agent: RealEstateAgent) -> int:
     """v0.7: 같은 대화를 단일 Agent / 멀티 Agent 로 돌려 비교표를 출력하고 logs 에 저장."""
     from datetime import datetime
@@ -471,6 +512,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("a2a-demo", help="v0.8 발표용: 검색·분석 Agent 서버를 띄워 분산 상담 + 장애 대처 시연")
     tr = sub.add_parser("trace", help="v1.1 질문 하나의 처리 과정을 시간 막대로 (기본: 가장 최근)")
     tr.add_argument("trace_id", nargs="?", default="last")
+    bm = sub.add_parser("benchmark", help="v1.3 벤치마크 (문제지로 품질·속도·처리량 측정, 기준선 비교)")
+    bm.add_argument("--configs", default="", help="쉼표로: single,multi,distributed,mcp (기본: 모두)")
+    bm.add_argument("--no-load", action="store_true", help="동시 처리량 측정은 건너뜀")
+    bm.add_argument("--ai-delay", type=float, default=0.3, help="동시 처리량: AI 응답 시간 가정 (초, 0=건너뜀)")
+    bm.add_argument("--check", action="store_true", help="기준선보다 나빠졌으면 실패(종료 코드 1)")
+    bm.add_argument("--save-baseline", action="store_true", help="이번 결과를 benchmarks/baseline.json 으로 저장")
     os_ = sub.add_parser("online-sim", help="v1.2 온라인 학습 시뮬레이션 (반응으로 순서 학습 + '자동' 방식 밴딧)")
     os_.add_argument("--p-single", type=float, default=0.65, help="가정: 상담원 1명 만족 확률")
     os_.add_argument("--p-multi", type=float, default=0.75, help="가정: 상담팀 만족 확률")
@@ -600,6 +647,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     if cmd == "compare-agents":
         agent.sync()
         return run_compare_agents(agent)
+    if cmd == "benchmark":  # 문제지에 맞는 샘플 매물 + 임시 DB 로 (사무실 DB·관측 기록을 건드리지 않음)
+        import tempfile
+
+        from . import observability
+        from .benchmark import load_dataset
+        from .config import PROJECT_ROOT, Settings
+
+        observability.setup(settings, "benchmark", sqlite=False, json_logs=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            bench = RealEstateAgent(Settings(data_dir=PROJECT_ROOT / load_dataset()["data_dir"],
+                                             db_path=Path(tmp) / "benchmark.db", log_dir=settings.log_dir,
+                                             llm_providers=settings.llm_providers))
+            bench.sync()
+            return run_benchmark_cli(bench, args.configs, not args.no_load, args.check, args.save_baseline,
+                                     args.ai_delay)
     if cmd == "online-sim":
         agent.sync()
         return run_online_sim(agent, args.p_single, args.p_multi)

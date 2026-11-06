@@ -33,7 +33,7 @@ _INJECTION = [
 _SPLIT = re.compile(r"(?<=[.!?\n。])\s*|(?<=[고서며])\s+|,\s*")
 _CONTACT = re.compile(r"연락처|전화\s*번호|폰\s*번호|핸드폰|휴대폰|집주인|소유자|땅\s*주인|매도인|지번|번지|정확한\s*(주소|위치)|상세\s*주소")
 REFUSAL = ("저는 토지 매물 상담만 도와드릴 수 있습니다. 찾으시는 지역·용도·예산을 말씀해 주세요. "
-           "(예: 음성군에 창고 지을 수 있는 땅 3억 이하)")
+           "(예: 음성군에 창고 지을 수 있는 땅)")
 
 
 def office_phone() -> str:
@@ -86,7 +86,7 @@ _AREA = re.compile(r"([\d,]+(?:\.\d+)?)\s*평(?!당|균|일|야|가)")
 _M2 = re.compile(r"([\d,]+(?:\.\d+)?)\s*(?:㎡|m2|제곱미터)")
 _PHONE = re.compile(r"(?<!\d)0\d{1,2}[-.\s)]?\d{3,4}[-.\s]?\d{4}(?!\d)")
 _LOT = re.compile(r"[가-힣]{1,6}(?:리|동)\s*(?:산\s*)?\d+(?:-\d+)?(?:\s*번지)?(?![\d,]*\s*(?:건|평|㎡|억|만|개|%|곳|m))")
-_INTERNAL_ID = re.compile(r"(?<![\w-])F-[0-9a-f]{6,}(?![\w-])")
+_INTERNAL_ID = re.compile(r"(?<![A-Za-z0-9_.-])F-[0-9a-f]{6,}(?![A-Za-z0-9_-])")
 
 
 def _num(text: str) -> float:
@@ -156,7 +156,7 @@ def check_answer(answer: str, evidence: Evidence, agent=None) -> list[str]:
             if key in evidence.text:  # 도구로 확인한 매물: 실제 장부의 가격·면적도 근거로 인정
                 prices |= {int(l.price_manwon or 0), round(l.price_per_pyeong or 0)}
                 areas |= {float(round(l.area_pyeong or 0)), float(round(l.area_m2 or 0))}
-            elif re.search(rf"(?<![\w-]){re.escape(key)}(?![\w-])", a):
+            elif re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(key)}(?![A-Za-z0-9_-])", a):
                 unseen.append(key)  # 확인하지 않은 매물을 말함 (도구 결과에 없는 매물번호)
         if unseen:
             problems.append("확인하지 않은 매물: " + ", ".join(sorted(unseen)[:3]))
