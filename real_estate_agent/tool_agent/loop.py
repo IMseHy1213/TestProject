@@ -72,6 +72,7 @@ class Step:
     summary: str = ""         # 화면 표시용 한 줄 요약
     ms: float = 0.0
     thought: str = ""         # 모델이 도구 호출과 함께 쓴 말 (있으면)
+    agent: str = ""           # v0.7 멀티 Agent: 이 단계를 한 Agent (총괄 / 검색 / 분석)
 
 
 @dataclass
@@ -97,15 +98,16 @@ class AgentResult:
 
 # ---------------------------------------------------------------------- 정책: 다음 행동을 고르는 쪽
 class LLMPolicy:
-    def __init__(self, llm):
+    def __init__(self, llm, prompt: str = SYSTEM_PROMPT):
         self.llm = llm
+        self.prompt = prompt  # 멀티 Agent 에서는 역할별 지시문
 
     @property
     def available(self) -> bool:
         return bool(self.llm and self.llm.available and self.llm.ready)
 
     def next(self, messages: list[dict], tools: list[dict], extra: str = "") -> ToolTurn:
-        return self.llm.tool_step(SYSTEM_PROMPT + extra, messages, tools)
+        return self.llm.tool_step(self.prompt + extra, messages, tools)
 
 
 class RulePolicy:
@@ -113,8 +115,9 @@ class RulePolicy:
 
     name = "rule"
 
-    def __init__(self, ctx: Optional[AgentContext] = None):
+    def __init__(self, ctx: Optional[AgentContext] = None, agent=None):
         self.ctx = ctx
+        self.ctx_agent = agent  # 매물 찾기용 (분석 Agent 가 직전 매물을 볼 때)
 
     def next(self, messages: list[dict], tools: list[dict]) -> ToolTurn:
         question = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
@@ -123,8 +126,12 @@ class RulePolicy:
         names = [n for n, _ in done]
         last_search = next((o for n, o in reversed(done) if n == "search_listings" and o.get("ok")), None)
         found = (last_search or {}).get("result", {}).get("매물", [])
+        have = {t["name"] for t in tools} if tools else None  # 멀티 Agent: 이 Agent 가 가진 도구만 씀
+        if have is not None and "search_listings" not in have:
+            return self._analyze(question, done, names, have)
 
-        if _mentions_past(question) and "recall_memory" not in names and "search_listings" not in names:
+        if (_mentions_past(question) and "recall_memory" not in names and "search_listings" not in names
+                and (have is None or "recall_memory" in have)):
             return _call("recall_memory", {})  # '지난번에 찾던 거' -> 먼저 장기 기억 확인
         if "search_listings" not in names and self.ctx and self.ctx.last_search and _wants_recheck(question):
             # '정말 다른 지역에는 없어?' -> 방금 검색(뺀 지역 포함)을 그대로 다시 확인
@@ -161,13 +168,35 @@ class RulePolicy:
             return _call("search_listings", args)
         if (last_search or {}).get("result", {}).get("앞_조건_이어서"):
             return ToolTurn(text=rule_answer(question, done), provider="rule")
-        if _wants_compare(question) and len(found) >= 2 and "compare_listings" not in names:
+        if have is not None and not have & {"compare_listings", "check_land_use"}:
+            return ToolTurn(text=rule_answer(question, done), provider="rule")  # 검색 Agent: 찾은 결과만 보고
+        return self._analyze(question, done, names, have, found)
+
+    def _analyze(self, question: str, done: list, names: list, have: Optional[set], found=None) -> ToolTurn:
+        """비교 / 건축 가능 여부 확인 -> 답. found 가 없으면(분석 Agent) 직전에 보여준 매물을 대상으로."""
+        if found is None:
+            found = self._shown()
+        can = lambda tool: have is None or tool in have  # noqa: E731
+        if _wants_compare(question) and len(found) >= 2 and "compare_listings" not in names and can("compare_listings"):
             k = min(len(found), _wanted_count(question) or 2, 5)
             return _call("compare_listings", {"listing_ids": [x["id"] for x in found[:k]]})
         purpose = _purpose_in(question)
-        if purpose and found and "check_land_use" not in names and _asks_buildable(question):
+        if (purpose and found and "check_land_use" not in names and _asks_buildable(question)
+                and can("check_land_use")):
             return _call("check_land_use", {"listing_id": found[0]["id"], "purpose": purpose})
         return ToolTurn(text=rule_answer(question, done), provider="rule")
+
+    def _shown(self) -> list[dict]:
+        """대화 상태(직전에 보여준 매물) -> [{'id': 도구용 id}]"""
+        if not self.ctx or not self.ctx.last_shown:
+            return []
+        from .tools import tool_id
+
+        out = []
+        for lid in self.ctx.last_shown:
+            l = self.ctx_agent.find_listing(lid) if self.ctx_agent else None
+            out.append({"id": tool_id(l) if l else lid})
+        return out
 
 
 def _call(name: str, args: dict) -> ToolTurn:
@@ -399,11 +428,18 @@ class ToolAgent:
     def __init__(self, agent, llm=None, ctx: Optional[AgentContext] = None, lock=None,
                  max_steps: int = MAX_STEPS, log_dir: Optional[Path] = None, memory=None, owner: str = "",
                  checkpoint: Optional[Callable[[list, AgentContext], None]] = None,
-                 on_event: Optional[Callable[[dict], None]] = None):
+                 on_event: Optional[Callable[[dict], None]] = None, tool_source=None,
+                 system_prompt: str = SYSTEM_PROMPT, only: Optional[set[str]] = None, name: str = "",
+                 trace: Optional[list] = None, rule_policy=None):
+        """v0.7 멀티 Agent 용: system_prompt(역할 지시), only(쓸 도구), name(trace 에 표시할 이름),
+        trace(여러 Agent 가 함께 쓰는 단계 기록), rule_policy(LLM 이 없을 때 쓸 정책)."""
         self.agent = agent
-        self.registry = ToolRegistry(agent, ctx, lock, memory=memory, owner=owner)
-        self.llm_policy = LLMPolicy(llm if llm is not None else agent.llm)
-        self.rule_policy = RulePolicy(self.registry.ctx)
+        self.registry = ToolRegistry(agent, ctx, lock, memory=memory, owner=owner, tool_source=tool_source,
+                                     only=only)
+        self.llm_policy = LLMPolicy(llm if llm is not None else agent.llm, system_prompt)
+        self.rule_policy = rule_policy or RulePolicy(self.registry.ctx, agent)
+        self.name, self.trace = name, trace
+        self.answer_label = "최종 답변"  # 멀티 Agent 의 전문 Agent 는 '총괄 Agent 에게 보고'
         self.max_steps = max_steps
         self.log_dir = log_dir if log_dir is not None else getattr(agent.settings, "log_dir", None)
         self.memory, self.owner = memory, owner
@@ -444,7 +480,11 @@ class ToolAgent:
                 log.warning("체크포인트 저장 실패: %s", e)
 
     def _add(self, steps: list[Step], step: Step) -> None:
+        if self.name and not step.agent:
+            step.agent = self.name
         steps.append(step)
+        if self.trace is not None:
+            self.trace.append(step)
         self._emit("step", step=asdict(step))
 
     def _loop(self, question: str, messages: list[dict], steps: list[Step]) -> tuple[AgentResult, list[dict]]:
@@ -486,7 +526,7 @@ class ToolAgent:
             policy = turn.provider or ("rule" if not use_llm else "llm")
             if not turn.tool_calls:  # 최종 답변
                 answer, stopped = turn.text.strip(), "answer"
-                self._add(steps, Step(n, "answer", policy, summary="최종 답변", ms=_ms(t0)))
+                self._add(steps, Step(n, "answer", policy, summary=self.answer_label, ms=_ms(t0)))
                 messages.append({"role": "assistant", "content": answer})
                 break
             messages.append({"role": "assistant", "content": turn.text, "tool_calls": turn.tool_calls,
@@ -502,8 +542,13 @@ class ToolAgent:
                     obs = {"ok": False, "error": "같은 도구를 같은 인자로 이미 여러 번 불렀습니다. 결과를 바탕으로 답하세요.",
                            "ms": 0}
                 else:
-                    self._emit("tool_start", n=n, tool=call.name, args=call.arguments)
+                    self._emit("tool_start", n=n, tool=call.name, args=call.arguments, agent=self.name)
                     obs = self.registry.run(call.name, call.arguments)
+                    if self.registry.external and call.name == "search_listings" and obs["ok"]:
+                        # MCP 서버가 검색 상태를 들고 있으므로, 여기서는 '직전 검색이 있었다' 는 것과 보여준 매물만 기억
+                        self.ctx.last_search = dict(call.arguments) or {"query": question}
+                        self.ctx.last_shown = [self.registry.resolve(x["id"]) or x["id"]
+                                               for x in obs["result"].get("매물", [])]
                 self._add(steps, Step(n, "tool", policy, call.name, call.arguments, obs["ok"],
                                       summarize(call.name, obs), obs.get("ms", 0),
                                       thought=turn.text.strip()[:300] if i == 0 else ""))
@@ -516,7 +561,7 @@ class ToolAgent:
             try:
                 if not use_llm:
                     raise LLMUnavailable("규칙 기반")
-                turn = self.llm_policy.llm.tool_step(SYSTEM_PROMPT + extra + "\n이제 도구 없이 지금까지 결과로 답하세요.",
+                turn = self.llm_policy.llm.tool_step(self.llm_policy.prompt + extra + "\n이제 도구 없이 지금까지 결과로 답하세요.",
                                                      messages, [])
                 if turn.tool_calls or not turn.text.strip():
                     raise LLMUnavailable("도구 없이 답하지 못함")
@@ -607,6 +652,9 @@ def summarize(name: str, obs: dict[str, Any]) -> str:
         return f"{r.get('id')} {r.get('기록')} 기록"
     if name == "list_regions":
         return f"지역 {len(r.get('지역별_매물_수', {}))}곳"
+    if name.startswith("delegate_"):  # v0.7 멀티 Agent: 전문 Agent 의 보고
+        first = (r.get("보고") or "").split("\n")[0]
+        return f"{r.get('agent', '')} 보고 · 매물 {len(r.get('매물', []))}건 · {first[:90]}"
     return "완료"
 
 

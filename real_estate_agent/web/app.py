@@ -400,10 +400,20 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                memory=agent_service.memory_view(owner), pending=conv.get("pending"),
                                needs_resume=agent_service.needs_resume(conv), busy=busy,
                                prefill=(request.args.get("ask") or "")[:MAX_QUERY_LEN],
-                               message=session.pop("agent_msg", ""))
+                               message=session.pop("agent_msg", ""), mode=session.get("agent_mode", "single"))
 
     def _question() -> str:
         return (request.form.get("q") or "").strip()[:MAX_QUERY_LEN]
+
+    def _mode() -> str:
+        """상담 방식: 'single'(Agent 하나) / 'multi'(v0.7 총괄 → 검색·분석 Agent). 고르면 이 브라우저에 기억."""
+        from ..tool_agent.service import MODES
+
+        chosen = request.form.get("mode")
+        if chosen in MODES:
+            session["agent_mode"] = chosen
+        mode = session.get("agent_mode", "single")
+        return mode if mode in MODES else "single"
 
     @app.post("/agent/ask")
     def agent_ask():
@@ -412,7 +422,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         if not q:
             return redirect(url_for("agent_page"))
         try:
-            cid, _ = agent_service.ask(visitor_owner(), session.get("cid"), q)
+            cid, _ = agent_service.ask(visitor_owner(), session.get("cid"), q, mode=_mode())
             session["cid"] = cid
         except Busy as e:
             session["agent_msg"] = str(e)
@@ -430,7 +440,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             abort(400)
         conv = agent_service.open(owner, session.get("cid"), reuse_recent=not session.get("cid"))
         session["cid"] = conv["cid"]
-        body = agent_service.stream(owner, conv["cid"], q, resume=resume)
+        body = agent_service.stream(owner, conv["cid"], q, resume=resume, mode=_mode())
         return Response(stream_with_context(body), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -438,7 +448,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     def agent_resume():
         """(자바스크립트가 꺼진 경우) 끊긴 질문 이어서 처리."""
         try:
-            agent_service.resume(visitor_owner(), session.get("cid") or "")
+            agent_service.resume(visitor_owner(), session.get("cid") or "", mode=_mode())
         except (Busy, ValueError) as e:
             session["agent_msg"] = str(e)
         return redirect(url_for("agent_page") + "#last")

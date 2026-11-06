@@ -18,6 +18,7 @@ from .memory import ConversationStore, LongTermMemory, is_incomplete
 from .tools import AgentContext
 
 MAX_TURNS = 20  # 화면에 남길 질문/답변 수
+MODES = ("single", "multi")  # 단일 Agent / v0.7 멀티 Agent (총괄 → 검색·분석)
 _CID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 
 
@@ -52,25 +53,34 @@ class AgentService:
         return bool(conv.get("pending")) and (conv["status"] == "interrupted" or ConversationStore.is_stale(conv))
 
     def ask(self, owner: str, cid: Optional[str], question: str,
-            on_event: Optional[Callable[[dict], None]] = None) -> tuple[str, dict]:
-        """질문 하나 처리 -> (대화 id, 이번 질문/답변 기록)."""
+            on_event: Optional[Callable[[dict], None]] = None, mode: str = "single") -> tuple[str, dict]:
+        """질문 하나 처리 -> (대화 id, 이번 질문/답변 기록). mode: 'single' / 'multi'."""
         conv = self._begin(owner, cid, question)
-        runner = self._runner(conv, question, on_event)
+        runner = self._runner(conv, question, on_event, mode)
+        history = conv["history"]
+        if runner.__class__.__name__ == "ToolAgent" and any(
+                c.name.startswith("delegate_") for m in history for c in (m.get("tool_calls") or [])):
+            from .multi import text_history
+
+            history = text_history(history)  # 멀티 → 단일로 바꾼 경우: 총괄 Agent 의 도구 기록은 빼고 대화만
         try:
-            result, history = runner.run(question, conv["history"])
+            result, history = runner.run(question, history)
         except Exception:
             self._interrupted(conv, question, runner)
             raise
         return conv["cid"], self._finish(conv, result, history)
 
-    def resume(self, owner: str, cid: str, on_event: Optional[Callable[[dict], None]] = None) -> tuple[str, dict]:
+    def resume(self, owner: str, cid: str, on_event: Optional[Callable[[dict], None]] = None,
+               mode: str = "single") -> tuple[str, dict]:
         """끊긴 질문을 마지막 체크포인트부터 이어서 처리."""
         conv = self.open(owner, cid, reuse_recent=False)
         question = conv.get("pending")
         if not question or not is_incomplete(conv["history"]):
             raise ValueError("이어서 처리할 질문이 없습니다.")
         conv = self._begin(owner, conv["cid"], question, resuming=True)
-        runner = self._runner(conv, question, on_event)
+        if any(c.name.startswith("delegate_") for m in conv["history"] for c in (m.get("tool_calls") or [])):
+            mode = "multi"  # 끊긴 질문은 시작한 방식 그대로 이어서
+        runner = self._runner(conv, question, on_event, mode)
         try:
             result, history = runner.resume(conv["history"])
         except Exception:
@@ -104,7 +114,7 @@ class AgentService:
 
     # ------------------------------------------------------------------ 스트리밍
     def stream(self, owner: str, cid: Optional[str], question: Optional[str] = None,
-               resume: bool = False) -> Iterator[str]:
+               resume: bool = False, mode: str = "single") -> Iterator[str]:
         """질문 처리 진행 상황을 Server-Sent Events 문자열로 차례차례 내보냄.
         (Agent 는 별도 스레드에서 돌고, 손님 화면 연결이 끊겨도 끝까지 처리·저장됨)"""
         events: queue.Queue = queue.Queue()
@@ -112,9 +122,9 @@ class AgentService:
         def work() -> None:
             try:
                 if resume:
-                    new_cid, turn = self.resume(owner, cid or "", on_event=events.put)
+                    new_cid, turn = self.resume(owner, cid or "", on_event=events.put, mode=mode)
                 else:
-                    new_cid, turn = self.ask(owner, cid, question or "", on_event=events.put)
+                    new_cid, turn = self.ask(owner, cid, question or "", on_event=events.put, mode=mode)
                 events.put({"type": "saved", "cid": new_cid, "answer": turn["answer"]})
             except Busy as e:
                 events.put({"type": "error", "message": str(e), "busy": True})
@@ -139,14 +149,19 @@ class AgentService:
             self.store.save(conv["cid"], owner, conv["history"], conv["ctx"], conv["turns"], "running", question)
         return conv
 
-    def _runner(self, conv: dict, question: str, on_event) -> ToolAgent:
+    def _runner(self, conv: dict, question: str, on_event, mode: str = "single"):
         def checkpoint(messages: list[dict], ctx: AgentContext) -> None:
             self.store.save(conv["cid"], conv["owner"], messages, ctx, conv["turns"], "running", question)
 
+        if mode == "multi":
+            from .multi import MultiAgent
+
+            return MultiAgent(self.agent, ctx=conv["ctx"], lock=self.lock, memory=self.memory, owner=conv["owner"],
+                              checkpoint=checkpoint, on_event=on_event)
         return ToolAgent(self.agent, ctx=conv["ctx"], lock=self.lock, memory=self.memory, owner=conv["owner"],
                          checkpoint=checkpoint, on_event=on_event)
 
-    def _interrupted(self, conv: dict, question: str, runner: ToolAgent) -> None:
+    def _interrupted(self, conv: dict, question: str, runner) -> None:
         latest = self.store.load(conv["cid"])
         history = latest["history"] if latest else conv["history"]
         self.store.save(conv["cid"], conv["owner"], history, runner.ctx, conv["turns"], "interrupted", question)
@@ -156,6 +171,7 @@ class AgentService:
                 "steps": [step_dict(s) for s in result.steps], "listing_ids": result.listing_ids,
                 "badges": result.badges, "policy": result.policy, "total_ms": result.total_ms,
                 "tool_calls": result.tool_calls, "tool_errors": result.tool_errors,
+                "mode": "multi" if any(s.agent for s in result.steps) else "single",
                 "at": datetime.now().isoformat(timespec="seconds")}
         conv["turns"] = (conv["turns"] + [turn])[-MAX_TURNS:]
         self.store.save(conv["cid"], conv["owner"], history, conv["ctx"], conv["turns"], "idle", None)

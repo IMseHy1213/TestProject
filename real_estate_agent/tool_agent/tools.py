@@ -249,15 +249,19 @@ class ToolRegistry:
     """도구 목록 + 실행 (인자 검사, 오류를 관찰로 변환, 실행 시간 측정)."""
 
     def __init__(self, agent, ctx: Optional[AgentContext] = None, lock: Optional[threading.RLock] = None,
-                 memory=None, owner: str = ""):
+                 memory=None, owner: str = "", tool_source=None, only: Optional[set[str]] = None):
+        """tool_source: MCP 서버 등 바깥에서 받아 온 도구 (있으면 내장 도구 대신 사용).
+        only: 이 이름의 도구만 쓰기 (멀티 Agent 에서 역할별로 도구를 나눌 때)."""
         self.agent = agent
         self.ctx = ctx or AgentContext()
         self.lock = lock
         self.memory = memory  # LongTermMemory (없으면 recall_memory 는 '기록 없음')
         self.owner = owner
+        self.external = tool_source is not None  # 도구가 MCP 서버 쪽에서 실행됨 (검색 상태도 서버에)
         self.tools: dict[str, Tool] = {}
-        for tool in build_tools(self):
-            self.tools[tool.name] = tool
+        for tool in (tool_source.tools() if tool_source is not None else build_tools(self)):
+            if only is None or tool.name in only:
+                self.tools[tool.name] = tool
 
     def resolve(self, some_id: str) -> Optional[str]:
         """도구가 쓴 id(공개용) -> 실제 매물 id."""

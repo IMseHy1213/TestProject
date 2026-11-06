@@ -59,24 +59,26 @@ document.querySelectorAll("form.js-stream").forEach(function (f) {
     live.hidden = false;
     live.scrollIntoView({ block: "end" });
     f.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
-    var running = null;
+    var running = {};  // 실행 중인 도구 (멀티 Agent 는 총괄의 '맡기기' 안에서 다른 Agent 의 도구가 돎)
 
     function show(ev) {
       if (ev.type === "thinking") { status.textContent = "AI가 다음 행동을 고르는 중… (" + ev.n + "단계)"; }
       if (ev.type === "tool_start") {
-        running = document.createElement("li");
-        running.className = "running";
-        running.textContent = "🔧 " + ev.tool + " 실행 중";
-        steps.appendChild(running);
+        var r = document.createElement("li");
+        r.className = "running";
+        r.textContent = (ev.agent ? "[" + ev.agent + "] " : "") + "🔧 " + ev.tool + " 실행 중";
+        running[(ev.agent || "") + ev.tool] = r;
+        steps.appendChild(r);
       }
       if (ev.type === "step") {
-        var s = ev.step;
-        var li = (s.kind === "tool" && running) ? running : document.createElement("li");
+        var s = ev.step, key = (s.agent || "") + s.tool;
+        var li = (s.kind === "tool" && running[key]) ? running[key] : document.createElement("li");
         li.className = s.ok === false ? "is-error" : "";
-        li.textContent = (s.kind === "tool" ? "🔧 " + s.tool + " → " : (STEP_LABEL[s.kind] || s.kind) + " · ") + s.summary +
+        li.textContent = (s.agent ? "[" + s.agent + "] " : "") +
+          (s.kind === "tool" ? "🔧 " + s.tool + " → " : (STEP_LABEL[s.kind] || s.kind) + " · ") + s.summary +
           (s.ms ? " (" + s.ms + "ms)" : "");
-        if (li !== running) steps.appendChild(li);
-        running = null;
+        if (!li.parentNode) steps.appendChild(li);
+        delete running[key];
       }
       if (ev.type === "done" || ev.type === "saved") { status.textContent = "답변 정리 완료 — 화면을 새로 그립니다…"; }
       if (ev.type === "error") { status.textContent = ev.message; status.classList.remove("muted"); }

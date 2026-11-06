@@ -73,6 +73,7 @@ class SearchResponse(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=300, examples=["음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘"])
     conversation_id: Optional[str] = Field(None, description="이어서 묻기: 앞 응답의 conversation_id")
+    mode: Literal["single", "multi"] = Field("single", description="single: Agent 하나 / multi: 총괄 → 검색·분석 Agent (v0.7)")
 
 
 class StepOut(BaseModel):
@@ -83,6 +84,7 @@ class StepOut(BaseModel):
     ok: Optional[bool] = None
     summary: str = ""
     ms: float = 0
+    agent: str = Field("", description="멀티 Agent 에서 이 단계를 한 Agent (총괄 / 검색 / 분석)")
 
 
 class AskResponse(BaseModel):
@@ -185,7 +187,7 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     async def ask(body: AskRequest, x_visitor_id: Optional[str] = Header(None)) -> AskResponse:
         vid, owner = owner_of(x_visitor_id)
         try:
-            cid, turn = await asyncio.to_thread(service.ask, owner, body.conversation_id, body.question)
+            cid, turn = await asyncio.to_thread(service.ask, owner, body.conversation_id, body.question, None, body.mode)
         except Busy as e:
             raise HTTPException(409, str(e)) from e
         listings = [listing_out(i, turn["badges"].get(i)) for i in turn["listing_ids"]]
@@ -205,7 +207,7 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             q: asyncio.Queue = asyncio.Queue()
 
             def produce() -> None:  # Agent 는 스레드에서, 진행 상황은 이벤트 루프로 전달
-                for chunk in service.stream(owner, conv["cid"], body.question):
+                for chunk in service.stream(owner, conv["cid"], body.question, mode=body.mode):
                     loop.call_soon_threadsafe(q.put_nowait, chunk)
                 loop.call_soon_threadsafe(q.put_nowait, None)
 
@@ -298,7 +300,8 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             steps: asyncio.Queue = asyncio.Queue()
             job = asyncio.ensure_future(asyncio.to_thread(
                 service.ask, owner, msg.get("conversation_id"), question,
-                lambda e: loop.call_soon_threadsafe(steps.put_nowait, e)))
+                lambda e: loop.call_soon_threadsafe(steps.put_nowait, e),
+                "multi" if msg.get("mode") == "multi" else "single"))
             while not job.done() or not steps.empty():
                 try:
                     e = await asyncio.wait_for(steps.get(), 0.2)

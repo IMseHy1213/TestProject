@@ -81,11 +81,12 @@
       </ol>
       {% endif %}
       <details class="trace">
-        <summary>🔎 에이전트 실행 과정 · 도구 {{ t.tool_calls }}회{% if t.tool_errors %} (오류 {{ t.tool_errors }}회 → 스스로 수정){% endif %} · {{ "%.1f"|format(t.total_ms / 1000) }}초 · {{ t.policy }}</summary>
+        <summary>🔎 에이전트 실행 과정{% if t.mode == "multi" %} (멀티 Agent){% endif %} · 도구 {{ t.tool_calls }}회{% if t.tool_errors %} (오류 {{ t.tool_errors }}회 → 스스로 수정){% endif %} · {{ "%.1f"|format(t.total_ms / 1000) }}초 · {{ t.policy }}</summary>
         <ol>
           {% for s in t.steps %}
           <li class="step-{{ s.kind }}{% if s.ok == false %} is-error{% endif %}">
             <span class="step-n">{{ s.n }}</span>
+            {% if s.agent %}<span class="agent-tag agent-{{ {"총괄 Agent": "sup", "검색 Agent": "search", "분석 Agent": "analysis"}.get(s.agent, "other") }}">{{ s.agent }}</span>{% endif %}
             {% if s.kind == "tool" %}
               <code>{{ s.tool }}</code> <span class="args">{{ s.args | kjson }}</span>
               <br><span class="obs">→ {{ s.summary }}</span> <span class="muted">{{ s.ms }}ms</span>
@@ -118,6 +119,11 @@
   <input id="q" name="q" type="search" maxlength="300" required autocomplete="off" value="{{ prefill }}" {% if not turns and not needs_resume %}autofocus{% endif %}
          placeholder="{% if turns %}이어서 물어보세요 (예: 그 중에 더 넓은 건?){% else %}예) 음성군에 창고 지을 수 있는 땅 중 싼 거 2개 비교해줘{% endif %}">
   <button type="submit" class="btn primary">물어보기</button>
+  <div class="agent-mode" role="radiogroup" aria-label="상담 방식">
+    <span class="mode-label">상담 방식</span>
+    <label><input type="radio" name="mode" value="single" {% if mode != "multi" %}checked{% endif %}> 상담원 1명</label>
+    <label><input type="radio" name="mode" value="multi" {% if mode == "multi" %}checked{% endif %}> 상담팀 (총괄 → 검색·분석 Agent)</label>
+  </div>
 </form>
 {% if not turns %}
 <div class="examples" aria-label="질문 예시">

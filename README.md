@@ -185,6 +185,63 @@ VS Code 실행 목록 **🔌 JSON API 서버** → 브라우저에서 http://127
 - 손님 화면과 같은 개인정보 기준 (주소는 시/도 + 시/군/구, 연락처 없음). 기본은 내 PC(127.0.0.1)에서만 접속됩니다.
 - 처음이면 `pip install fastapi uvicorn` (또는 `pip install -r requirements.txt`)
 
+### v0.6 MCP (Model Context Protocol) — `mcp_server.py`, `tool_agent/mcp_client.py`
+
+매물 도구를 **표준 MCP 서버**로 공개하고, 우리 AI 상담 Agent 도 **MCP 클라이언트**가 되어 그 도구를 쓸 수 있습니다.
+
+```
+[MCP host: Claude Desktop / 우리 AI 상담 Agent]
+     └─ MCP client ── stdio (또는 Streamable HTTP) ──▶ [MCP server: python main.py mcp]
+          tools/list  → 도구 이름·설명·인자 형식(JSON schema)        search_listings · get_listing · check_land_use
+          tools/call  → 실행 결과 (구조화된 JSON)                       compare_listings · list_regions (모두 읽기 전용)
+          resources   → listings://summary, listings://{id}          prompts → land_consultation
+```
+
+| 실행 | 설명 |
+|---|---|
+| `python main.py mcp` | MCP 서버 (stdio). Claude Desktop 등이 이 명령을 실행해 표준 입출력으로 대화 |
+| `python main.py mcp --http --port 8002` | Streamable HTTP 로 실행 → `http://127.0.0.1:8002/mcp` |
+| `python main.py agent --mcp` | 우리 Agent 가 MCP 서버를 하위 프로세스로 띄워 그 도구로 상담 (이어서 묻기 그대로) |
+
+- **Claude Desktop 에 연결** (`claude_desktop_config.json`, 경로는 본인 PC 에 맞게):
+  ```json
+  { "mcpServers": { "real-estate-land": {
+      "command": "C:\\Users\\나\\TestProject\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\Users\\나\\TestProject\\main.py", "mcp"] } } }
+  ```
+- **개인정보**: 손님 화면과 같은 기준 (주소는 시/도 + 시/군/구, 연락처·지번·매물번호 속 이름 없음).
+  관심/제외 기록 같은 **쓰기 도구는 공개하지 않습니다.**
+- 도구가 낸 오류(없는 매물 번호 등)는 MCP 오류 결과로 메시지를 그대로 돌려줘, 모델이 읽고 인자를 고칠 수 있습니다.
+- 처음이면 `pip install mcp` (또는 `pip install -r requirements.txt`). mcp 1.x / 2.x 모두 지원.
+
+### v0.7 Multi-Agent — `tool_agent/multi.py`
+
+AI 상담 화면 아래 **상담 방식**에서 **상담팀**을 고르면, 총괄 Agent 가 일을 나눠 전문 Agent 에게 맡깁니다 (agent-as-tool).
+
+```
+손님 질문 → [총괄 Agent]  도구: delegate_search · delegate_analysis  (매물 도구는 직접 안 씀)
+               ├─▶ [검색 Agent]  search_listings · list_regions · recall_memory        매물 찾기·이어서 묻기·지난 상담
+               └─▶ [분석 Agent]  get_listing · compare_listings · check_land_use · record_feedback   비교·건축 판단
+            ← 두 Agent 의 보고를 모아 최종 답변
+```
+
+- 세 Agent 는 **같은 대화 상태**(직전 검색 조건, 보여준 매물, 관심/제외)를 함께 쓰므로 '그 중에 넓은 건?', '음성군 말고 다른 지역에도 있어?',
+  '정말 다른 지역에는 없어?' 가 그대로 됩니다. 상담 중간에 방식을 바꿔도 이어집니다.
+- 실행 과정에 어느 Agent 가 무엇을 했는지 색깔 표시 (총괄 / 검색 / 분석). API 는 `"mode": "multi"`, 터미널은 `python main.py agent --multi`.
+- GPT/Claude 가 있으면 총괄도 AI 가 판단하고, 없으면 규칙으로 나눕니다 (검색 → 비교·건축 판단이 필요할 때만 분석).
+- **단일 vs 멀티 비교**: `python main.py compare-agents` → 같은 대화 7개 질문을 두 방식으로 돌려 표로 비교, `logs/compare_agents_*.md` 저장.
+
+  | 항목 (규칙 기반, 샘플 데이터) | 단일 Agent | 멀티 Agent |
+  |---|---|---|
+  | 답변한 질문 | 7 | 7 |
+  | 매물 도구 호출 | 11 | 11 |
+  | Agent 사이 맡기기 | 0 | 10 |
+  | 판단(정책 호출) 횟수 | 18 | 38 |
+  | 같은 매물을 보여준 질문 | 7/7 | |
+
+  → 결과는 같고, 멀티 Agent 는 일을 나누고 보고를 모으는 만큼 판단(LLM 호출)이 약 2배. 대신 Agent 마다 도구가 3~4개라 지시문이 짧고
+  역할별로 따로 고치고 시험하기 쉽습니다. (GPT/Claude 로 돌리면 비용·지연 차이를 그대로 측정할 수 있습니다)
+
 ### v0.9 실시간 · 이벤트 기반 Agent (`realtime/`) — 11주차
 
 ```

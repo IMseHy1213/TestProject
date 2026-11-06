@@ -177,13 +177,26 @@ def print_sync(report: SyncReport, verbose: bool = False) -> None:
         print(report.clean.report())
 
 
-def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6) -> int:
+def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6, use_mcp: bool = False,
+                   multi: bool = False) -> int:
     """v0.2 Tool-use Agent 를 터미널에서: 도구 호출 과정(행동→관찰)과 답변을 출력."""
     from .tool_agent import ToolAgent
     from .tool_agent.memory import LongTermMemory
 
     # 터미널 상담도 장기 기억 사용 (지난번에 찾던 조건, 싫다고 한 매물)
-    runner = ToolAgent(agent, max_steps=max_steps, memory=LongTermMemory(agent.storage.conn), owner="terminal")
+    source = None
+    if use_mcp:  # 우리 Agent 가 MCP host/client 가 되어 MCP 서버의 도구를 씀
+        from .tool_agent.mcp_client import McpToolSource, stdio_server_params
+
+        source = McpToolSource(stdio_server_params(agent.settings)).start()
+        print(f"MCP 서버에 연결: 도구 {[t.name for t in source.tools()]}")
+    if multi:  # v0.7: 총괄 Agent 가 검색 Agent · 분석 Agent 에게 나눠 맡김
+        from .tool_agent.multi import MultiAgent
+
+        runner = MultiAgent(agent, max_steps=max_steps, memory=LongTermMemory(agent.storage.conn), owner="terminal")
+    else:
+        runner = ToolAgent(agent, max_steps=max_steps, memory=LongTermMemory(agent.storage.conn), owner="terminal",
+                           tool_source=source)
     history: list = []
     interactive = not question
     if interactive:
@@ -195,16 +208,35 @@ def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6) ->
         result, history = runner.run(q, history)
         print()
         for s in result.steps:
+            who = f"{s.agent} " if s.agent else ""
             if s.kind == "tool":
                 mark = "✔" if s.ok else "✘"
-                print(f"  [{s.n}] {mark} {s.tool}({s.args}) → {s.summary}  ({s.ms}ms, {s.policy})")
+                print(f"  {who}[{s.n}] {mark} {s.tool}({s.args}) → {s.summary}  ({s.ms}ms, {s.policy})")
             else:
-                print(f"  [{s.n}] {s.kind}: {s.summary}  ({s.policy})")
+                print(f"  {who}[{s.n}] {s.kind}: {s.summary}  ({s.policy})")
         print(f"\n{result.answer}")
         print(f"\n  (도구 {result.tool_calls}회, 오류 {result.tool_errors}회, {result.total_ms / 1000:.1f}초, {result.policy})")
         if not interactive:
             return 0
         question = ""
+
+
+def run_compare_agents(agent: RealEstateAgent) -> int:
+    """v0.7: 같은 대화를 단일 Agent / 멀티 Agent 로 돌려 비교표를 출력하고 logs 에 저장."""
+    from datetime import datetime
+
+    from .tool_agent.multi import compare_agents, compare_markdown, report_json
+
+    report = compare_agents(agent)
+    md = compare_markdown(report)
+    print("\n" + md)
+    out = Path(agent.settings.log_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    (out / f"compare_agents_{stamp}.md").write_text(md, encoding="utf-8")
+    (out / f"compare_agents_{stamp}.json").write_text(report_json(report), encoding="utf-8")
+    print(f"\n저장: {out / f'compare_agents_{stamp}.md'}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -227,6 +259,14 @@ def build_parser() -> argparse.ArgumentParser:
     ag = sub.add_parser("agent", help="AI 상담 (v0.2 Tool-use Agent: 도구를 골라 쓰며 답함, 실행 과정 출력)")
     ag.add_argument("question", nargs="?", default="", help="질문 (비우면 대화 모드)")
     ag.add_argument("--max-steps", type=int, default=6)
+    ag.add_argument("--mcp", action="store_true", help="도구를 MCP 서버(python main.py mcp)에 연결해서 사용")
+    ag.add_argument("--multi", action="store_true", help="v0.7 멀티 Agent (총괄 → 검색 Agent · 분석 Agent)")
+    sub.add_parser("compare-agents", help="v0.7 단일 Agent vs 멀티 Agent 비교 (결과는 logs 폴더에 저장)")
+
+    mc = sub.add_parser("mcp", help="MCP 서버 (Claude Desktop 등에서 매물 도구 사용). 기본 stdio")
+    mc.add_argument("--http", action="store_true", help="Streamable HTTP 로 실행 (http://127.0.0.1:8002/mcp)")
+    mc.add_argument("--host", default="127.0.0.1")
+    mc.add_argument("--port", type=int, default=8002)
 
     c = sub.add_parser("customers", help="저장된 손님 목록")
     c.add_argument("--remove", help="해당 손님 선제 알림 중지")
@@ -281,6 +321,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         return setup_key()
     settings = get_settings(data_dir=args.data_dir, db_path=args.db)
+    if args.command == "mcp":  # 표준 출력은 MCP 통신 전용 -> 아무것도 print 하지 않음
+        from .mcp_server import main as mcp_main
+
+        return mcp_main(settings, http=args.http, host=args.host, port=args.port)
     if args.command == "set-admin-password":
         from .admin_auth import set_password_cli
 
@@ -315,7 +359,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(agent.llm.status())
     if cmd == "agent":
         agent.sync()
-        return run_tool_agent(agent, args.question, args.max_steps)
+        return run_tool_agent(agent, args.question, args.max_steps, use_mcp=args.mcp, multi=args.multi)
+    if cmd == "compare-agents":
+        agent.sync()
+        return run_compare_agents(agent)
 
     try:
         if cmd in {"sync", "recommend", "chat", "proactive", "export"}:
