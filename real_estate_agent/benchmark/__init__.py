@@ -137,6 +137,13 @@ def check_turn(agent, result, expect: dict, history_ids: list[list[str]], eviden
             fails.append(f"'{region} {n}건' 을 말해야 함")
         if ids:
             fails.append(f"수만 물었는데 매물 {len(ids)}건을 보여줌")
+    if "region_gold" in expect:  # 지역 수를 답한 다음 '그 중에 넓은 건?' → 그 지역 매물 중에서
+        rg = expect["region_gold"]
+        region = region_ranking(agent)[rg["rank"]][0]
+        gold = oracle(agent, {"regions": [region], "sort": rg["sort"], "k": rg["k"]})
+        key = _KEY[rg["sort"]]
+        if [key(l) for l in got] != [key(l) for l in gold] or any(region not in l.address for l in got):
+            fails.append(f"{region} 매물 중에서 골라야 함 (정답 {', '.join(l.listing_id for l in gold)} / 받은 {ids})")
     if "region_oracle" in expect:  # '제일 많은 지역 매물 보여줘' → 그 지역 매물
         region = region_ranking(agent)[expect["region_oracle"]][0]
         expect = {**expect, "oracle": {"regions": [region]}}

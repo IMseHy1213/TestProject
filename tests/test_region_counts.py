@@ -84,3 +84,28 @@ def test_benchmark_region_cases(agent):
     report = run_benchmark(agent, ["single", "multi"], dataset=data)
     for cfg in report["configs"].values():
         assert cfg["failed_cases"] == [] and cfg["case_pass"] == 100.0
+
+
+@pytest.mark.parametrize("runner_cls", [ToolAgent, MultiAgent])
+def test_follow_up_after_counts_stays_in_that_region(agent, runner_cls):
+    """'어느 지역 매물이 제일 많아요?' → '양평군 11건' 다음의 '그 중에 넓은 건?' 은 양평군 매물 중에서."""
+    t = runner_cls(agent, ctx=AgentContext(), log_dir="")
+    _, h = t.run("어느 지역 매물이 제일 많아요?")
+    r, h = t.run("그 중에 넓은 건?", h)
+    yangpyeong = [l for l in agent.listings() if "양평군" in l.address and l.status not in {"계약완료", "보류"}]
+    widest = max(yangpyeong, key=lambda l: l.area_pyeong)
+    assert regions_searched(r) == [["양평군"]] and r.listing_ids == [widest.listing_id]
+    assert r.answer.startswith("양평군 매물 11건 중 가장 넓은 매물은")
+    r, h = t.run("그 중에 싼 건?", h)  # 계속 양평군 안에서
+    cheapest = min(yangpyeong, key=lambda l: l.price_manwon)
+    assert r.listing_ids == [cheapest.listing_id] and "양평군 매물 11건 중 가장 싼 매물" in r.answer
+    r, h = t.run("공장 지을 땅 보여줘", h)  # 새로 검색하면 '그 중에' 는 그 검색 결과를 가리킴
+    r2, _ = t.run("그 중에 넓은 건?", h)
+    assert r2.listing_ids and r2.listing_ids[0] in r.listing_ids and "앞서 보여드린" in r2.answer
+
+
+def test_follow_up_after_least_region(agent):
+    t = ToolAgent(agent, ctx=AgentContext(), log_dir="")
+    _, h = t.run("어느 지역 매물이 제일 적어요?")
+    r, _ = t.run("거기서 제일 싼 거 2개", h)
+    assert regions_searched(r) == [["여주시"]] and len(r.listing_ids) == 2

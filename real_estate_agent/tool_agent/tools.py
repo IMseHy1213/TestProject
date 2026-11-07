@@ -411,7 +411,9 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             given["exclude_regions"] = list(dict.fromkeys(list(given.get("exclude_regions") or []) + moved))
         ctx.last_search = dict(given)
         ctx.last_search_from_memory = False
-        ctx.last_regions, ctx.region_focus = [], ""  # 새 검색을 하면 '그 지역' 은 이제 검색한 지역을 가리킴
+        if not (ctx.region_focus and list(given.get("regions") or []) == [ctx.region_focus]):
+            # 새 검색을 하면 '그 지역' 은 이제 검색한 지역을 가리킴 (방금 답한 지역 안에서 찾은 거면 '그 중에' 를 계속 그 지역으로)
+            ctx.last_regions, ctx.region_focus = [], ""
         req = requirement_from_args(agent, given)
         req.customer_name = ctx.customer
         session = agent.recommend(req, pref_key=ctx.pref_key or None)  # v1.2: 이 방문자에게서 배운 중요도로 점수

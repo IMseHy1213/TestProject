@@ -74,6 +74,8 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
 - 주소는 도구가 준 대로(시/도 + 시/군/구)만 말하세요.
 - '어느 지역 매물이 제일 많아요?', '지역별로 몇 건이에요?' 처럼 수만 물으면 list_regions 만 쓰고 숫자로만 답하세요 (매물을 검색하지 마세요).
   그다음 '제일 많은 지역 매물 보여줘', '그 지역 매물 보고 싶어요' 라고 하면 그 지역으로 search_listings(regions=[지역]) 하세요.
+  그 답 바로 다음의 '그 중에 넓은 건?', '거기서 제일 싼 거' 는 방금 답에서 말한 지역(가장 많은 지역)의 매물 중에서 찾으라는 뜻입니다:
+  search_listings(regions=[그 지역], sort=..., limit=1) (전체 매물에서 찾지 마세요).
 - 건축 가능 여부는 프로그램의 1차 판단이며 토지이용계획 확인이 필요하다고 덧붙이세요.
 """
 
@@ -240,6 +242,15 @@ class RulePolicy:
             args: dict[str, Any] = {"query": question, "regions": [region], "limit": _wanted_count(question) or 5}
             if _sort_in(question):
                 args["sort"] = _sort_in(question)
+            return _call("search_listings", args)
+        focus = self.ctx.region_focus if self.ctx else ""
+        if (focus and not counted and _FOLLOW_UP.search(question) and not find_regions(question)
+                and not _asks_region_counts(question)):
+            # '어느 지역 매물이 제일 많아요?' → '음성군 157건' 다음의 '그 중에 넓은 건?' = 음성군 매물 중에서
+            sort = _sort_in(question)
+            args = {"query": question, "regions": [focus], "limit": _wanted_count(question) or (1 if sort else 5)}
+            if sort:
+                args["sort"] = sort
             return _call("search_listings", args)
         if counted:  # 수만 물었으면 수만 답함 (매물 카드 없음)
             if self.ctx and ranked:  # 이 답이 가리키는 지역을 기억 ('그 지역 매물 보여줘')
@@ -479,6 +490,12 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
 
     if found and res.get("학습_반영"):  # v1.2 온라인 학습
         lines.append(res["학습_반영"] + ".")
+    if found and len(found) == 1 and total > 1 and order != "추천순" and order in _BEST \
+            and not any(n in {"compare_listings", "check_land_use"} for n, _ in done):
+        best, kind = _BEST[order]  # '그 중에 넓은 건?' → 한 건만 물었으면 한 줄로
+        x = found[0]
+        lines.append(f"{cond} 매물 {total}건 중 {best} 매물은 {names[x['id']]}({_fact(x, kind)})입니다.")
+        return "\n".join(lines)
     if found:
         how = "추천 순" if order == "추천순" else order
         lines.append(f"{cond} 매물 {total}건 중 {how}으로 {len(found)}건입니다." if total > len(found) else
@@ -820,7 +837,8 @@ class ToolAgent:
                     self.ctx.last_search = dict(call.arguments) or {"query": run.question}
                     self.ctx.last_shown = [self.registry.resolve(x["id"]) or x["id"]
                                            for x in obs["result"].get("매물", [])]
-                    self.ctx.last_regions, self.ctx.region_focus = [], ""
+                    if list(call.arguments.get("regions") or []) != [self.ctx.region_focus]:  # 도구 쪽과 같은 규칙
+                        self.ctx.last_regions, self.ctx.region_focus = [], ""
                 if self.registry.external and call.name == "list_regions" and obs["ok"]:  # 지역 순위도 이쪽에서 기억
                     self.ctx.last_regions = list(obs["result"].get("지역별_매물_수") or {})
             self._add(steps, Step(n, "tool", policy, call.name, call.arguments, obs["ok"],

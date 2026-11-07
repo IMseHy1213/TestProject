@@ -729,6 +729,41 @@
      }
     }
    ]
+  },
+  {
+   "id": "R04",
+   "category": "지역별 매물 수",
+   "turns": [
+    {
+     "q": "어느 지역 매물이 제일 많아요?",
+     "expect": {
+      "region_rank": 0,
+      "count": 0
+     }
+    },
+    {
+     "q": "그 중에 넓은 건?",
+     "expect": {
+      "region_gold": {
+       "rank": 0,
+       "sort": "area_desc",
+       "k": 1
+      },
+      "count": 1
+     }
+    },
+    {
+     "q": "그 중에 싼 건?",
+     "expect": {
+      "region_gold": {
+       "rank": 0,
+       "sort": "price_asc",
+       "k": 1
+      },
+      "count": 1
+     }
+    }
+   ]
   }
  ]
 }
