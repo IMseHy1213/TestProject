@@ -24,7 +24,8 @@ from ..recommender import NOT_FOUND_MESSAGE
 DATASET = PROJECT_ROOT / "benchmarks" / "land_consult_v1.json"
 BASELINE = PROJECT_ROOT / "benchmarks" / "baseline.json"
 CONFIGS = ("single", "multi", "distributed", "mcp")
-CONFIG_LABEL = {"single": "상담원 1명", "multi": "상담팀", "distributed": "분산 상담팀 (A2A)", "mcp": "MCP 도구"}
+CONFIG_LABEL = {"single": "상담원 1명", "multi": "상담팀", "distributed": "분산 상담팀 (A2A)", "mcp": "MCP 도구",
+                "workflow": "Workflow", "plan_execute": "Plan-and-Execute", "langgraph": "LangGraph"}
 BUDGET_TOL, AREA_TOL = 0.10, 0.20
 _KEY = {"price_asc": lambda l: l.price_manwon, "area_desc": lambda l: -l.area_pyeong,
         "ppp_asc": lambda l: l.price_per_pyeong}
@@ -157,6 +158,18 @@ class _Runners:
             from ..a2a.distributed import DistributedMultiAgent
 
             return DistributedMultiAgent(self.agent, clients=self._clients(), ctx=ctx, log_dir=""), None
+        if config == "workflow":
+            from ..architectures import WorkflowAgent
+
+            return WorkflowAgent(self.agent, ctx=ctx, log_dir=""), None
+        if config == "plan_execute":
+            from ..architectures import PlanExecuteAgent
+
+            return PlanExecuteAgent(self.agent, ctx=ctx, log_dir=""), None
+        if config == "langgraph":
+            from ..framework.langgraph_agent import LangGraphAgent
+
+            return LangGraphAgent(self.agent, ctx=ctx, log_dir=""), None
         if config == "mcp":
             from ..mcp_server import create_mcp_server
             from ..tool_agent.mcp_client import McpToolSource
@@ -236,14 +249,17 @@ def run_benchmark(agent, configs: Optional[list[str]] = None, dataset: Optional[
                         fails, m = check_turn(agent, r, turn.get("expect", {}), shown, _observations(runner, history))
                         llm_calls, tokens = _llm_usage(r.trace_id)
                         tools = sum(1 for s in r.steps if s.kind == "tool" and not (s.tool or "").startswith("delegate_"))
+                        decisions = getattr(r, "decisions", 0)
                         policy = r.policy
                         shown.append(list(r.listing_ids))
                     except Exception as e:  # noqa: BLE001 - 처리 못 한 오류도 실패로 기록
                         fails, m, llm_calls, tokens, tools, policy = [f"오류 {type(e).__name__}: {e}"], {}, 0, 0, 0, "error"
+                        decisions = 0
                         shown.append([])
                     rows.append({"case": case["id"], "category": case["category"], "turn": i + 1, "q": turn["q"],
                                  "ok": not fails, "fails": fails, "ms": round((time.perf_counter() - t0) * 1000, 1),
-                                 "tools": tools, "llm_calls": llm_calls, "tokens": tokens, "policy": policy, **m})
+                                 "tools": tools, "llm_calls": llm_calls, "tokens": tokens, "policy": policy,
+                                 "decisions": decisions, **m})
             finally:
                 if close:
                     close()
@@ -269,6 +285,7 @@ def summarize(rows: list[dict]) -> dict:
         "recall": round(100 * statistics.mean(rec), 1) if rec else None,
         "p50_ms": ms[len(ms) // 2], "p95_ms": ms[min(len(ms) - 1, int(len(ms) * 0.95))],
         "tools_per_turn": round(statistics.mean(r["tools"] for r in rows), 2),
+        "decisions_per_turn": round(statistics.mean(r.get("decisions", 0) for r in rows), 2),
         "llm_calls_per_turn": round(statistics.mean(r["llm_calls"] for r in rows), 2),
         "tokens": sum(r["tokens"] for r in rows),
         "policies": sorted({r["policy"] for r in rows}),

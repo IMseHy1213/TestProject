@@ -185,6 +185,36 @@ VS Code 실행 목록 **🔌 JSON API 서버** → 브라우저에서 http://127
 - 손님 화면과 같은 개인정보 기준 (주소는 시/도 + 시/군/구, 연락처 없음). 기본은 내 PC(127.0.0.1)에서만 접속됩니다.
 - 처음이면 `pip install fastapi uvicorn` (또는 `pip install -r requirements.txt`)
 
+### v0.4 Architecture Study — `architectures.py`, `docs/v0.4_architecture_study.md`
+
+같은 도구로 **에이전트 구조만** 바꿔 v1.3 문제지로 비교했습니다 (`python main.py architecture-study` 로 보고서 다시 만들기).
+
+| 구조 | 흐름 | 문제 통과율 | 질문당 판단(AI 호출) | 결과가 예상과 다를 때 헛도구 호출 |
+|---|---|---|---|---|
+| ① Workflow | 정해진 순서로만 (판단 없음) | 83.3% (이어서 묻기 33%) | 0 | 0 |
+| ② **ReAct (기본)** | 판단 → 도구 → 결과 보고 다시 판단 | **97.2%** | 2.09 | 0 |
+| ③ Plan-and-Execute | 계획 1번 → 그대로 실행 → 답 | 97.2% | 1.95 (항상 2번) | 3 |
+| ④ Multi-Agent | 총괄 → 검색·분석 Agent | 97.2% | 4.28 | 0 |
+| ⑤ ReAct on LangGraph | ②를 프레임워크로 (v0.5) | 97.2% | 2.09 | 0 |
+
+결정: 이어서 묻기가 많고 검색 결과에 따라 다음 행동이 달라져야 해서 **ReAct 를 기본**으로, 역할 분리·분산이 필요하면 **Multi-Agent**.
+Plan-and-Execute 는 AI 호출이 고정 2번이라 비용 절감 후보지만 계획을 고치지 않아 0건일 때 헛도구 호출이 생김.
+
+### v0.5 Framework — `framework/langgraph_agent.py`, `docs/v0.5_framework.md`
+
+직접 만든 ReAct Agent 를 **LangGraph** 로 다시 만들어 비교했습니다. 도구·판단 규칙·안전장치·추적은 같게, **흐름 제어만** 그래프로
+(`START → 판단·실행 ⟲ → (정리) → END`). 결과는 **완전히 같고**(같은 문제를 맞힘) 질문당 몇 ms 더 걸림. 프레임워크가 주는 것:
+대화별 상태 저장(checkpointer)·단계별 상태 다시 보기·흐름 그림 자동 생성.
+→ 운영은 직접 구현을 유지하고, LangGraph 판은 `python main.py agent --framework langgraph` 로 선택해 쓸 수 있게 둠 (`pip install langgraph`).
+
+### 버전 태그 한 번에 붙이기 — `scripts/tag_versions.py`
+
+```
+python scripts/tag_versions.py --dry-run   # 무엇을 붙일지 미리 보기
+python scripts/tag_versions.py             # v0.1 ~ v1.3 을 순서대로 붙이고 GitHub 에 한 번에 올림
+```
+GitHub 에서 최신 커밋을 먼저 받아오고(그래서 'Failed to resolve' 오류가 안 남), 이미 있는 태그는 건너뜁니다.
+
 ### v0.6 MCP (Model Context Protocol) — `mcp_server.py`, `tool_agent/mcp_client.py`
 
 매물 도구를 **표준 MCP 서버**로 공개하고, 우리 AI 상담 Agent 도 **MCP 클라이언트**가 되어 그 도구를 쓸 수 있습니다.

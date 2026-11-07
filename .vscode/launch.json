@@ -147,6 +147,32 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "🏛 구조 비교 보고서 (architecture-study: v0.4·v0.5 → docs/)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["architecture-study"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🕸 AI 상담 - LangGraph 판 (v0.5, 터미널)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["agent", "--framework", "langgraph"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🏷 버전 태그 v0.1~v1.3 한 번에 붙이고 올리기",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/tag_versions.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "📊 단일 Agent vs 멀티 Agent 비교 (compare-agents)",
       "type": "debugpy",
       "request": "launch",

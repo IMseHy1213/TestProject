@@ -179,7 +179,7 @@ def print_sync(report: SyncReport, verbose: bool = False) -> None:
 
 
 def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6, use_mcp: bool = False,
-                   multi: bool = False, distributed: bool = False) -> int:
+                   multi: bool = False, distributed: bool = False, framework: str = "none") -> int:
     """v0.2 Tool-use Agent 를 터미널에서: 도구 호출 과정(행동→관찰)과 답변을 출력."""
     from .tool_agent import ToolAgent
     from .tool_agent.memory import LongTermMemory
@@ -198,6 +198,11 @@ def run_tool_agent(agent: RealEstateAgent, question: str, max_steps: int = 6, us
                                        owner="terminal")
         for who, c in runner.clients.items():
             print(f"  {who}: {c.url}")
+    elif framework == "langgraph":  # v0.5: 같은 Agent 를 LangGraph 그래프로
+        from .framework.langgraph_agent import LangGraphAgent
+
+        runner = LangGraphAgent(agent, max_steps=max_steps, memory=LongTermMemory(agent.storage.conn), owner="terminal")
+        print("LangGraph 그래프로 실행 (흐름: START → 판단·실행 ⟲ → END)")
     elif multi:  # v0.7: 총괄 Agent 가 검색 Agent · 분석 Agent 에게 나눠 맡김
         from .tool_agent.multi import MultiAgent
 
@@ -502,6 +507,26 @@ def run_clean_practice(settings, yes: bool = False, dry_run: bool = False) -> in
         conn.close()
 
 
+def run_architecture_study(agent: RealEstateAgent) -> int:
+    """v0.4·v0.5: 구조별(Workflow·ReAct·Plan-and-Execute·Multi·LangGraph) 비교 → docs/ 보고서."""
+    import logging as _logging
+
+    from .architecture_study import framework_markdown, run_study, study_markdown
+    from .config import PROJECT_ROOT
+
+    _logging.getLogger("real_estate_agent").setLevel(_logging.ERROR)
+    print("구조 비교 중 (Workflow · ReAct · Plan-and-Execute · Multi-Agent · LangGraph) …")
+    report = run_study(agent)
+    docs = PROJECT_ROOT / "docs"
+    docs.mkdir(exist_ok=True)
+    study, fw = study_markdown(report), framework_markdown(report)
+    (docs / "v0.4_architecture_study.md").write_text(study + "\n", encoding="utf-8")
+    (docs / "v0.5_framework.md").write_text(fw + "\n", encoding="utf-8")
+    print("\n" + study + "\n\n" + fw)
+    print(f"\n저장: {docs / 'v0.4_architecture_study.md'}, {docs / 'v0.5_framework.md'}")
+    return 0
+
+
 def run_compare_agents(agent: RealEstateAgent) -> int:
     """v0.7: 같은 대화를 단일 Agent / 멀티 Agent 로 돌려 비교표를 출력하고 logs 에 저장."""
     from datetime import datetime
@@ -542,6 +567,8 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--max-steps", type=int, default=6)
     ag.add_argument("--mcp", action="store_true", help="도구를 MCP 서버(python main.py mcp)에 연결해서 사용")
     ag.add_argument("--multi", action="store_true", help="v0.7 멀티 Agent (총괄 → 검색 Agent · 분석 Agent)")
+    ag.add_argument("--framework", choices=["none", "langgraph"], default="none",
+                    help="v0.5: langgraph = 같은 Agent 를 LangGraph 그래프로 실행")
     ag.add_argument("--distributed", action="store_true",
                     help="v0.8 분산 상담팀: 검색·분석 Agent 를 A2A 서버로 (a2a-serve 로 먼저 띄우기)")
     a2 = sub.add_parser("a2a-serve", help="v0.8 A2A Agent 서버 (search :8101 / analysis :8102 / consult :8100)")
@@ -555,6 +582,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("a2a-demo", help="v0.8 발표용: 검색·분석 Agent 서버를 띄워 분산 상담 + 장애 대처 시연")
     tr = sub.add_parser("trace", help="v1.1 질문 하나의 처리 과정을 시간 막대로 (기본: 가장 최근)")
     tr.add_argument("trace_id", nargs="?", default="last")
+    sub.add_parser("architecture-study", help="v0.4·v0.5 구조 비교 (Workflow·ReAct·Plan-and-Execute·Multi·LangGraph) → docs/")
     cp = sub.add_parser("clean-practice", help="실제 운영 DB 에 섞인 연습용 샘플 매물 기록만 지움 (지우기 전 백업)")
     cp.add_argument("--yes", action="store_true", help="묻지 않고 바로 정리")
     cp.add_argument("--dry-run", action="store_true", help="무엇을 지울지만 보여줌")
@@ -691,10 +719,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     if cmd == "agent":
         agent.sync()
         return run_tool_agent(agent, args.question, args.max_steps, use_mcp=args.mcp, multi=args.multi,
-                              distributed=args.distributed)
+                              distributed=args.distributed, framework=args.framework)
     if cmd == "compare-agents":
         agent.sync()
         return run_compare_agents(agent)
+    if cmd == "architecture-study":  # 벤치마크와 같이 샘플 매물 + 임시 DB 로
+        import tempfile
+
+        from . import observability
+        from .benchmark import load_dataset
+        from .config import PROJECT_ROOT, Settings
+
+        observability.setup(settings, "study", sqlite=False, json_logs=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            bench = RealEstateAgent(Settings(data_dir=PROJECT_ROOT / load_dataset()["data_dir"],
+                                             db_path=Path(tmp) / "study.db", log_dir=Path(tmp),
+                                             llm_providers=settings.llm_providers))
+            bench.sync()
+            return run_architecture_study(bench)
     if cmd == "benchmark":  # 문제지에 맞는 샘플 매물 + 임시 DB 로 (사무실 DB·관측 기록을 건드리지 않음)
         import tempfile
 

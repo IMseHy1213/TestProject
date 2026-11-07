@@ -176,7 +176,8 @@ class MultiAgent:
             steps.append(s)
         result = AgentResult(sup.question, sup.answer, steps, ids[:6], sup.policy, sup.stopped,
                              sup.total_ms, sup.run_id, badges, trace_id=sup.trace_id,
-                             span_id=sup.span_id)
+                             span_id=sup.span_id,
+                             decisions=sup.decisions + sum(r.decisions for r in (search, analysis) if r))
         if self.log_dir:
             self.supervisor.log_dir = self.log_dir
             try:

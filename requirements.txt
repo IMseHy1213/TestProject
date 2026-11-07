@@ -12,4 +12,5 @@ fastapi>=0.110       # JSON API (python main.py api) - async · Pydantic · 스�
 uvicorn>=0.29        # JSON API 서버
 httpx>=0.27          # API 테스트용
 mcp>=1.10            # v0.6 MCP 서버/클라이언트 (python main.py mcp)
+langgraph>=1.0       # v0.5 Framework (선택: python main.py agent --framework langgraph)
 pytest>=8.0

@@ -101,6 +101,7 @@ class AgentResult:
     total_ms: float
     run_id: str = ""
     badges: dict[str, list[str]] = field(default_factory=dict)  # 매물별 표시 (최저가, 창고 가능 …)
+    decisions: int = 0        # v0.4: 판단 횟수 (AI 모드라면 AI 호출 수)
     trace_id: str = ""        # v1.1: 이 질문의 추적 id (관리자 '관측' 화면에서 단계별 시간 확인)
     span_id: str = ""         # v1.2: 이 질문의 맨 위 span (손님 평가를 같은 trace 에 이어 붙일 때)
 
@@ -111,6 +112,23 @@ class AgentResult:
     @property
     def tool_errors(self) -> int:
         return sum(1 for s in self.steps if s.kind == "tool" and s.ok is False)
+
+
+@dataclass
+class _Run:
+    """질문 하나를 처리하는 동안의 상태 (반복문·LangGraph 노드가 함께 씀)."""
+    question: str
+    messages: list
+    steps: list
+    tools: list
+    extra: str
+    use_llm: bool
+    started: float
+    seen_calls: dict = field(default_factory=dict)
+    answer: str = ""
+    policy: str = "rule"
+    stopped: str = "max_steps"
+    decisions: int = 0     # v0.4: 판단(AI 모드라면 AI 호출) 횟수 - 구조별 비용 비교용
 
 
 # ---------------------------------------------------------------------- 정책: 다음 행동을 고르는 쪽
@@ -464,6 +482,7 @@ def listing_badges(done: list[tuple[str, dict]]) -> dict[str, list[str]]:
 
 # ---------------------------------------------------------------------- Agent 루프
 class ToolAgent:
+    uses_policy = True  # v0.4: 고정 파이프라인(Workflow)은 판단하지 않음
     """memory: LongTermMemory (방문자별 장기 기억), owner: 방문자 id,
     checkpoint(messages, ctx): 단계마다 상태 저장, on_event(dict): 진행 상황 실시간 전달 (스트리밍)."""
 
@@ -615,84 +634,14 @@ class ToolAgent:
                 self.trace.append(s)
             self._emit("step", step=asdict(s))
         use_llm = self.llm_policy.available
-        if not use_llm:
+        if not use_llm and self.uses_policy:
             self._add(steps, Step(0, "fallback", "rule", summary="AI(GPT/Claude)를 쓸 수 없어 규칙 기반 정책으로 진행"))
-        seen_calls: dict[str, int] = {}
-        answer, policy, stopped = "", "rule", "max_steps"
         self._save(messages)
 
-        from ..reliability.stats import STATS
-
-        for n in range(1, self.max_steps + 1):
-            t0 = time.perf_counter()
-            self._emit("thinking", n=n)
-            remaining = self.deadline - (t0 - started)
-            if use_llm and remaining <= 0.05:  # v1.0 시간 예산: AI 를 더 기다리지 않고 규칙으로 마무리
-                STATS.add("deadline_hits")
-                self._add(steps, Step(n, "guard", "rule",
-                                      summary=f"시간 예산 {self.deadline:g}초를 다 써서 규칙 기반으로 마무리"))
-                use_llm = False
-            try:
-                turn = (self._llm_call(self.llm_policy.next, remaining, list(messages), tools, extra) if use_llm
-                        else self.rule_policy.next(messages, tools))
-            except LLMUnavailable as e:
-                STATS.add("llm_fallbacks")
-                self._add(steps, Step(n, "fallback", "rule", summary=f"AI 응답 실패 → 규칙 기반으로 이어서 진행 ({e})",
-                                      ms=_ms(t0)))
-                use_llm = False
-                continue
-            policy = turn.provider or ("rule" if not use_llm else "llm")
-            if not turn.tool_calls:  # 최종 답변
-                answer, stopped = turn.text.strip(), "answer"
-                self._add(steps, Step(n, "answer", policy, summary=self.answer_label, ms=_ms(t0)))
-                messages.append({"role": "assistant", "content": answer})
-                break
-            messages.append({"role": "assistant", "content": turn.text, "tool_calls": turn.tool_calls,
-                             "raw": turn.raw})
-            for i, call in enumerate(turn.tool_calls):
-                key = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
-                seen_calls[key] = seen_calls.get(key, 0) + 1
-                if i >= MAX_CALLS_PER_STEP:
-                    obs = {"ok": False, "error": f"한 번에 도구는 {MAX_CALLS_PER_STEP}개까지만 실행합니다", "ms": 0}
-                elif call.parse_error:
-                    obs = {"ok": False, "error": call.parse_error, "ms": 0}
-                elif seen_calls[key] > 2:
-                    obs = {"ok": False, "error": "같은 도구를 같은 인자로 이미 여러 번 불렀습니다. 결과를 바탕으로 답하세요.",
-                           "ms": 0}
-                else:
-                    self._emit("tool_start", n=n, tool=call.name, args=call.arguments, agent=self.name)
-                    obs = self.registry.run(call.name, call.arguments)
-                    if self.registry.external and call.name == "search_listings" and obs["ok"]:
-                        # MCP 서버가 검색 상태를 들고 있으므로, 여기서는 '직전 검색이 있었다' 는 것과 보여준 매물만 기억
-                        self.ctx.last_search = dict(call.arguments) or {"query": question}
-                        self.ctx.last_shown = [self.registry.resolve(x["id"]) or x["id"]
-                                               for x in obs["result"].get("매물", [])]
-                self._add(steps, Step(n, "tool", policy, call.name, call.arguments, obs["ok"],
-                                      summarize(call.name, obs), obs.get("ms", 0),
-                                      thought=turn.text.strip()[:300] if i == 0 else ""))
-                messages.append({"role": "tool", "call_id": call.id, "name": call.name,
-                                 "content": observation_text(obs), "is_error": not obs["ok"]})
-            self._save(messages)  # 체크포인트: 여기서 끊겨도 이 도구 결과부터 이어서 진행
-        else:
-            # 단계 수를 다 쓰면 도구 없이 답만 받고, 그것도 안 되면 규칙으로 정리
-            t0 = time.perf_counter()
-            try:
-                if not use_llm:
-                    raise LLMUnavailable("규칙 기반")
-                turn = self._llm_call(self.llm_policy.llm.tool_step,
-                                      self.deadline - (time.perf_counter() - started),
-                                      self.llm_policy.prompt + extra + "\n이제 도구 없이 지금까지 결과로 답하세요.",
-                                      list(messages), [])
-                if turn.tool_calls or not turn.text.strip():
-                    raise LLMUnavailable("도구 없이 답하지 못함")
-                answer, policy = turn.text.strip(), turn.provider or "llm"
-            except LLMUnavailable:
-                start = max(i for i, m in enumerate(messages) if m["role"] == "user")
-                done = [(m["name"], _loads(m["content"])) for m in messages[start:] if m["role"] == "tool"]
-                answer, policy = rule_answer(question, done), "rule"
-            self._add(steps, Step(self.max_steps + 1, "guard", policy,
-                                  summary=f"최대 {self.max_steps}단계 도달 → 정리해서 답변", ms=_ms(t0)))
-            messages.append({"role": "assistant", "content": answer})
+        run = _Run(question, messages, steps, tools, extra, use_llm, started)
+        self._run_steps(run)
+        answer, policy, stopped = run.answer, run.policy, run.stopped
+        self._last_decisions = run.decisions
 
         start = max(i for i, m in enumerate(messages) if m["role"] == "user")
         done = [(m["name"], _loads(m["content"])) for m in messages[start:] if m["role"] == "tool"]
@@ -702,7 +651,7 @@ class ToolAgent:
             badges[self.registry.resolve(key) or key] = values
         result = AgentResult(question, answer or NOT_FOUND_MESSAGE, steps, self._cards(done, answer, seen_before), policy,
                              stopped, round((time.perf_counter() - started) * 1000, 1), uuid.uuid4().hex[:12],
-                             badges)
+                             badges, decisions=getattr(self, "_last_decisions", 0))
         if self.memory and self.owner:  # 장기 기억 갱신 (새로 찾은 조건, 관심/제외 매물)
             self.memory.update_after(self.owner, self.ctx, self.ctx.run_searches)
         self.last_run_searches = list(self.ctx.run_searches)  # v0.8: 원격 Agent 가 장기 기억 갱신용으로 돌려줌
@@ -712,6 +661,102 @@ class ToolAgent:
         self._emit("done", answer=result.answer, listing_ids=result.listing_ids, policy=result.policy,
                    total_ms=result.total_ms)
         return result, history
+
+    # ------------------------------------------------------------------ 한 단계 (판단 → 도구 실행)
+    def _run_steps(self, run: "_Run") -> None:
+        """직접 만든 ReAct 반복문. (v0.5: LangGraph 판은 같은 _step 을 그래프 노드로 돌림)"""
+        for n in range(1, self.max_steps + 1):
+            if self._step(run, n) == "done":
+                return
+        self._wrap_up(run)
+
+    def _step(self, run: "_Run", n: int) -> str:
+        """판단 한 번 + 고른 도구 실행. 반환: 'done'(답을 냄) / 'continue'."""
+        from ..reliability.stats import STATS
+
+        messages, steps = run.messages, run.steps
+        t0 = time.perf_counter()
+        self._emit("thinking", n=n)
+        remaining = self.deadline - (t0 - run.started)
+        if run.use_llm and remaining <= 0.05:  # v1.0 시간 예산: AI 를 더 기다리지 않고 규칙으로 마무리
+            STATS.add("deadline_hits")
+            self._add(steps, Step(n, "guard", "rule",
+                                  summary=f"시간 예산 {self.deadline:g}초를 다 써서 규칙 기반으로 마무리"))
+            run.use_llm = False
+        try:
+            run.decisions += 1
+            turn = (self._llm_call(self.llm_policy.next, remaining, list(messages), run.tools, run.extra)
+                    if run.use_llm else self.rule_policy.next(messages, run.tools))
+        except LLMUnavailable as e:
+            STATS.add("llm_fallbacks")
+            self._add(steps, Step(n, "fallback", "rule", summary=f"AI 응답 실패 → 규칙 기반으로 이어서 진행 ({e})",
+                                  ms=_ms(t0)))
+            run.use_llm = False
+            return "continue"
+        policy = run.policy = turn.provider or ("rule" if not run.use_llm else "llm")
+        if not turn.tool_calls:  # 최종 답변
+            run.answer, run.stopped = turn.text.strip(), "answer"
+            self._add(steps, Step(n, "answer", policy, summary=self.answer_label, ms=_ms(t0)))
+            messages.append({"role": "assistant", "content": run.answer})
+            return "done"
+        self._execute(run, n, turn)
+        return "continue"
+
+    def _execute(self, run: "_Run", n: int, turn: ToolTurn) -> list[dict]:
+        """고른 도구들을 실행하고 관찰을 대화에 붙임 (판단과 실행을 나눠 v0.4 다른 구조들도 같은 실행기를 씀)."""
+        messages, steps = run.messages, run.steps
+        policy = run.policy
+        observations = []
+        messages.append({"role": "assistant", "content": turn.text, "tool_calls": turn.tool_calls,
+                         "raw": turn.raw})
+        for i, call in enumerate(turn.tool_calls):
+            key = f"{call.name}:{json.dumps(call.arguments, sort_keys=True, ensure_ascii=False)}"
+            run.seen_calls[key] = run.seen_calls.get(key, 0) + 1
+            if i >= MAX_CALLS_PER_STEP:
+                obs = {"ok": False, "error": f"한 번에 도구는 {MAX_CALLS_PER_STEP}개까지만 실행합니다", "ms": 0}
+            elif call.parse_error:
+                obs = {"ok": False, "error": call.parse_error, "ms": 0}
+            elif run.seen_calls[key] > 2:
+                obs = {"ok": False, "error": "같은 도구를 같은 인자로 이미 여러 번 불렀습니다. 결과를 바탕으로 답하세요.",
+                       "ms": 0}
+            else:
+                self._emit("tool_start", n=n, tool=call.name, args=call.arguments, agent=self.name)
+                obs = self.registry.run(call.name, call.arguments)
+                if self.registry.external and call.name == "search_listings" and obs["ok"]:
+                    # MCP 서버가 검색 상태를 들고 있으므로, 여기서는 '직전 검색이 있었다' 는 것과 보여준 매물만 기억
+                    self.ctx.last_search = dict(call.arguments) or {"query": run.question}
+                    self.ctx.last_shown = [self.registry.resolve(x["id"]) or x["id"]
+                                           for x in obs["result"].get("매물", [])]
+            self._add(steps, Step(n, "tool", policy, call.name, call.arguments, obs["ok"],
+                                  summarize(call.name, obs), obs.get("ms", 0),
+                                  thought=turn.text.strip()[:300] if i == 0 else ""))
+            messages.append({"role": "tool", "call_id": call.id, "name": call.name,
+                             "content": observation_text(obs), "is_error": not obs["ok"]})
+            observations.append(obs)
+        self._save(messages)  # 체크포인트: 여기서 끊겨도 이 도구 결과부터 이어서 진행
+        return observations
+
+    def _wrap_up(self, run: "_Run") -> None:
+        """단계 수를 다 쓰면 도구 없이 답만 받고, 그것도 안 되면 규칙으로 정리."""
+        messages = run.messages
+        t0 = time.perf_counter()
+        try:
+            if not run.use_llm:
+                raise LLMUnavailable("규칙 기반")
+            turn = self._llm_call(self.llm_policy.llm.tool_step, self.deadline - (time.perf_counter() - run.started),
+                                  self.llm_policy.prompt + run.extra + "\n이제 도구 없이 지금까지 결과로 답하세요.",
+                                  list(messages), [])
+            if turn.tool_calls or not turn.text.strip():
+                raise LLMUnavailable("도구 없이 답하지 못함")
+            run.answer, run.policy = turn.text.strip(), turn.provider or "llm"
+        except LLMUnavailable:
+            start = max(i for i, m in enumerate(messages) if m["role"] == "user")
+            done = [(m["name"], _loads(m["content"])) for m in messages[start:] if m["role"] == "tool"]
+            run.answer, run.policy = rule_answer(run.question, done), "rule"
+        run.stopped = "max_steps"
+        self._add(run.steps, Step(self.max_steps + 1, "guard", run.policy,
+                                  summary=f"최대 {self.max_steps}단계 도달 → 정리해서 답변", ms=_ms(t0)))
+        messages.append({"role": "assistant", "content": run.answer})
 
     def _llm_call(self, fn: Callable, budget: float, *args: Any) -> ToolTurn:
         """AI 호출을 남은 시간 예산만큼만 기다림 (멈춘 AI 때문에 손님이 계속 기다리지 않게)."""
