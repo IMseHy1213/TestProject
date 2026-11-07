@@ -72,6 +72,8 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
   매물은 매물번호(없으면 id)로 가리키고 핵심 수치(가격 또는 면적)만 괄호로 덧붙이세요.
   매물 목록을 줄줄이 나열하거나 특징을 그대로 옮겨 쓰지 말고, 표·마크다운(**, #, -)도 쓰지 마세요.
 - 주소는 도구가 준 대로(시/도 + 시/군/구)만 말하세요.
+- '어느 지역 매물이 제일 많아요?', '지역별로 몇 건이에요?' 처럼 수만 물으면 list_regions 만 쓰고 숫자로만 답하세요 (매물을 검색하지 마세요).
+  그다음 '제일 많은 지역 매물 보여줘', '그 지역 매물 보고 싶어요' 라고 하면 그 지역으로 search_listings(regions=[지역]) 하세요.
 - 건축 가능 여부는 프로그램의 1차 판단이며 토지이용계획 확인이 필요하다고 덧붙이세요.
 """
 
@@ -164,6 +166,9 @@ class RulePolicy:
         have = {t["name"] for t in tools} if tools else None  # 멀티 Agent: 이 Agent 가 가진 도구만 씀
         if have is not None and "search_listings" not in have:
             return self._analyze(question, done, names, have)
+        region_turn = self._regions(question, names, done, have)  # '어느 지역 매물이 제일 많아요?' / '그 지역 매물 보여줘'
+        if region_turn is not None:
+            return region_turn
         named = _named_listing(self.ctx_agent, question)  # v1.3: '(매물번호)에 공장 지을 수 있어?' → 그 매물을 바로 확인
         if (named and _purpose_in(question) and _asks_buildable(question) and "check_land_use" not in names
                 and (have is None or "check_land_use" in have)):
@@ -212,6 +217,38 @@ class RulePolicy:
         if have is not None and not have & {"compare_listings", "check_land_use"}:
             return ToolTurn(text=rule_answer(question, done), provider="rule")  # 검색 Agent: 찾은 결과만 보고
         return self._analyze(question, done, names, have, found)
+
+    def _regions(self, question: str, names: list, done: list, have: Optional[set]) -> Optional[ToolTurn]:
+        """지역별 매물 수 질문은 수만 답하고, '제일 많은 지역/그 지역 매물' 을 보자고 하면 그 지역으로 검색."""
+        from ..regions import find_regions
+
+        if have is not None and "list_regions" not in have:
+            return None
+        if "search_listings" in names:
+            return None
+        counted = next((o for n, o in reversed(done) if n == "list_regions" and o.get("ok")), None)
+        ranked = (counted or {}).get("result", {}).get("지역별_매물_수") or {}
+        ranked = list(ranked) or (list(self.ctx.last_regions) if self.ctx else [])
+        idx = _region_rank_ref(question, pronoun_ok=bool(self.ctx and self.ctx.last_regions) or bool(counted))
+        wants = idx is not None and _wants_to_see(question) and not _asks_region_counts(question) \
+            and not find_regions(question)
+        if wants and ranked:  # '제일 많은 지역 매물을 보고 싶어요' → 그 지역 매물
+            region = ranked[idx] if -len(ranked) <= idx < len(ranked) else ranked[0]
+            focus = self.ctx.region_focus if self.ctx else ""
+            if focus and not any(p.search(question) for p, _ in _RANK_REF):  # '그 지역' = 방금 답에서 말한 지역
+                region = focus
+            args: dict[str, Any] = {"query": question, "regions": [region], "limit": _wanted_count(question) or 5}
+            if _sort_in(question):
+                args["sort"] = _sort_in(question)
+            return _call("search_listings", args)
+        if counted:  # 수만 물었으면 수만 답함 (매물 카드 없음)
+            if self.ctx and ranked:  # 이 답이 가리키는 지역을 기억 ('그 지역 매물 보여줘')
+                asked = [r for r in ranked if r in question or r[:-1] in question]
+                self.ctx.region_focus = asked[0] if asked else (ranked[-1] if idx == -1 else ranked[0])
+            return ToolTurn(text=rule_answer(question, done), provider="rule")
+        if _asks_region_counts(question) or wants:  # 아직 순위를 모르면 먼저 셈
+            return _call("list_regions", {})
+        return None
 
     def _analyze(self, question: str, done: list, names: list, have: Optional[set], found=None) -> ToolTurn:
         """비교 / 건축 가능 여부 확인 -> 답. found 가 없으면(분석 Agent) 직전에 보여준 매물을 대상으로."""
@@ -283,6 +320,34 @@ def _region_follow_up(q: str) -> bool:
     if len(q.strip()) > 20 or _purpose_in(q) or re.search(r"\d|억|천\s*만|평|말고|빼고|외에|다른", q):
         return False
     return bool(find_regions(q) or re.search(r"[가-힣]{1,4}(읍|면)(에도|은|는|쪽|도|$)", q))
+
+
+_REGION_COUNT = re.compile(
+    r"(어느|어떤|어디|무슨)\s*(지역|동네|곳|시군|쪽|데)?[^?]{0,14}(많|적[은어었다게지나])"
+    r"|지역\s*별|지역마다|몇\s*(건|개)\s*씩|어디(에|가)\s*(매물이?\s*)?(제일|가장)?\s*많"
+    r"|(매물|땅)[이가은는]?\s*(몇\s*(건|개)|얼마나)\s*(있|되|돼)")
+_RANK_REF = [(re.compile(r"(두|2)\s*번\s*째\s*(로)?\s*많"), 1), (re.compile(r"(세|3)\s*번\s*째\s*(로)?\s*많"), 2),
+             (re.compile(r"(제일|가장|젤)\s*적[은어었다게지나]"), -1), (re.compile(r"(제일|가장|젤)\s*많"), 0)]
+_REGION_PRONOUN = re.compile(r"그\s*지역|거기|그곳|그\s*동네|그\s*쪽|그\s*시군")
+
+
+def _asks_region_counts(q: str) -> bool:
+    """'어느 지역 매물이 제일 많아요?', '지역별로 몇 건이에요?', '음성군에 매물 몇 개 있어요?' - 수를 묻는 질문."""
+    return bool(_REGION_COUNT.search(q))
+
+
+def _region_rank_ref(q: str, pronoun_ok: bool = False) -> Optional[int]:
+    """'제일 많은 지역' → 0, '두 번째로 많은' → 1, '제일 적은' → -1, ('그 지역' 은 직전에 순위를 알려줬을 때만) → 0"""
+    for pattern, idx in _RANK_REF:
+        if pattern.search(q) and re.search(r"지역|곳|데|동네|시|군", q):
+            return idx
+    if pronoun_ok and _REGION_PRONOUN.search(q):
+        return 0
+    return None
+
+
+def _wants_to_see(q: str) -> bool:
+    return bool(re.search(r"보여|보고\s*싶|볼\s*수|알려|추천|찾아|소개|매물|땅|뭐\s*있|어떤\s*(게|거)", q))
 
 
 def _wants_other_region(q: str) -> bool:
@@ -382,6 +447,9 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
     """도구 결과만으로 짧은 요약 답변 (LLM 없이). 매물 상세는 화면의 카드가 보여줌."""
     search = next((o for n, o in reversed(done) if n == "search_listings" and o.get("ok")), None)
     failed = next((o for n, o in reversed(done) if n == "search_listings" and not o.get("ok")), None)
+    counted = next((o for n, o in reversed(done) if n == "list_regions" and o.get("ok")), None)
+    if counted and search is None:  # '어느 지역 매물이 제일 많아요?' → 수만 답함
+        return _region_count_answer(question, counted["result"])
     if search is None and failed:
         return "죄송합니다. 매물을 찾는 중 문제가 생겼습니다: " + failed.get("error", "")
     res = (search or {}).get("result", {})
@@ -435,6 +503,31 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
         verdict = "건축 가능해 보입니다" if r["가능"] else "건축이 어려워 보입니다"
         lines.append(f"{names.get(r['id'], r['id'])}: {r['용도']} {verdict} (토지이용계획 확인 필요)")
     return "\n".join(lines) or "질문을 이해하지 못했습니다. 지역·용도·예산을 함께 말씀해 주세요."
+
+
+def _iga(word: str) -> str:
+    """받침이 있으면 '이', 없으면 '가' ('양평군이', '여주시가')."""
+    ch = word[-1:] if word else ""
+    return "이" if "가" <= ch <= "힣" and (ord(ch) - 0xAC00) % 28 else "가"
+
+
+def _region_count_answer(question: str, res: dict) -> str:
+    counts: dict = res.get("지역별_매물_수") or {}
+    total = res.get("전체_매물_수", sum(counts.values()))
+    if not counts:
+        return "지금 보유한 매물이 없습니다."
+    asked = [r for r in counts if r in question or r[:-1] in question]
+    if asked:  # '음성군에 매물 몇 개 있어요?'
+        return " / ".join(f"{r} 매물은 {counts[r]}건입니다" for r in asked) + f" (전체 {total}건 중)."
+    ranked = list(counts.items())
+    if re.search(r"(제일|가장|젤)\s*적[은어었다게지나]", question):
+        r, n = ranked[-1]
+        return f"보유 매물 {total}건 중 {r}{_iga(r)} {n}건으로 가장 적습니다."
+    (top, n), rest = ranked[0], ranked[1:4]
+    line = f"보유 매물 {total}건 중 {top}{_iga(top)} {n}건으로 가장 많습니다."
+    if rest:
+        line += " 그다음은 " + ", ".join(f"{r} {c}건" for r, c in rest) + "입니다."
+    return line
 
 
 def _recheck_answer(res: dict, names: dict) -> str:
@@ -727,6 +820,9 @@ class ToolAgent:
                     self.ctx.last_search = dict(call.arguments) or {"query": run.question}
                     self.ctx.last_shown = [self.registry.resolve(x["id"]) or x["id"]
                                            for x in obs["result"].get("매물", [])]
+                    self.ctx.last_regions, self.ctx.region_focus = [], ""
+                if self.registry.external and call.name == "list_regions" and obs["ok"]:  # 지역 순위도 이쪽에서 기억
+                    self.ctx.last_regions = list(obs["result"].get("지역별_매물_수") or {})
             self._add(steps, Step(n, "tool", policy, call.name, call.arguments, obs["ok"],
                                   summarize(call.name, obs), obs.get("ms", 0),
                                   thought=turn.text.strip()[:300] if i == 0 else ""))

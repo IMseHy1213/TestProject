@@ -673,6 +673,62 @@
      }
     }
    ]
+  },
+  {
+   "id": "R01",
+   "category": "지역별 매물 수",
+   "turns": [
+    {
+     "q": "어느 지역 매물이 제일 많아요?",
+     "expect": {
+      "region_rank": 0,
+      "count": 0
+     }
+    },
+    {
+     "q": "제일 많은 지역 매물을 보고 싶어요",
+     "expect": {
+      "region_oracle": 0
+     }
+    },
+    {
+     "q": "두 번째로 많은 지역 매물도 보여줘",
+     "expect": {
+      "region_oracle": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "R02",
+   "category": "지역별 매물 수",
+   "turns": [
+    {
+     "q": "어느 지역 매물이 제일 적어요?",
+     "expect": {
+      "region_rank": -1,
+      "count": 0
+     }
+    },
+    {
+     "q": "그 지역 매물 보여줘",
+     "expect": {
+      "region_oracle": -1
+     }
+    }
+   ]
+  },
+  {
+   "id": "R03",
+   "category": "지역별 매물 수",
+   "turns": [
+    {
+     "q": "제일 많은 지역 매물 보여줘",
+     "expect": {
+      "region_oracle": 0
+     }
+    }
+   ]
   }
  ]
 }

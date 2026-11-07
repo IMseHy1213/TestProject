@@ -58,6 +58,15 @@ def oracle(agent, spec: dict) -> list:
     return out[: spec["k"]] if spec.get("k") else out
 
 
+def region_ranking(agent) -> list[tuple[str, int]]:
+    """지금 살 수 있는 매물을 주소의 시/군(두 번째 낱말)으로 직접 세어 많은 순."""
+    from collections import Counter
+
+    c = Counter(l.address.split()[1] for l in agent.listings()
+                if l.status not in {"계약완료", "보류"} and len(l.address.split()) > 1)
+    return c.most_common()
+
+
 # ---------------------------------------------------------------------- 채점
 def check_turn(agent, result, expect: dict, history_ids: list[list[str]], evidence: list) -> tuple[list[str], dict]:
     """실패한 항목 목록과 검색 지표(정밀도·재현율)."""
@@ -121,6 +130,19 @@ def check_turn(agent, result, expect: dict, history_ids: list[list[str]], eviden
         want = "가능" if use and use.ok else "어려"
         if want not in answer or (want == "가능" and "어려" in answer.split("가능")[0][-6:]):
             fails.append(f"건축 판단이 '{want}' 이어야 함")
+    if "region_rank" in expect:  # '어느 지역 매물이 제일 많아요?' → 그 지역과 수를 말하고, 매물은 보여주지 않음
+        ranking = region_ranking(agent)
+        region, n = ranking[expect["region_rank"]]
+        if region not in answer or f"{n}건" not in answer:
+            fails.append(f"'{region} {n}건' 을 말해야 함")
+        if ids:
+            fails.append(f"수만 물었는데 매물 {len(ids)}건을 보여줌")
+    if "region_oracle" in expect:  # '제일 많은 지역 매물 보여줘' → 그 지역 매물
+        region = region_ranking(agent)[expect["region_oracle"]][0]
+        expect = {**expect, "oracle": {"regions": [region]}}
+        gold_ids = {l.listing_id for l in oracle(agent, {"regions": [region]})}
+        if not ids or any(i not in gold_ids for i in ids):
+            fails.append(f"{region} 매물만 보여줘야 함 ({ids[:3]})")
     for want in expect.get("includes", []):
         if want not in ids:
             fails.append(f"매물 {want} 가 카드에 있어야 함")

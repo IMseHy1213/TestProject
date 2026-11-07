@@ -50,6 +50,8 @@ class AgentContext:
     run_searches: list[dict] = field(default_factory=list)  # 이번 질문에서 새로 찾은 조건 (장기 기억에 저장)
     pref_key: str = ""     # v1.2 온라인 학습: 이 방문자의 학습 모델 이름 (있으면 검색 순서에 반영)
     variant: str = ""      # v1.2 '자동' 상담 방식이 이 대화에 고른 방식 (single / multi)
+    last_regions: list[str] = field(default_factory=list)  # 직전에 알려준 '매물 많은 지역' 순위 ('두 번째로 많은 지역')
+    region_focus: str = ""  # 직전 답에서 가리킨 지역 ('제일 적은 곳은 여주시' → '그 지역 매물 보여줘' = 여주시)
 
 
 # ---------------------------------------------------------------------- 인자 검사
@@ -409,6 +411,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             given["exclude_regions"] = list(dict.fromkeys(list(given.get("exclude_regions") or []) + moved))
         ctx.last_search = dict(given)
         ctx.last_search_from_memory = False
+        ctx.last_regions, ctx.region_focus = [], ""  # 새 검색을 하면 '그 지역' 은 이제 검색한 지역을 가리킴
         req = requirement_from_args(agent, given)
         req.customer_name = ctx.customer
         session = agent.recommend(req, pref_key=ctx.pref_key or None)  # v1.2: 이 방문자에게서 배운 중요도로 점수
@@ -561,12 +564,21 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         }
 
     def list_regions(limit: int = 40) -> dict[str, Any]:
-        counts: Counter = Counter()
-        for l in agent.listings():
-            for tok in set(l.address.split()):
-                if len(tok) >= 2 and tok[-1:] in "시군구읍면":
-                    counts[tok] += 1
-        return {"지역별_매물_수": dict(counts.most_common(limit)), "전체_매물_수": len(agent.listings())}
+        """지금 살 수 있는 매물(계약완료·보류 제외)을 시/군 단위로 셈. 순위는 대화 상태에 기억 ('그 지역 매물 보여줘')."""
+        available = [l for l in agent.listings() if l.status not in {"계약완료", "보류"}]
+        by_city: Counter = Counter(shown_region(l) for l in available if shown_region(l))
+        by_town: Counter = Counter()
+        for l in available:
+            for tok in set(l.address.split()[2:3]):
+                if len(tok) >= 2 and tok[-1:] in "읍면동":
+                    by_town[tok] += 1
+        ranked = [r for r, _ in by_city.most_common()]
+        ctx.last_regions = ranked
+        return {"지역별_매물_수": dict(by_city.most_common(limit)), "전체_매물_수": len(available),
+                "가장_많은_지역": ranked[0] if ranked else None, "가장_적은_지역": ranked[-1] if ranked else None,
+                "읍면별_매물_수": dict(by_town.most_common(10)),
+                "안내": "손님이 지역별 매물 수만 물었으면 숫자로만 답하고 매물 목록은 보여주지 마세요. "
+                        "그 지역 매물을 보고 싶다고 하면 search_listings(regions=[그 지역])."}
 
     string_list = {"type": "array", "items": {"type": "string"}}
     return [
@@ -617,7 +629,8 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         Tool("recall_memory", "이 손님과의 지난 상담 기억(최근에 찾은 조건, 관심 매물, 싫다고 한 매물)을 불러옵니다. "
              "손님이 '지난번', '전에 찾던' 처럼 예전 상담을 말하면 먼저 부르세요.",
              {"type": "object", "properties": {}}, recall_memory),
-        Tool("list_regions", "보유 매물이 있는 지역(시·군·읍·면)과 지역별 매물 수.",
+        Tool("list_regions", "지금 살 수 있는 매물의 지역별(시·군) 매물 수와 가장 많은/적은 지역. '어느 지역 매물이 제일 많아요?', "
+             "'지역별로 몇 건이에요?', '음성군에 매물 몇 개 있어요?' 처럼 수를 물을 때 씁니다 (이때는 매물 목록을 보여주지 않음).",
              {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100}}},
              list_regions),
     ]

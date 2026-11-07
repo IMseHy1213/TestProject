@@ -1,11 +1,11 @@
 {
  "dataset": "land_consult_v1",
- "when": "2026-11-06 10:49",
+ "when": "2026-11-07 07:44",
  "policy": "off",
  "configs": {
   "single": {
-   "turn_pass": 97.7,
-   "case_pass": 97.2,
+   "turn_pass": 98.0,
+   "case_pass": 97.4,
    "passed_cases": [
     "B01",
     "B02",
@@ -31,6 +31,9 @@
     "P02",
     "P03",
     "P04",
+    "R01",
+    "R02",
+    "R03",
     "S01",
     "S02",
     "S03",
@@ -50,8 +53,8 @@
    "recall": 100.0
   },
   "multi": {
-   "turn_pass": 97.7,
-   "case_pass": 97.2,
+   "turn_pass": 98.0,
+   "case_pass": 97.4,
    "passed_cases": [
     "B01",
     "B02",
@@ -77,6 +80,9 @@
     "P02",
     "P03",
     "P04",
+    "R01",
+    "R02",
+    "R03",
     "S01",
     "S02",
     "S03",
@@ -96,8 +102,8 @@
    "recall": 100.0
   },
   "distributed": {
-   "turn_pass": 97.7,
-   "case_pass": 97.2,
+   "turn_pass": 98.0,
+   "case_pass": 97.4,
    "passed_cases": [
     "B01",
     "B02",
@@ -123,6 +129,9 @@
     "P02",
     "P03",
     "P04",
+    "R01",
+    "R02",
+    "R03",
     "S01",
     "S02",
     "S03",
@@ -142,8 +151,8 @@
    "recall": 100.0
   },
   "mcp": {
-   "turn_pass": 97.7,
-   "case_pass": 97.2,
+   "turn_pass": 98.0,
+   "case_pass": 97.4,
    "passed_cases": [
     "B01",
     "B02",
@@ -169,6 +178,9 @@
     "P02",
     "P03",
     "P04",
+    "R01",
+    "R02",
+    "R03",
     "S01",
     "S02",
     "S03",

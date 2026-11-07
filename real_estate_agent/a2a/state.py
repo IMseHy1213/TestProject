@@ -51,5 +51,6 @@ def private_state(agent, raw: dict[str, Any]) -> AgentContext:
 
 def copy_into(target: AgentContext, source: AgentContext) -> None:
     """같은 상태 객체를 여러 Agent 가 참조하므로, 새 객체로 바꾸지 않고 내용만 덮어씀."""
-    for name in ("rejected", "liked", "seen", "customer", "last_search", "last_shown", "last_search_from_memory"):
+    for name in ("rejected", "liked", "seen", "customer", "last_search", "last_shown", "last_search_from_memory",
+                 "last_regions", "region_focus"):
         setattr(target, name, getattr(source, name))

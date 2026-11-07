@@ -96,7 +96,9 @@ def test_study_report(agent):
     report = run_study(agent)
     b = report["bench"]["configs"]
     assert b["workflow"]["case_pass"] < b["single"]["case_pass"]  # 고정 파이프라인은 이어서 묻기에 약함
-    assert b["single"]["case_pass"] == b["plan_execute"]["case_pass"] == b["multi"]["case_pass"]
+    assert b["single"]["case_pass"] == b["multi"]["case_pass"]
+    # 계획을 미리 고정하면 '먼저 세어 보고 → 그 지역 검색' 처럼 중간 결과에 따라 정해지는 일을 못 함
+    assert b["plan_execute"]["case_pass"] < b["single"]["case_pass"] and "R03" in b["plan_execute"]["failed_cases"]
     assert b["multi"]["decisions_per_turn"] > b["single"]["decisions_per_turn"]
     assert report["adaptivity"]["plan_execute"]["tool_errors"] > report["adaptivity"]["single"]["tool_errors"] == 0
     md = study_markdown(report)
