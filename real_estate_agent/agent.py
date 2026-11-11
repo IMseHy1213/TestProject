@@ -514,6 +514,13 @@ def public_region(address: str) -> str:
             parts.append(tok)
             continue
         break
+    if not parts or parts[0] not in SIGUNGU_TO_SIDO:
+        # '충북 음성 대소면', '충청북도음성군대소면', '충북음성군' 처럼 띄어쓰기·'군'이 빠져도 시/군 이름표로 찾음
+        from .regions import find_regions
+
+        names = [r for r in find_regions(address) if r in SIGUNGU_TO_SIDO]
+        if names:
+            parts = [names[0]]
     if parts and not sido:
         owners = SIGUNGU_TO_SIDO.get(parts[0], set())
         if len(owners) == 1:

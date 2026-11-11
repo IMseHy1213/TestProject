@@ -184,10 +184,20 @@ def condition_summary(req: CustomerRequirement) -> str:
 
 
 def shown_region(l: LandListing) -> str:
-    """매물이 있는 시/군/구 ('충청북도 음성군 ***' -> '음성군')."""
+    """매물이 있는 시/군/구 ('충청북도 음성군 ***' -> '음성군').
+    주소가 '충북 음성 대소면 …', '충청북도음성군대소면 …' 처럼 적혀 있어도 시/군을 찾고,
+    주소에 시/군이 아예 없으면 매물 폴더 이름(예: 음성군/…)에서 찾음."""
     from ..agent import public_region
+    from ..regions import find_regions, sido_of
 
     parts = public_region(l.address).split()
+    if parts and not sido_of(parts[-1]):
+        return parts[-1]
+    extra = getattr(l, "extra", {}) or {}
+    for text in (l.address, str(extra.get("_매물폴더", "")), str(getattr(l, "source_file", "") or "")):
+        names = [r for r in find_regions(text) if not sido_of(r)]
+        if names:
+            return names[0]
     return parts[-1] if parts else ""
 
 
@@ -385,8 +395,14 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         # '다른 지역에도 있어?' -> 직전에 보여준 매물이 있던 지역(과 직전 검색 지역)을 빼고, 나머지 조건은 그대로
         moved: list[str] = []
         if other_regions:
-            moved = list(ctx.last_search.get("regions") or [])
-            moved += [shown_region(l) for l in agent.listings() if l.listing_id in ctx.last_shown]
+            from ..regions import sido_of
+
+            # 앞에서 손님이 말한 지역: 따로 준 지역 + 문장 속 지역 ('음성군에 창고 지을 땅 있어?' → 음성군)
+            prev = requirement_from_args(agent, ctx.last_search) if ctx.last_search else None
+            moved = list(ctx.last_search.get("regions") or []) + list(prev.regions if prev else [])
+            # 보여준 매물이 있던 시/군 (도 단위로는 빼지 않음 - 주소에서 시/군을 못 읽었을 때 도 전체가 빠지지 않게)
+            moved += [r for r in (shown_region(l) for l in agent.listings() if l.listing_id in ctx.last_shown)
+                      if r and not sido_of(r)]
             moved = [r for r in dict.fromkeys(moved) if r]
         # 이번 질문에서 지역을 새로 말했는지 (따로 준 인자 또는 문장: '음성군 말고', '진천군에도 있어?')
         said = requirement_from_args(agent, {"query": given["query"]}) if given.get("query") else None
