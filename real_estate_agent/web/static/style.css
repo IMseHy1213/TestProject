@@ -116,7 +116,7 @@ button.link { background: none; border: 0; color: var(--brand); font: inherit; c
 .score { margin-left: auto; font-weight: 700; color: var(--brand); }
 .score.small { font-size: .85rem; margin-left: 6px; }
 .card h2 { font-size: 1.3rem; }
-.facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
 .facts > div { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
 .facts .wide { grid-column: 1 / -1; }
 .facts dt { font-size: .78rem; color: var(--muted); }
@@ -160,7 +160,7 @@ button.link { background: none; border: 0; color: var(--brand); font: inherit; c
 
 @media (max-width: 600px) {
   .search { flex-direction: column; }
-  .facts { grid-template-columns: repeat(2, 1fr); }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .card { padding: 16px; }
   .brand small { display: none; }
 }
@@ -417,3 +417,15 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 .factory-fields { border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 8px 12px 12px; margin: 12px 0; }
 .factory-fields legend { font-weight: 600; padding: 0 4px; }
 [hidden] { display: none !important; }
+
+/* 공장 카드: 가격(임대 보증금·월세)은 줄마다 끊고 한 줄 전체를 씀, 대지·건물 면적 등은 작은 칸 */
+.mini-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mini-facts .price-box.wide { grid-column: 1 / -1; }
+.mini-facts .price, .facts .price { white-space: normal; }
+.price .pl { display: block; white-space: nowrap; }
+.price .pl + .pl { font-size: .92em; }
+.facts .price-box.wide2 { grid-column: span 2; }
+@media (max-width: 480px) {
+  .price .pl { white-space: normal; }
+  .facts .price-box.wide2 { grid-column: 1 / -1; }
+}

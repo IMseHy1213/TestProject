@@ -195,7 +195,7 @@ def test_admin_template_download(make_client):
 def test_web_too_expensive_shows_cheaper(make_client):
     c = make_client()
     html = search(c, "양평 땅").get_data(as_text=True)
-    price = lambda h: re.search(r'class="price">([^<]+)<', h).group(1).strip()
+    price = lambda h: re.search(r'class="price">(?:<span class="pl">)?([^<]+)<', h).group(1).strip()
     from real_estate_agent.normalizer import parse_price_manwon
     prev = parse_price_manwon(price(html))
     for _ in range(4):

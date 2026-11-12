@@ -68,7 +68,7 @@
           </div>
           <p class="mini-addr">{% if c.kind %}<span class="tag kind">{{ c.kind }}</span> {% endif %}{{ c.address }}{% if c.use_tag %} <span class="tag use">{{ c.use_tag }}</span>{% endif %}</p>
           <dl class="mini-facts">
-            <div><dt>가격</dt><dd class="price">{{ c.price }}{% if c.ppp and not c.kind %}<small>평당 {{ c.ppp }}만원</small>{% endif %}</dd></div>
+            <div class="price-box{% if c.price_lines|length > 1 %} wide{% endif %}"><dt>가격</dt><dd class="price">{% for p in c.price_lines %}<span class="pl">{{ p }}</span>{% endfor %}{% if c.ppp and not c.kind %}<small>평당 {{ c.ppp }}만원</small>{% endif %}</dd></div>
             <div><dt>{% if c.kind %}대지면적{% else %}면적{% endif %}</dt><dd>{{ c.pyeong }}평<small>{{ c.m2 }}㎡</small></dd></div>
             {% if c.building_pyeong %}<div><dt>건물면적</dt><dd>{{ c.building_pyeong }}평</dd></div>{% endif %}
             <div><dt>지목</dt><dd>{{ c.jimok }}</dd></div>

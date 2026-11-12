@@ -92,6 +92,23 @@ class LandListing:
         return format_price(self.price_manwon)
 
     @property
+    def price_lines(self) -> list[str]:
+        """화면 카드용 가격 줄: 임대 ['임대 보증금 6,000만원', '월 575만원'],
+        매매/임대 ['매매 4억 8,212만원', '임대 보증금 2,000만원', '월 300만원'] (줄마다 끊어 카드 밖으로 넘치지 않게)."""
+        lease = []
+        if self.for_lease:
+            if self.deposit_manwon:
+                lease.append(f"임대 보증금 {format_price(self.deposit_manwon)}")
+            if self.monthly_rent_manwon:
+                lease.append(f"{'월' if lease else '임대 월'} {format_price(self.monthly_rent_manwon)}")
+            lease = lease or ["임대 조건 상담"]
+        if self.deal_type == "임대":
+            return lease
+        if self.deal_type == "매매/임대":
+            return [f"매매 {format_price(self.price_manwon)}"] + lease
+        return [format_price(self.price_manwon)]
+
+    @property
     def kind_label(self) -> str:
         """'토지' / '공장(매매)' / '공장(임대)' / '공장(매매/임대)'"""
         return self.property_type if self.property_type == "토지" else f"{self.property_type}({self.deal_type})"

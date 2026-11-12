@@ -354,3 +354,37 @@ def test_cli_sheet_layout_and_other_commands_run(tmp_path, capsys):
     assert main(args + ["sheet-layout"]) == 0
     assert "지목 또는 용도지역이 비어 있는 매물 1건" in capsys.readouterr().out
     assert main(args + ["organize-folders", "--dry-run"]) == 0
+
+
+def test_price_lines_for_cards():
+    from real_estate_agent.models import LandListing
+
+    lease = LandListing("a", "충청북도 음성군 대소읍 x 1", 1000, 0, deal_type="임대", property_type="공장",
+                        deposit_manwon=6000, monthly_rent_manwon=575)
+    both = LandListing("b", "충청북도 음성군 대소읍 x 2", 1000, 48212, deal_type="매매/임대", property_type="공장",
+                       deposit_manwon=2000, monthly_rent_manwon=300)
+    sale = LandListing("c", "충청북도 음성군 대소읍 x 3", 1000, 95000, property_type="공장")
+    assert lease.price_lines == ["임대 보증금 6,000만원", "월 575만원"]
+    assert both.price_lines == ["매매 4억 8,212만원", "임대 보증금 2,000만원", "월 300만원"]
+    assert sale.price_lines == ["9억 5,000만원"]
+
+
+def test_agent_card_price_box_is_separate_from_area_boxes(tmp_path, monkeypatch):
+    """임대 공장 카드: 가격은 줄마다 나눠 한 줄 전체(wide), 건물면적은 작은 칸 (가격 칸과 크기가 다름)."""
+    import re
+    import shutil
+
+    from real_estate_agent.web.app import create_app
+
+    monkeypatch.delenv("REA_ADMIN_PASSWORD", raising=False)
+    data = tmp_path / "매물"
+    shutil.copytree(SAMPLE_DATA_DIR, data)
+    app = create_app(Settings(data_dir=data, db_path=tmp_path / "w.db", log_dir=tmp_path / "l", llm_providers=["rule"]))
+    c = app.test_client()
+    tok = lambda: re.search(r'name="csrf" value="([^"]+)"', c.get("/agent").get_data(as_text=True)).group(1)
+    c.post("/agent/ask", data={"q": "음성군에 있는 매매 공장들을 찾아줘.", "csrf": tok()})
+    html = c.post("/agent/ask", data={"q": "매매공장말고 임대공장은 없어?", "csrf": tok()},
+                  follow_redirects=True).get_data(as_text=True)
+    assert 'class="price-box wide"' in html
+    assert '<span class="pl">임대 보증금 5,000만원</span><span class="pl">월 300만원</span>' in html
+    assert "<div><dt>건물면적</dt>" in html  # 건물면적은 보통 칸
