@@ -110,7 +110,7 @@ class LandListing:
 
     @property
     def features(self) -> str:
-        """화면의 '매물 특징': '● 대소IC-15분 거리(중부 고속도로) / 2필지 일괄 매매'"""
+        """화면의 '매물 특징': '● 대소IC-15분 거리(중부 고속도로) / ● 25톤 트럭 진입'"""
         if "_매물특징" in self.extra:
             return str(self.extra["_매물특징"] or "")
         from .collectors.listing_folder import feature_lines, format_features

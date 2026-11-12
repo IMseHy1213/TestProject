@@ -105,14 +105,40 @@ def _is_header_row(row: list[Any]) -> bool:
     return followed_by_value * 2 < len(labels)  # '소재지 | 값 | 면적 | 값' 같은 정보지 줄은 머리글이 아님
 
 
+_UNIT = re.compile(r"^\s*(㎡|m2|m²|평|원|만원|천원|%|m|kw|kW|톤)\s*$")
+
+
+def _merge_unit_row(header: list[str], units: list[Any]) -> list[str]:
+    """머리글 아래 단위 줄 ('면적' 아래 '㎡ | 평') -> ['면적(㎡)', '면적(평)']: 빈 머리글은 왼쪽 머리글 이름을 이어받음."""
+    out = list(header)
+    for j, u in enumerate(units[:len(out)] if len(units) >= len(out) else list(units) + [None] * (len(out) - len(units))):
+        unit = _text(u)
+        if not unit:
+            continue
+        base = out[j] or next((out[k] for k in range(j - 1, -1, -1) if out[k]), "")
+        base = re.sub(r"\(.*?\)$", "", base).strip()
+        if base:
+            out[j] = f"{base}({unit})"
+    return out
+
+
 def extract_table(grid: list[list[Any]]) -> tuple[list[dict], Optional[dict], set[int]]:
-    """(필지/매물 줄 목록, 합계 줄, 표에 쓰인 행 번호)"""
+    """(필지/매물 줄 목록, 합계 줄, 표에 쓰인 행 번호)
+    - 머리글 바로 아래 단위 줄('㎡ | 평')은 머리글에 합침
+    - 합계 줄에서 표가 끝남 (그 아래 '건물' 목록은 필지가 아님)"""
     for h, row in enumerate(grid[:30]):
         if not _is_header_row(row):
             continue
         header = [_text(c) for c in row]
         rows, total, used = [], None, {h}
-        for r in range(h + 1, len(grid)):
+        start = h + 1
+        if start < len(grid):
+            nxt = [_text(c) for c in grid[start]]
+            if any(nxt) and all(not t or _UNIT.match(t) for t in nxt):
+                header = _merge_unit_row(header, grid[start])
+                used.add(start)
+                start += 1
+        for r in range(start, len(grid)):
             cells = grid[r]
             if all(not _text(c) for c in cells):
                 if rows:
@@ -121,17 +147,24 @@ def extract_table(grid: list[list[Any]]) -> tuple[list[dict], Optional[dict], se
             rec = {header[j]: cells[j] for j in range(min(len(header), len(cells))) if header[j]}
             first = next((_text(c) for c in cells if _text(c)), "")
             filled = sum(1 for k, v in rec.items() if map_column(k) and _text(v))
-            if filled < 2 and any(_label(c) for c in cells) and not _TOTAL_ROW.match(first):
+            is_total = bool(_TOTAL_ROW.match(first) or any(_TOTAL_ROW.match(_text(c)) for c in cells[:3]))
+            if filled < 2 and any(_label(c) for c in cells) and not is_total:
                 break  # 표가 끝나고 '대지면적 | 300' 같은 다른 항목이 시작됨 (그 줄은 항목·값으로 따로 읽음)
             used.add(r)
-            if _TOTAL_ROW.match(first) or any(_TOTAL_ROW.match(_text(c)) for c in cells[:3]):
+            if is_total:
                 total = rec
+                if rows:
+                    break  # 합계 아래는 다른 목록 (예: '건물' 동 목록)
                 continue
-            if sum(1 for k, v in rec.items() if map_column(k) and _text(v)) >= 2:
+            if filled >= 2:
                 rows.append(rec)
         if rows or total:
             return rows, total, used
     return [], None, set()
+
+
+_NUMERIC_FIELDS = {"area_m2", "area_pyeong", "building_area_m2", "building_area_pyeong", "price_manwon",
+                   "price_per_pyeong", "deposit_manwon", "monthly_rent_manwon"}
 
 
 def _fits(field: str, value: Any) -> bool:
@@ -143,6 +176,8 @@ def _fits(field: str, value: Any) -> bool:
         return normalize_jimok(t) in JIMOK_TYPES
     if field == "zoning":
         return bool(re.search(r"지역|구역|지구|관리|녹지|주거|상업|공업|농림|보전", t)) and not map_column(t)
+    if field in _NUMERIC_FIELDS:
+        return bool(re.search(r"\d", t))
     if field == "jimok_zoning":
         from ..normalizer import split_jimok_zoning
 
@@ -165,6 +200,9 @@ def extract_key_values(grid: list[list[Any]], skip_rows: set[int]) -> dict[str, 
             for j in range(c + 1, min(c + 4, len(row))):  # 오른쪽 3칸 안의 첫 값
                 if _text(row[j]):
                     value = None if _label(row[j]) else row[j]
+                    unit = _text(row[j + 1]) if j + 1 < len(row) else ""
+                    if value is not None and field in {"area_m2", "building_area_m2"} and unit == "평":
+                        value = f"{_text(value)}평"  # '토지면적 | 600 | 평' -> 600평 (㎡ 가 아님)
                     break
             if value is not None and not _fits(field, value):
                 value = None
@@ -236,11 +274,9 @@ def extract_features(grid: list[list[Any]], skip_rows: set[int] = frozenset()) -
 
 
 def format_features(lines: list[str], n_parcels: int = 0) -> str:
-    """화면 표시용: '● 대소IC-15분 거리(중부 고속도로) / 2필지 일괄 매매'"""
-    parts = list(lines)
-    if n_parcels > 1:
-        parts.append(f"{n_parcels}필지 일괄 매매")
-    return " / ".join(parts)
+    """화면 표시용: '● 대소IC-15분 거리(중부 고속도로) / ● 25톤 트럭 진입'
+    ('N필지 일괄 매매' 는 붙이지 않음 - 필지 수는 _필지수 로만 보관)"""
+    return " / ".join(lines)
 
 
 # ---------------------------------------------------------------- 매물 1건으로 합치기
@@ -327,27 +363,36 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
         price = sum(parcel_prices)  # type: ignore[arg-type]
 
     # 지목·용도지역: 항목값, 없으면 필지 중 면적이 가장 큰 것
-    def dominant(field: str, normalize) -> tuple[str, str]:
-        if field in kv:  # 용도지역은 '계획관리지역, 성장관리계획구역' 전체를 넘김 (정규화는 normalizer 에서)
-            return (_text(kv_val(field)) if field == "zoning" else normalize(kv_val(field))), ""
-        weights: Counter = Counter()
-        raw: dict[str, str] = {}
-        for p in parcels:
-            _, v = _value(p, field)
-            if v is not None and _fits(field, v):
-                key = normalize(v)
-                weights[key] += _area_of(p) or 1
-                raw.setdefault(key, _text(v))
-        if not weights:
-            return "", ""
-        top = weights.most_common()
-        if field == "zoning" and len(top) == 1:  # 한 가지면 '계획관리지역, 성장관리계획구역' 전체를 넘김
-            return raw[top[0][0]], ""
-        summary = ", ".join(k for k, _ in top[:4]) if len(top) > 1 else ""
-        return top[0][0], summary
+    from ..normalizer import split_jimok_zoning, zoning_parts
 
-    jimok, jimok_mix = dominant("jimok", normalize_jimok)
-    zoning, zoning_mix = dominant("zoning", normalize_zoning)
+    def jz(get) -> tuple[Optional[str], Optional[str]]:
+        """(지목, 용도지역) - '지목' / '용도지역' 칸, 없으면 '지목/용도' 한 칸을 나눠서."""
+        j, z = get("jimok"), get("zoning")
+        j = _text(j) if j is not None and _fits("jimok", j) else None
+        z = _text(z) if z is not None and _fits("zoning", z) else None
+        both = get("jimok_zoning")
+        if both is not None and (j is None or z is None):
+            sj, sz = split_jimok_zoning(both)
+            j = j or sj or None
+            z = z or (sz if sz and _fits("zoning", sz) else None)
+        return j, z
+
+    kv_j, kv_z = jz(lambda f: kv_val(f) if f in kv else None)
+    weights_j: Counter = Counter()
+    weights_z: Counter = Counter()
+    for p in parcels:  # 필지 목록: 면적이 큰 필지의 지목, 지역·지구는 면적 순으로 모두
+        pj, pz = jz(lambda f, p=p: _value(p, f)[1])
+        size = _area_of(p) or 1
+        if pj:
+            weights_j[normalize_jimok(pj)] += size
+        for part in zoning_parts(pz):
+            weights_z[part] += size
+    top_j = [k for k, _ in weights_j.most_common()]
+    main_j = [k for k in top_j if k not in {"도로", "구거"}] or top_j  # 길·도랑 필지가 대표 지목이 되지 않게
+    jimok = normalize_jimok(kv_j) if kv_j else (main_j[0] if main_j else "")
+    jimok_mix = ", ".join(top_j[:4]) if not kv_j and len(top_j) > 1 else ""
+    zoning = kv_z or ", ".join(k for k, _ in weights_z.most_common())  # 정규화는 normalizer (대표 + 전체 지역·지구)
+    zoning_mix = ""
 
     if not features:  # 표의 '특징/비고' 열
         for p in ([total] if total else []) + parcels[:1]:
@@ -362,8 +407,6 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
     if tags:
         desc_parts.append(" ".join(tags))
     desc_parts.extend(features)
-    if n_parcels > 1:
-        desc_parts.append(f"{n_parcels}필지 일괄")
     if jimok_mix:
         desc_parts.append(f"지목: {jimok_mix}")
     if zoning_mix:

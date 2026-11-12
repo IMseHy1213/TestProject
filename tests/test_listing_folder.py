@@ -58,7 +58,7 @@ def test_parcel_list_folder_becomes_one_listing(tmp_path):
     assert l.area_m2 == 25 * 900 + 12 * 750
     assert l.price_manwon == 350000
     assert l.jimok == "공장용지" and l.zoning == "계획관리지역"  # 면적이 가장 큰 지목
-    assert "물류부지" in l.description and "37필지" in l.description
+    assert "물류부지" in l.description and "필지 일괄" not in l.description and l.extra["_필지수"] == 37
     assert l.road_access == "8m 도로 접함"
 
 

@@ -14,7 +14,8 @@ def test_feature_lines_and_format():
         "● 대소IC-15분 거리(중부 고속도로)", "● 2차선 도로와 접해 있음"]
     assert feature_lines("정남향 평지, 채광 우수") == ["● 정남향 평지, 채광 우수"]
     assert feature_lines("- 계곡 인접 / ※ 분할 가능") == ["● 계곡 인접", "※ 분할 가능"]
-    assert format_features(["● 대소IC-15분 거리(중부 고속도로)"], 2) == "● 대소IC-15분 거리(중부 고속도로) / 2필지 일괄 매매"
+    # 'N필지 일괄 매매' 는 화면에 붙이지 않음 (사무실 요청)
+    assert format_features(["● 대소IC-15분 거리(중부 고속도로)"], 2) == "● 대소IC-15분 거리(중부 고속도로)"
     assert format_features([], 1) == ""
 
 
@@ -45,8 +46,7 @@ def test_folder_features_under_label_with_tag_and_parcels(tmp_path):
         [None, "● 주변 상가 밀집"],
     ], parcels=[[1, "충청북도 음성군 대소면 삼정리 100", "대", 500, 25000],
                 [2, "충청북도 음성군 대소면 삼정리 101", "대", 500, 25000]])
-    assert l.features == ("● 대소IC-15분 거리(중부 고속도로) / ● 2차선 도로와 접해 있음 / ● 주변 상가 밀집"
-                          " / 2필지 일괄 매매")
+    assert l.features == "● 대소IC-15분 거리(중부 고속도로) / ● 2차선 도로와 접해 있음 / ● 주변 상가 밀집"
     assert "상가 부지" not in l.features and l.use_tag == "상가 부지"  # 용도는 따로 (주소 옆 표시)
     assert "상가 부지" in l.description and "주변 상가" in l.description  # 검색에는 그대로 쓰임
 
@@ -89,10 +89,10 @@ def test_parcel_table_note_column_is_not_features(tmp_path):
         ["매물특징", "● 평탄 작업 완료"],
     ], parcels=[[1, "충청북도 음성군 생극면 방축리 88", "전", 1000, 5000],
                 [2, "충청북도 음성군 생극면 방축리 89", "전", 1200, 6000]])
-    assert l.features == "● 평탄 작업 완료 / 2필지 일괄 매매"
+    assert l.features == "● 평탄 작업 완료"
 
     l2 = _folder_listing(tmp_path / "b", "음성군 생극면 차곡리 7 외 1필지", [["면적", "600평"], ["매매가", "1억"]], parcels=None)
-    assert l2.features == "2필지 일괄 매매"
+    assert l2.features == ""  # 특징이 없으면 비어 있음 (필지 일괄 매매 문구 없음)
 
 
 def test_county_plus_township_narrows_to_township():

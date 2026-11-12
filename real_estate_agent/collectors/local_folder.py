@@ -43,15 +43,17 @@ def kind_from_path(path: Path, root: Path) -> tuple[str, str]:
     except ValueError:
         parts = ()
     ptype = "공장" if any(re.sub(r"[^가-힣]", "", p) in {"공장", "공장매물"} for p in parts) else "토지"
-    deal = ""
+    found: set[str] = set()
     for p in parts:
-        w = re.sub(r"[^가-힣]", "", p)  # '매매-임대', '매매 임대', '2.임대' 도 같은 뜻
-        if w in {"매매임대", "임대매매", "매매및임대", "매매또는임대"}:
-            deal = "매매/임대"
+        w = re.sub(r"[^가-힣]", "", p)  # '매매-임대', '매매 임대', '매매,임대', '2.임대' 도 같은 뜻
+        if w in {"매매임대", "임대매매", "매매및임대", "매매또는임대", "매매와임대"}:
+            found |= {"매매", "임대"}
         elif w in {"매매", "매도"}:
-            deal = "매매"
+            found.add("매매")
         elif w in {"임대", "월세"}:
-            deal = "임대"
+            found.add("임대")
+    # '매매\임대' 처럼 폴더를 두 겹으로 만든 경우도 매매/임대
+    deal = "매매/임대" if found == {"매매", "임대"} else (found.pop() if found else "")
     return ptype, deal
 
 
