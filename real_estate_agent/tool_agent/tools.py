@@ -127,7 +127,9 @@ def display_name(l: LandListing) -> str:
     if no:
         return no
     region = (public_region(l.address).split() or [""])[-1]
-    kind = l.use_tag or "토지"
+    kind = l.use_tag or l.property_type or "토지"
+    if l.property_type == "공장" and "공장" not in kind:
+        kind = f"공장({kind})"
     return " ".join(x for x in (region, kind, f"{l.area_pyeong:,.0f}평 매물") if x)
 
 
@@ -141,10 +143,15 @@ def brief(l: LandListing, s: Optional[ScoredListing] = None) -> dict[str, Any]:
         "주소": mask_address(l.address),
         "지목": l.jimok or None,
         "용도지역": l.zoning or None,
+        "종류": l.property_type,
+        "거래": l.deal_type,
         "면적_평": round(l.area_pyeong),
-        "가격": format_price(l.price_manwon),
-        "가격_만원": l.price_manwon,
-        "평당가_만원": round(l.price_per_pyeong),
+        "건물면적_평": round(l.building_area_pyeong) if l.building_area_pyeong else None,
+        "가격": l.price_text,
+        "가격_만원": l.price_manwon if l.for_sale else None,
+        "평당가_만원": round(l.price_per_pyeong) if l.for_sale and l.property_type == "토지" else None,
+        "보증금_만원": l.deposit_manwon if l.for_lease else None,
+        "월세_만원": l.monthly_rent_manwon if l.for_lease else None,
         "매물특징": (l.features or "")[:200] or None,
     }
     if s is not None:
@@ -158,6 +165,10 @@ def brief(l: LandListing, s: Optional[ScoredListing] = None) -> dict[str, Any]:
 def condition_summary(req: CustomerRequirement) -> str:
     """손님에게 보여줄 조건 요약: '음성군 · 창고 용도 · 3억 이하 · 도로 접한 땅'"""
     parts = []
+    if req.property_types and (req.property_types != ["토지"] or req.deal):  # 땅만 찾으면 '토지' 는 굳이 쓰지 않음
+        parts.append("·".join(req.property_types) + (f" {req.deal}" if req.deal else ""))
+    elif req.deal:
+        parts.append(req.deal)
     if req.regions:
         parts.append(", ".join(req.regions))
     if req.excluded_regions:
@@ -178,6 +189,10 @@ def condition_summary(req: CustomerRequirement) -> str:
         parts.append(f"{req.area_min_m2 / PYEONG_M2:,.0f}평 이상")
     elif req.area_max_m2:
         parts.append(f"{req.area_max_m2 / PYEONG_M2:,.0f}평 이하")
+    if req.deposit_max:
+        parts.append(f"보증금 {format_price(req.deposit_max)} 이하")
+    if req.rent_max:
+        parts.append(f"월세 {format_price(req.rent_max)} 이하")
     if req.keywords:
         parts.append(", ".join(req.keywords[:2]))
     return " · ".join(parts) or "전체"
@@ -199,6 +214,25 @@ def shown_region(l: LandListing) -> str:
         if names:
             return names[0]
     return parts[-1] if parts else ""
+
+
+def price_key(l: LandListing, leasing: bool = False) -> tuple:
+    """가격 순서: 임대를 찾으면 월세·보증금, 아니면 매매가 (매매가 없는 임대 전용 매물은 뒤로)."""
+    if leasing:
+        return (l.monthly_rent_manwon or 0, l.deposit_manwon or 0)
+    return (0 if l.for_sale else 1, l.price_manwon if l.for_sale else (l.deposit_manwon or 0))
+
+
+def sort_ranked(ranked: list, sort: str, leasing: bool = False) -> None:
+    if sort == "price_asc":
+        ranked.sort(key=lambda s: price_key(s.listing, leasing))
+    elif sort == "price_desc":
+        ranked.sort(key=lambda s: (price_key(s.listing, leasing)[0] if not leasing else 0,
+                                   -(s.listing.monthly_rent_manwon or 0) if leasing else -s.listing.price_manwon))
+    elif sort == "area_desc":
+        ranked.sort(key=lambda s: -(s.listing.area_m2 or s.listing.building_area_m2 or 0))
+    elif sort == "price_per_pyeong_asc":
+        ranked.sort(key=lambda s: (s.listing.price_per_pyeong <= 0, s.listing.price_per_pyeong))
 
 
 def _without_regions(query: str, agent) -> str:
@@ -226,6 +260,7 @@ def requirement_from_args(agent, given: dict[str, Any]) -> CustomerRequirement:
     budget_min_manwon, budget_max_manwon = given.get("budget_min_manwon"), given.get("budget_max_manwon")
     area_min_pyeong, area_max_pyeong = given.get("area_min_pyeong"), given.get("area_max_pyeong")
     keywords = given.get("keywords")
+    property_type, deal = given.get("property_type"), given.get("deal")
 
     # 문장 해석은 규칙 기반으로 (도구 안에서 LLM 을 또 부르지 않음 - 판단은 바깥의 Agent 가)
     parser = RequirementParser(None, agent.known_regions(), [l.address for l in agent.listings()])
@@ -246,6 +281,18 @@ def requirement_from_args(agent, given: dict[str, Any]) -> CustomerRequirement:
         req.area_max_m2 = area_max_pyeong * PYEONG_M2
     if keywords:
         req.keywords = list(dict.fromkeys(req.keywords + list(keywords)))
+    if property_type:
+        req.property_types = [property_type]
+        if property_type == "공장" and req.purpose == "공장" and not purpose:
+            req.purpose = ""
+    if deal:
+        req.deal = deal
+    if given.get("deposit_max_manwon") is not None:
+        req.deposit_max = given["deposit_max_manwon"]
+    if given.get("rent_max_manwon") is not None:
+        req.rent_max = given["rent_max_manwon"]
+    if req.deal == "임대" and not req.deposit_max and req.budget_max and budget_max_manwon is None:
+        req.deposit_max, req.budget_min, req.budget_max = req.budget_max, None, None
     for r in given.get("exclude_regions") or []:
         c = canonical_region(r)
         if c not in req.excluded_regions:
@@ -380,7 +427,9 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                         area_max_pyeong: Optional[float] = None, keywords: Optional[list[str]] = None,
                         sort: str = "score", limit: int = 5, use_previous_conditions: bool = False,
                         exclude_regions: Optional[list[str]] = None, other_regions: bool = False,
-                        recheck: bool = False) -> dict[str, Any]:
+                        recheck: bool = False, property_type: str = "", deal: str = "",
+                        deposit_max_manwon: Optional[int] = None,
+                        rent_max_manwon: Optional[int] = None) -> dict[str, Any]:
         # '정말 없어?' / '확실해?' / '다시 찾아봐' -> 방금 검색을 같은 조건(뺀 지역 포함) 그대로, 전체 매물에서 다시
         if recheck and ctx.last_search:
             return _recheck(limit=max(limit, 5), sort=sort)
@@ -388,7 +437,10 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         given = {k: v for k, v in dict(query=query, regions=regions, jimok=jimok, purpose=purpose,
                                          budget_min_manwon=budget_min_manwon, budget_max_manwon=budget_max_manwon,
                                          area_min_pyeong=area_min_pyeong, area_max_pyeong=area_max_pyeong,
-                                         keywords=keywords, exclude_regions=exclude_regions).items()
+                                         keywords=keywords, exclude_regions=exclude_regions,
+                                         property_type=property_type, deal=deal,
+                                         deposit_max_manwon=deposit_max_manwon,
+                                         rent_max_manwon=rent_max_manwon).items()
                  if v not in (None, "", [])}
         follow_up = (use_previous_conditions or other_regions) and bool(ctx.last_search)
         from_memory = follow_up and ctx.last_search_from_memory
@@ -434,17 +486,11 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         req.customer_name = ctx.customer
         session = agent.recommend(req, pref_key=ctx.pref_key or None)  # v1.2: 이 방문자에게서 배운 중요도로 점수
         ranked = [s for s in session.ranked if s.listing.listing_id not in ctx.rejected]
+        leasing = req.deal == "임대" or bool(req.deposit_max or req.rent_max)
         pool = list(ctx.last_shown) if follow_up and not region_change else []  # 지역을 바꾸면 전체에서 다시
         if pool:  # '그 중에' -> 직전에 보여준 매물 안에서만
             ranked = [s for s in ranked if s.listing.listing_id in pool]
-        if sort == "price_asc":
-            ranked.sort(key=lambda s: s.listing.price_manwon)
-        elif sort == "price_desc":
-            ranked.sort(key=lambda s: -s.listing.price_manwon)
-        elif sort == "area_desc":
-            ranked.sort(key=lambda s: -s.listing.area_m2)
-        elif sort == "price_per_pyeong_asc":
-            ranked.sort(key=lambda s: s.listing.price_per_pyeong)
+        sort_ranked(ranked, sort, leasing)
         shown = ranked[:limit]
         for s in shown:
             if s.listing.listing_id not in ctx.seen:
@@ -482,10 +528,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         req = requirement_from_args(agent, given)
         req.customer_name = ctx.customer
         ranked = [s for s in agent.recommend(req).ranked if s.listing.listing_id not in ctx.rejected]
-        if sort == "price_asc":
-            ranked.sort(key=lambda s: s.listing.price_manwon)
-        elif sort == "area_desc":
-            ranked.sort(key=lambda s: -s.listing.area_m2)
+        sort_ranked(ranked, sort, req.deal == "임대" or bool(req.deposit_max or req.rent_max))
         shown = ranked[:limit]
         ctx.last_shown = [s.listing.listing_id for s in shown]
         for s in shown:
@@ -537,6 +580,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         if len(items) < 2:
             raise ToolError("비교하려면 서로 다른 매물이 2개 이상 필요합니다.")
         rows = [brief(l) for l in items]
+        sale = [l for l in items if l.for_sale]
         for l in items:
             if l.listing_id not in ctx.seen:
                 ctx.seen.append(l.listing_id)
@@ -545,10 +589,10 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             return tool_id(min(items, key=key))
         return {
             "매물": rows,
-            "가장_싼_매물": pick(lambda l: l.price_manwon),
+            "가장_싼_매물": pick(lambda l: price_key(l)),
             "가장_넓은_매물": tool_id(max(items, key=lambda l: l.area_m2)),
-            "평당가가_가장_낮은_매물": pick(lambda l: l.price_per_pyeong),
-            "가격차_만원": max(l.price_manwon for l in items) - min(l.price_manwon for l in items),
+            "평당가가_가장_낮은_매물": pick(lambda l: (l.price_per_pyeong <= 0, l.price_per_pyeong)),
+            "가격차_만원": (max(l.price_manwon for l in sale) - min(l.price_manwon for l in sale)) if sale else None,
         }
 
     def record_feedback(listing_id: str, action: str, reason: str = "") -> dict[str, Any]:
@@ -581,9 +625,11 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                   "search_listings 에 use_previous_conditions=true.",
         }
 
-    def list_regions(limit: int = 40) -> dict[str, Any]:
-        """지금 살 수 있는 매물(계약완료·보류 제외)을 시/군 단위로 셈. 순위는 대화 상태에 기억 ('그 지역 매물 보여줘')."""
-        available = [l for l in agent.listings() if l.status not in {"계약완료", "보류"}]
+    def list_regions(limit: int = 40, property_type: str = "") -> dict[str, Any]:
+        """지금 살 수 있는 매물(계약완료·보류 제외)을 시/군 단위로 셈. 순위는 대화 상태에 기억 ('그 지역 매물 보여줘').
+        property_type 을 주면 그 종류(토지/공장)만."""
+        every = [l for l in agent.listings() if l.status not in {"계약완료", "보류"}]
+        available = [l for l in every if not property_type or l.property_type == property_type]
         by_city: Counter = Counter(shown_region(l) for l in available if shown_region(l))
         by_town: Counter = Counter()
         for l in available:
@@ -592,7 +638,10 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                     by_town[tok] += 1
         ranked = [r for r, _ in by_city.most_common()]
         ctx.last_regions = ranked
-        return {"지역별_매물_수": dict(by_city.most_common(limit)), "전체_매물_수": len(available),
+        kinds = Counter(l.property_type for l in every)
+        return {"매물_종류": property_type or "전체", "지역별_매물_수": dict(by_city.most_common(limit)),
+                "전체_매물_수": len(available),
+                "종류별_매물_수": dict(kinds.most_common()) if len(kinds) > 1 else None,
                 "가장_많은_지역": ranked[0] if ranked else None, "가장_적은_지역": ranked[-1] if ranked else None,
                 "읍면별_매물_수": dict(by_town.most_common(10)),
                 "안내": "손님이 지역별 매물 수만 물었으면 숫자로만 답하고 매물 목록은 보여주지 마세요. "
@@ -601,7 +650,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
     string_list = {"type": "array", "items": {"type": "string"}}
     return [
         Tool("search_listings",
-             "사무실이 보유한 토지 매물을 조건으로 찾아 추천 순위대로 돌려줍니다. 손님 문장을 query 에 그대로 넣거나 "
+             "사무실이 보유한 매물(토지, 공장 - 공장은 매매·임대)을 조건으로 찾아 추천 순위대로 돌려줍니다. 손님 문장을 query 에 그대로 넣거나 "
              "조건을 따로 지정할 수 있습니다(둘 다 쓰면 따로 지정한 조건이 우선). 가격 단위는 만원(1억=10000).",
              {"type": "object", "properties": {
                  "query": {"type": "string", "description": "손님이 말한 조건 문장 (예: '음성군 창고 지을 땅 3억 이하')"},
@@ -624,6 +673,12 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                  "recheck": {"type": "boolean", "description":
                      "손님이 '정말 없어?', '진짜 다른 지역에는 없어?', '확실해?', '다시 찾아봐'처럼 방금 검색 결과를 "
                      "다시 확인해 달라고 하면 true: 직전 조건(뺀 지역 포함)을 그대로 전체 매물에서 다시 찾고 지역별 개수를 돌려줌"},
+                 "property_type": {"type": "string", "enum": ["토지", "공장"], "description":
+                     "매물 종류. '공장 있어?', '공장 임대' -> '공장'. '공장 지을 땅' 은 '토지' (purpose='공장')"},
+                 "deal": {"type": "string", "enum": ["매매", "임대"], "description":
+                     "사려는 것(매매) / 빌리려는 것(임대: 월세·보증금). 공장만 임대 매물이 있음"},
+                 "deposit_max_manwon": {"type": "integer", "minimum": 0, "description": "임대 보증금 상한 (만원)"},
+                 "rent_max_manwon": {"type": "integer", "minimum": 0, "description": "월세 상한 (만원)"},
                  "use_previous_conditions": {"type": "boolean", "description":
                      "손님이 '그 중에', '거기서'처럼 직전 결과를 가리키면 true: 직전에 보여준 매물들 안에서만 "
                      "sort 기준으로 다시 골라 limit(하나만 물으면 1)만큼 돌려줌"},
@@ -649,6 +704,8 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
              {"type": "object", "properties": {}}, recall_memory),
         Tool("list_regions", "지금 살 수 있는 매물의 지역별(시·군) 매물 수와 가장 많은/적은 지역. '어느 지역 매물이 제일 많아요?', "
              "'지역별로 몇 건이에요?', '음성군에 매물 몇 개 있어요?' 처럼 수를 물을 때 씁니다 (이때는 매물 목록을 보여주지 않음).",
-             {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100}}},
+             {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                                               "property_type": {"type": "string", "enum": ["토지", "공장"],
+                                                                 "description": "'공장 매물은 어디가 많아요?' 처럼 종류를 말하면"}}},
              list_regions),
     ]

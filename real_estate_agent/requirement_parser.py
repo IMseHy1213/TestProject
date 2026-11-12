@@ -41,6 +41,7 @@ FEATURE_KEYWORDS = [
     "남향", "동향", "서향", "평지", "완경사", "계곡", "강", "하천", "호수", "전망", "조망", "산", "숲",
     "IC", "역세권", "마을", "학교", "토목", "전기", "지하수", "상수도", "정남향", "배산임수", "바다",
     "개발", "택지", "도로확장", "역", "고속도로", "관공서", "조용",
+    "호이스트", "크레인", "층고", "기숙사", "사무실", "수전", "동력", "주차",
 ]
 
 # 같은 뜻의 표현 -> 대표 키워드 (매물 설명과 비교할 때는 preference.FEATURE_SYNONYMS 로 다시 넓혀 찾음)
@@ -50,11 +51,70 @@ FEATURE_ALIASES = {
     "뷰": "조망", "경치": "조망", "평탄": "평지", "개울": "계곡", "나들목": "IC", "한적": "조용",
 }
 
-# 이 프로그램은 토지 전용. 다른 매물 종류를 찾으면 안내 문구를 남김
-NON_LAND_TYPES = ["아파트", "빌라", "오피스텔", "원룸", "투룸", "쓰리룸", "다세대", "연립", "상가건물", "전세", "월세"]
+# 이 프로그램이 다루는 매물: 토지, 공장(매매·임대). 다른 매물 종류를 찾으면 안내 문구를 남김
+NON_LAND_TYPES = ["아파트", "빌라", "오피스텔", "원룸", "투룸", "쓰리룸", "다세대", "연립", "상가건물"]
 
-SYSTEM_PROMPT = f"""당신은 한국 토지 매물 중개 보조 AI 입니다.
-손님의 문의 문장에서 토지 검색 조건을 추출합니다.
+# '공장' 이라는 말이 '지을 건물(목적)' 인지 '공장 매물' 인지 가름:
+#   '공장 지을 땅', '공장 부지', '공장 용지', '공장 짓기 좋은 토지' -> 목적 (토지 매물)
+#   '공장 있어?', '공장 임대', '음성군 공장 매매', '공장 매물' -> 공장 매물
+_FACTORY_TO_BUILD = re.compile(
+    r"공장\s*(?:을|를|이|도|하나)?\s*(?:지을|짓|지으|지어|세울|세우|건축|신축|설립|부지|용지|터\b|자리|하기|하려|할\s*(?:땅|부지|토지|곳)|"
+    r"(?:으로|로)\s*(?:쓸|쓰기|사용)?\s*(?:땅|부지|토지))")
+_FACTORY_WORD = re.compile(r"공장(?!용지)")
+_LAND_WORDS = re.compile(r"땅|토지|부지|임야|농지|대지|전답|논|밭|(?:지을|짓|지으|세울|건축할)")
+_LEASE_WORDS = re.compile(r"임대|월세|임차|세\s*놓|세놓|렌트|빌리|빌릴|빌려|보증금|월\s*\d")
+_SALE_WORDS = re.compile(r"매매|매입|매수|구입|구매|사고\s*싶|살\s*(?:수|만한|건|거|곳|공장|땅)|사려|살려|팔")
+_DEPOSIT = re.compile(r"보증금\s*(?:은|는|이|가|:)?\s*" + r"(\d[\d,.]*\s*억(?:\s*\d[\d,.]*\s*(?:천)?)?(?:\s*만)?|\d[\d,.]*\s*천\s*만?|\d[\d,.]*\s*만?)\s*원?"
+                      r"\s*(이하|이내|까지|안쪽|미만|정도|쯤|내외|선)?")
+_RENT = re.compile(r"(?:월세|월\s*임대료|임대료|월)\s*(?:은|는|이|가|:)?\s*" + r"(\d[\d,.]*\s*천\s*만?|\d[\d,.]*\s*만?|\d[\d,.]*\s*억)\s*원?"
+                   r"\s*(이하|이내|까지|안쪽|미만|정도|쯤|내외|선)?")
+
+
+def _lease_money(m: re.Match) -> Optional[int]:
+    raw = m.group(1).replace(" ", "")
+    if not re.search(r"[억천만]", raw):
+        raw += "만"  # '월세 300' = 300만원
+    v = parse_price_manwon(raw)
+    if v and m.group(2) in {"정도", "쯤", "내외", "선"}:
+        v = int(v * 1.15)
+    return v
+
+
+def property_terms(text: str) -> tuple[list[str], str, Optional[int], Optional[int], str]:
+    """(찾는 매물 종류, 거래 방식, 보증금 상한, 월세 상한, 금액 조건을 뺀 문장).
+    '음성군 공장 임대 보증금 5천 월세 300 이하' -> (['공장'], '임대', 5000, 300, '음성군 공장 임대   ')"""
+    t = text
+    types: list[str] = []
+    to_build = bool(_FACTORY_TO_BUILD.search(t))
+    factory_noun = bool(_FACTORY_WORD.search(_FACTORY_TO_BUILD.sub(" ", t)))
+    if factory_noun:
+        types.append("공장")
+    if _LAND_WORDS.search(t) or to_build:
+        types.append("토지")
+    deal = ""
+    lease, sale = bool(_LEASE_WORDS.search(t)), bool(_SALE_WORDS.search(t))
+    if lease and not sale:
+        deal = "임대"
+    elif sale and not lease:
+        deal = "매매"
+    deposit = rent = None
+    rest = t
+    m = _DEPOSIT.search(t)
+    if m:
+        deposit = _lease_money(m)
+        rest = rest.replace(m.group(0), " ")
+    m = _RENT.search(rest)
+    if m and (m.group(0).lstrip().startswith(("월세", "임대료", "월임대료", "월 임대료")) or lease):
+        rent = _lease_money(m)
+        rest = rest.replace(m.group(0), " ")
+    if (deposit or rent) and not deal:
+        deal = "임대"
+    if deal == "임대" and "토지" in types and "공장" not in types and not to_build:
+        types = ["공장"] if factory_noun else types  # 토지는 임대 매물이 없음
+    return types, deal, deposit, rent, rest
+
+SYSTEM_PROMPT = f"""당신은 한국 토지·공장 매물 중개 보조 AI 입니다.
+손님의 문의 문장에서 매물 검색 조건을 추출합니다.
 
 필드:
 - customer_name: 손님 이름 (없으면 "")
@@ -68,10 +128,34 @@ SYSTEM_PROMPT = f"""당신은 한국 토지 매물 중개 보조 AI 입니다.
 - need_road: 도로에 접한 땅이 필요하면 true (맹지 제외). 주택/창고/공장/근린생활 목적이면 기본 true.
 - keywords: 원하는 특징 (남향, 계곡, IC 인근 등). "채광 좋은/햇빛 잘 드는"은 "채광", 경치는 "조망"으로 쓰세요.
 - excluded_keywords: 원하지 않는 것 (예: "묘지", "고압선", "임야" 등). 지역 이름은 넣지 마세요.
+- property_types: 찾는 매물 종류. "토지" 와 "공장" 중에서 (예: "공장 임대 있어?" -> ["공장"],
+  "공장 지을 땅" -> ["토지"] 이고 purpose "공장"). 말하지 않았으면 [].
+- deal: "매매"(사려는 것) / "임대"(빌리려는 것, 월세·보증금) / "" (말하지 않음)
+- deposit_max, rent_max: 임대 보증금 상한, 월세 상한 (만원). "보증금 5천에 월세 300" -> 5000, 300. 이때 budget 은 비워 둠
 - excluded_regions: 빼고 찾을 지역 모두 ("음성군 말고 다른 지역" -> ["음성군"], "진천군이랑 음성군 말고" -> ["진천군", "음성군"]).
   regions 에는 넣지 않음
 
 모르는 값은 null 또는 빈 목록으로 두고, 추측하지 마세요."""
+
+
+def apply_property_terms(req: CustomerRequirement, text: str, overwrite: bool = True) -> CustomerRequirement:
+    """문장에서 매물 종류·매매/임대·보증금·월세를 읽어 조건에 넣음 (LLM 이 이미 채웠으면 빈 칸만)."""
+    types, deal, deposit, rent, _ = property_terms(text)
+    if overwrite or not req.property_types:
+        req.property_types = types
+    if overwrite or not req.deal:
+        req.deal = deal
+    req.deposit_max = req.deposit_max or deposit
+    req.rent_max = req.rent_max or rent
+    if "공장" in req.property_types and "토지" not in req.property_types and req.purpose == "공장":
+        req.purpose = ""  # '공장 매물' 은 공장을 지을 땅을 찾는 것이 아님
+        if not re.search(r"맹지|도로|진입로", text):
+            req.need_road = False
+    if req.purpose and not req.property_types:
+        req.property_types = ["토지"]  # '창고 지을 수 있는 곳' -> 땅
+    if req.deal == "임대" and not req.deposit_max and req.budget_max:
+        req.deposit_max, req.budget_min, req.budget_max = req.budget_max, None, None  # '1억 이하 임대' = 보증금
+    return req
 
 
 def _pyeong_or_m2(num: float, unit: str) -> float:
@@ -96,6 +180,7 @@ class RequirementParser:
             req = parse_rule_based(text, self.known_regions)
         req.raw_text = text
         req.notes = non_land_notes(text)
+        apply_property_terms(req, text, overwrite=req.property_types == [] and not req.deal)
         if customer_name:
             req.customer_name = customer_name
         req = sanitize(req)
@@ -236,6 +321,11 @@ def sanitize(req: CustomerRequirement) -> CustomerRequirement:
         req.purpose = next((p for p, kws in PURPOSE_KEYWORDS.items() if any(k in req.purpose for k in kws)),
                            req.purpose)
     req.need_road = bool(req.need_road)
+    req.property_types = [p for p in dict.fromkeys(_list(req.property_types)) if p in {"토지", "공장"}]
+    req.deal = req.deal if req.deal in {"매매", "임대"} else ""
+    for f in ("deposit_max", "rent_max"):
+        v = getattr(req, f)
+        setattr(req, f, int(v) if isinstance(v, (int, float)) and v > 0 else None)
     return req
 
 
@@ -258,12 +348,14 @@ def _money(s: str) -> Optional[int]:
 def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRequirement:
     t = text
     req = CustomerRequirement()
+    money_text = property_terms(text)[4]  # 예산은 보증금·월세 금액을 뺀 문장에서
 
     m = re.search(r"([가-힣]{2,4})\s*(?:님|고객|손님|사장님|씨)", t)
     if m and m.group(1) not in {"고객", "손님", "사장"}:
         req.customer_name = m.group(1)
 
     # --- 예산 ---
+    t = money_text
     m = re.search(_MONEY + r"\s*(?:~|-|에서|부터)\s*" + _MONEY, t)
     band = _price_band(t)  # '2억원대', '5천만원대'
     if band:
@@ -284,6 +376,7 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
                 if v:
                     req.budget_max = int(v * 1.15)
                     req.budget_min = int(v * 0.6)
+    t = text
 
     # --- 면적 ---
     area_band = re.search(r"(\d[\d,]*)\s*(평|㎡|m2)\s*대(?![가-힣])", t)  # '200평대' = 200~299평
@@ -430,7 +523,7 @@ def non_land_notes(text: str) -> list[str]:
     found = [w for w in NON_LAND_TYPES if w in text]
     if not found:
         return []
-    return [f"'{', '.join(found)}'은(는) 취급 범위(토지) 밖이라, 토지 매물 중에서 나머지 조건으로 찾습니다."]
+    return [f"'{', '.join(found)}'은(는) 취급 범위(토지·공장) 밖이라, 토지·공장 매물 중에서 나머지 조건으로 찾습니다."]
 
 
 def apply_feedback_rule_based(req: CustomerRequirement, feedback: str,
@@ -483,6 +576,13 @@ def apply_feedback_rule_based(req: CustomerRequirement, feedback: str,
             new.regions.remove(k)
     if extra.purpose:
         new.purpose = extra.purpose
+    types, deal, deposit, rent, _ = property_terms(f)
+    if types:
+        new.property_types = types
+    if deal:
+        new.deal = deal
+    new.deposit_max = deposit or new.deposit_max
+    new.rent_max = rent or new.rent_max
     if extra.budget_max and not re.search(r"(싼|저렴|비싸)", f):
         new.budget_max = extra.budget_max
     new.raw_text = req.raw_text + "\n[피드백] " + feedback

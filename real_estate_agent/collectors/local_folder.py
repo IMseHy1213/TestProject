@@ -35,6 +35,34 @@ SOURCE_HINTS = {
 }
 
 
+def kind_from_path(path: Path, root: Path) -> tuple[str, str]:
+    """매물 폴더 경로 -> (매물 종류, 거래 방식).
+    '공장/매매임대/진천군/…' -> ('공장', '매매/임대'), '공장/임대/음성군/…' -> ('공장', '임대'), 그 밖 -> ('토지', '')."""
+    try:
+        parts = path.relative_to(root).parts[:-1]
+    except ValueError:
+        parts = ()
+    ptype = "공장" if any(re.sub(r"[^가-힣]", "", p) in {"공장", "공장매물"} for p in parts) else "토지"
+    deal = ""
+    for p in parts:
+        w = re.sub(r"[^가-힣]", "", p)  # '매매-임대', '매매 임대', '2.임대' 도 같은 뜻
+        if w in {"매매임대", "임대매매", "매매및임대", "매매또는임대"}:
+            deal = "매매/임대"
+        elif w in {"매매", "매도"}:
+            deal = "매매"
+        elif w in {"임대", "월세"}:
+            deal = "임대"
+    return ptype, deal
+
+
+def _tag_kind(record: dict, path: Path, root: Path) -> dict:
+    ptype, deal = kind_from_path(path, root)
+    record.setdefault("_매물종류", ptype)
+    if deal:
+        record.setdefault("_거래방식", deal)
+    return record
+
+
 def detect_source(path: Path, root: Path) -> str:
     try:
         rel = str(path.relative_to(root)).lower()
@@ -107,6 +135,7 @@ class LocalFolderCollector(Collector):
             region_parts = list(unit.relative_to(self.data_dir).parts[:-1])
             name = unit.stem if unit.is_file() else unit.name
             record, notes = build_listing_record(name, region_parts, grids, file_modified_date(files[0]))
+            _tag_kind(record, files[0], self.data_dir)
             for n in notes:
                 self.errors.append(f"{name}: {n}")
             records.append(RawRecord(data=record, source=detect_source(unit, self.data_dir),
@@ -126,14 +155,16 @@ class LocalFolderCollector(Collector):
             self.files_read.append(str(path))
             if not rows:
                 self.errors.append(f"{path.relative_to(self.data_dir)}: 매물 정보를 찾지 못했습니다 (항목 이름 확인 필요)")
-            records.extend(RawRecord(data=r, source=source, source_file=str(path)) for r in rows)
+            records.extend(RawRecord(data=_tag_kind(r, path, self.data_dir), source=source, source_file=str(path))
+                           for r in rows)
         return records
 
     def _as_single_listing(self, path: Path) -> list[dict]:
         grids = read_grids(path)
         record, _ = build_listing_record(path.stem, list(path.relative_to(self.data_dir).parts[:-1]), grids,
                                          file_modified_date(path))
-        has_core = record.get("소재지") and record.get("면적(㎡)") and record.get("매매가")
+        has_core = (record.get("소재지") and (record.get("면적(㎡)") or record.get("건물면적(㎡)") or record.get("건물면적(평)"))
+                    and (record.get("매매가") or record.get("보증금") or record.get("월세")))
         return [record] if has_core else []
 
     def folder_counts(self, listings) -> dict[str, int]:

@@ -66,11 +66,15 @@ def validate(listing: LandListing, today: date | None = None) -> tuple[list[str]
     """(errors, warnings)"""
     today = today or date.today()
     errors, warnings = [], []
-    if listing.area_m2 < MIN_AREA_M2 or listing.area_m2 > MAX_AREA_M2:
+    building_only = listing.area_m2 == 0 and (listing.building_area_m2 or 0) >= MIN_AREA_M2  # 공장: 건물면적만 적힘
+    if (listing.area_m2 < MIN_AREA_M2 or listing.area_m2 > MAX_AREA_M2) and not building_only:
         errors.append(f"면적 비정상 ({listing.area_m2:,.1f}㎡)")
-    if listing.price_manwon <= 0:
+    if not listing.for_sale:  # 임대 전용 (공장): 매매가 없이 보증금·월세
+        if not (listing.deposit_manwon or listing.monthly_rent_manwon):
+            errors.append("임대 매물인데 보증금·월세가 없음")
+    elif listing.price_manwon <= 0:
         errors.append(f"가격 비정상 ({listing.price_manwon})")
-    elif listing.area_m2 > 0:
+    elif listing.area_m2 > 0 and listing.property_type == "토지":  # 공장은 건물값이 들어 있어 평당가 검사 안 함
         ppp = listing.price_per_pyeong
         if ppp < MIN_PRICE_PER_PYEONG or ppp > MAX_PRICE_PER_PYEONG:
             errors.append(f"평당가 비현실적 ({ppp:,.1f}만원/평) - 단위 입력 오류 의심")
@@ -128,7 +132,7 @@ def deduplicate(listings: list[LandListing]) -> tuple[list[LandListing], list[Qu
     # 같은 지번끼리만 비교해 O(n^2) 를 줄임
     buckets: dict[str, list[int]] = {}
     for l in listings:
-        key = _jibun(l.address) or normalize_address(l.address)
+        key = f"{l.property_type}|{_jibun(l.address) or normalize_address(l.address)}"  # 토지·공장은 따로
         placed = False
         for gi in buckets.get(key, []):
             if any(is_duplicate(l, other) for other in groups[gi]):

@@ -113,10 +113,49 @@ def _text_blob(l: LandListing) -> str:
     return f"{l.address} {l.road_access} {l.description} {l.zoning} {l.jimok} {extra}"
 
 
+def fit_area(l: LandListing, lo: Optional[float], hi: Optional[float]) -> float:
+    """면적 조건과 비교할 면적. 토지는 땅 면적, 공장은 땅(대지)·건물 면적 중 조건에 더 가까운 쪽
+    ('공장 300평' 은 건물 300평일 수도, 대지 300평일 수도 있음)."""
+    areas = [a for a in (l.area_m2, l.building_area_m2 if l.property_type == "공장" else None) if a]
+    if not areas:
+        return l.area_m2
+
+    def miss(a: float) -> float:
+        if lo and a < lo:
+            return (lo - a) / lo
+        if hi and a > hi:
+            return (a - hi) / hi
+        return 0.0
+
+    return min(areas, key=miss)
+
+
+def lease_fit(l: LandListing, req: CustomerRequirement, tol: float = 0.0) -> Optional[str]:
+    """임대 조건(보증금·월세 상한)을 넘으면 사유."""
+    if req.deposit_max and (l.deposit_manwon or 0) > req.deposit_max * (1 + tol):
+        return "보증금 초과"
+    if req.rent_max and (l.monthly_rent_manwon or 0) > req.rent_max * (1 + tol):
+        return "월세 초과"
+    return None
+
+
 def hard_filter(l: LandListing, req: CustomerRequirement, opt: RecommendOptions) -> Optional[str]:
     """제외 사유를 반환 (통과하면 None)."""
     if l.status in {"계약완료", "보류"}:
         return f"상태 '{l.status}'"
+    if req.property_types and l.property_type not in req.property_types:
+        return "매물 종류 다름"
+    leasing = req.deal == "임대" or bool(req.deposit_max or req.rent_max)
+    if leasing and not l.for_lease:
+        return "임대 매물 아님"
+    if req.deal == "매매" and not l.for_sale:
+        return "매매 매물 아님"
+    if leasing:
+        reason = lease_fit(l, req, opt.budget_tolerance)
+        if reason:
+            return reason
+    elif (req.budget_max or req.budget_min) and not l.for_sale:
+        return "매매 매물 아님"  # 예산(매매가)을 말했는데 임대 전용 공장
     if opt.price_below is not None and l.price_manwon >= opt.price_below:
         return "앞서 본 매물보다 비쌈"
     if opt.price_above is not None and l.price_manwon <= opt.price_above:
@@ -125,13 +164,14 @@ def hard_filter(l: LandListing, req: CustomerRequirement, opt: RecommendOptions)
         return "앞서 본 매물보다 좁음"
     if opt.area_below is not None and l.area_m2 >= opt.area_below:
         return "앞서 본 매물보다 넓음"
-    if req.budget_max and l.price_manwon > req.budget_max * (1 + opt.budget_tolerance):
+    if not leasing and req.budget_max and l.price_manwon > req.budget_max * (1 + opt.budget_tolerance):
         return "예산 초과"
-    if req.budget_min and l.price_manwon < req.budget_min * (1 - opt.budget_tolerance):
+    if not leasing and req.budget_min and l.price_manwon < req.budget_min * (1 - opt.budget_tolerance):
         return "예산보다 저렴"  # '30억 이상' 을 찾는데 1억짜리를 보여주지 않음
-    if req.area_min_m2 and l.area_m2 < req.area_min_m2 * (1 - opt.area_tolerance):
+    area = fit_area(l, req.area_min_m2, req.area_max_m2)
+    if req.area_min_m2 and area < req.area_min_m2 * (1 - opt.area_tolerance):
         return "면적 부족"
-    if req.area_max_m2 and l.area_m2 > req.area_max_m2 * (1 + opt.area_tolerance * 2):
+    if req.area_max_m2 and area > req.area_max_m2 * (1 + opt.area_tolerance * 2):
         return "면적 과다"
     if req.purpose:  # '창고를 지을 수 있는 토지' -> 창고를 지을 수 없는 땅은 제외
         use = check_use(l, req.purpose)
@@ -168,7 +208,10 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
 
     # 가격
     p = l.price_manwon
-    if req.budget_max:
+    if req.deal == "임대" or req.deposit_max or req.rent_max:  # 임대: 보증금·월세가 상한 안인지
+        f["price"] = 1.0 if lease_fit(l, req) is None else 0.45
+        reasons.append(f"임대 조건: {l.lease_text}")
+    elif req.budget_max:
         if p <= req.budget_max:
             f["price"] = 0.8 + 0.2 * (1 - p / req.budget_max)
             if req.budget_min and p < req.budget_min:
@@ -186,12 +229,13 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
         f["price"] = NEUTRAL
 
     # 면적
-    a = l.area_m2
     lo, hi = req.area_min_m2, req.area_max_m2
+    a = fit_area(l, lo, hi)
     if lo or hi:
         if (not lo or a >= lo * 0.98) and (not hi or a <= hi * 1.02):  # 2% 이내는 반올림 오차로 보고 충족
             f["area"] = 1.0
-            reasons.append(f"희망 면적 충족 ({l.area_pyeong:,.0f}평)")
+            which = "건물 " if a != l.area_m2 else ""
+            reasons.append(f"희망 면적 충족 ({which}{a / 3.305785:,.0f}평)")
         else:
             ref = lo if (lo and a < lo) else hi
             dev = abs(a - ref) / ref
@@ -284,7 +328,7 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
                 (reasons if nb > 0 else penalties).append("이전 반응으로 본 취향에 " + ("가까움" if nb > 0 else "멀음"))
 
     # 공공 실거래가 대비
-    market = _market_ppm(l, opt.market_price_per_m2)
+    market = _market_ppm(l, opt.market_price_per_m2) if l.property_type == "토지" and l.for_sale else None
     if market:
         ratio = (l.price_manwon / l.area_m2) / market
         l.extra["market_ratio"] = round(ratio, 2)

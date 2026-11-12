@@ -48,7 +48,7 @@ def _llm_pool():
         _LLM_POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="llm-call")
     return _LLM_POOL
 
-SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무소 '상담 에이전트'입니다. 손님 질문에 답하려면 도구를 사용하세요.
+SYSTEM_PROMPT = """당신은 충북 음성의 토지·공장 전문 공인중개사무소 '상담 에이전트'입니다. 손님 질문에 답하려면 도구를 사용하세요.
 
 규칙
 - 매물 정보는 반드시 도구 결과(관찰)에서만 가져오세요. 도구로 확인하지 않은 매물·가격·면적을 지어내지 마세요.
@@ -76,6 +76,10 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지 전문 공인중개사무�
   그다음 '제일 많은 지역 매물 보여줘', '그 지역 매물 보고 싶어요' 라고 하면 그 지역으로 search_listings(regions=[지역]) 하세요.
   그 답 바로 다음의 '그 중에 넓은 건?', '거기서 제일 싼 거' 는 방금 답에서 말한 지역(가장 많은 지역)의 매물 중에서 찾으라는 뜻입니다:
   search_listings(regions=[그 지역], sort=..., limit=1) (전체 매물에서 찾지 마세요).
+- 매물 종류는 토지와 공장입니다. '공장 있어?', '공장 임대', '공장 매매' 는 공장 매물이므로 search_listings(property_type="공장"),
+  '공장 지을 땅', '공장 부지' 는 토지이므로 property_type="토지", purpose="공장" 을 주세요.
+  공장은 매매·매매/임대·임대가 있습니다. 빌리려 하면 deal="임대", 보증금·월세 상한은 deposit_max_manwon, rent_max_manwon (만원).
+  임대 매물은 '가격' 에 보증금·월세가 적혀 있으니 그대로 말하세요.
 - 건축 가능 여부는 프로그램의 1차 판단이며 토지이용계획 확인이 필요하다고 덧붙이세요.
 """
 
@@ -258,7 +262,10 @@ class RulePolicy:
                 self.ctx.region_focus = asked[0] if asked else (ranked[-1] if idx == -1 else ranked[0])
             return ToolTurn(text=rule_answer(question, done), provider="rule")
         if _asks_region_counts(question) or wants:  # 아직 순위를 모르면 먼저 셈
-            return _call("list_regions", {})
+            from ..requirement_parser import property_terms
+
+            types = property_terms(question)[0]  # '공장 매물은 어디가 많아요?' → 공장만 셈
+            return _call("list_regions", {"property_type": types[0]} if len(types) == 1 else {})
         return None
 
     def _analyze(self, question: str, done: list, names: list, have: Optional[set], found=None) -> ToolTurn:
@@ -446,12 +453,21 @@ _BEST = {"넓은 순": ("가장 넓은", "area"), "가격 낮은 순": ("가장 
          "평당가 낮은 순": ("평당가가 가장 낮은", "ppp"), "추천순": ("조건에 가장 잘 맞는", "price")}
 
 
+def _area_text(x: dict) -> str:
+    """'500평' / 공장: '대지 500평·건물 300평'"""
+    if x.get("건물면적_평"):
+        land = f"대지 {x['면적_평']:,}평·" if x.get("면적_평") else ""
+        return f"{land}건물 {x['건물면적_평']:,}평"
+    return f"{x.get('면적_평', 0):,}평"
+
+
 def _fact(x: dict, kind: str) -> str:
+    kind_txt = f"{x['종류']} " if x.get("종류") == "공장" else ""
     if kind == "area":
-        return f"{x['면적_평']:,}평, {x['가격']}"
-    if kind == "ppp":
+        return f"{kind_txt}{_area_text(x)}, {x['가격']}"
+    if kind == "ppp" and x.get("평당가_만원"):
         return f"평당 {x['평당가_만원']:,}만원"
-    return f"{x['가격']}, {x['면적_평']:,}평"
+    return f"{kind_txt}{x['가격']}, {_area_text(x)}"
 
 
 def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
@@ -507,10 +523,10 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
         names.update({i: x.get("매물번호") or x.get("표시이름") or i for i, x in rows.items()})
         cheap, wide = r["가장_싼_매물"], r["가장_넓은_매물"]
         if cheap == wide:
-            lines.append(f"가장 싸고 넓은 매물: {names[cheap]}({rows[cheap]['가격']}, {rows[wide]['면적_평']:,}평)")
+            lines.append(f"가장 싸고 넓은 매물: {names[cheap]}({rows[cheap]['가격']}, {_area_text(rows[wide])})")
         else:
             lines.append(f"최저가 {names[cheap]}({rows[cheap]['가격']}) · 가장 넓은 매물 {names[wide]}"
-                         f"({rows[wide]['면적_평']:,}평)")
+                         f"({_area_text(rows[wide])})")
     elif found:
         top = found[0]
         lines.append(f"1순위 {names[top['id']]}({_fact(top, 'price')})")
@@ -533,15 +549,17 @@ def _region_count_answer(question: str, res: dict) -> str:
     total = res.get("전체_매물_수", sum(counts.values()))
     if not counts:
         return "지금 보유한 매물이 없습니다."
+    kind = res.get("매물_종류") if res.get("매물_종류") in {"토지", "공장"} else ""
+    noun = f"{kind} 매물" if kind else "매물"
     asked = [r for r in counts if r in question or r[:-1] in question]
     if asked:  # '음성군에 매물 몇 개 있어요?'
-        return " / ".join(f"{r} 매물은 {counts[r]}건입니다" for r in asked) + f" (전체 {total}건 중)."
+        return " / ".join(f"{r} {noun}은 {counts[r]}건입니다" for r in asked) + f" (전체 {total}건 중)."
     ranked = list(counts.items())
     if re.search(r"(제일|가장|젤)\s*적[은어었다게지나]", question):
         r, n = ranked[-1]
-        return f"보유 매물 {total}건 중 {r}{_iga(r)} {n}건으로 가장 적습니다."
+        return f"보유 {noun} {total}건 중 {r}{_iga(r)} {n}건으로 가장 적습니다."
     (top, n), rest = ranked[0], ranked[1:4]
-    line = f"보유 매물 {total}건 중 {top}{_iga(top)} {n}건으로 가장 많습니다."
+    line = f"보유 {noun} {total}건 중 {top}{_iga(top)} {n}건으로 가장 많습니다."
     if rest:
         line += " 그다음은 " + ", ".join(f"{r} {c}건" for r, c in rest) + "입니다."
     return line

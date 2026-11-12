@@ -41,7 +41,7 @@
         {% if r.hidden %}<span class="tag warn">숨김</span>{% endif %}
         {% if r.web %}<span class="tag">웹 추가</span>{% endif %}
         <br><small class="muted">{{ r.file }}</small></td>
-      <td>{{ r.jimok }}</td>
+      <td>{% if r.kind != "토지" %}<span class="tag kind">{{ r.kind }}</span> {% endif %}{{ r.jimok }}</td>
       <td class="num">{{ r.pyeong }}평</td>
       <td class="num">{{ r.price }}</td>
       <td>{{ r.status }}</td>

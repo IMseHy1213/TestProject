@@ -59,7 +59,7 @@ def listing_card(agent, lid: str) -> Optional[dict[str, Any]]:
     if l is None:
         return None
     return {"id": tool_id(l), "office_no": public_office_no(l.office_no) or None, "name": display_name(l),
-            "region": mask_address(l.address), "price_manwon": l.price_manwon, "price": format_price(l.price_manwon),
+            "region": mask_address(l.address), "price_manwon": l.price_manwon, "price": l.price_text, "kind": l.kind_label,
             "area_pyeong": round(l.area_pyeong), "jimok": l.jimok or None, "zoning": l.zoning or None,
             "use_tag": l.use_tag or None,
             "features": [f.lstrip("● ").strip() for f in (l.features or "").split(" / ") if f.strip()][:3]}
@@ -113,7 +113,8 @@ class RealtimeHub:
 
     # ------------------------------------------------------------------ 변경 감지 (생산자)
     def _take_snapshot(self) -> dict[str, tuple]:
-        return {l.listing_id: (l.price_manwon, round(l.area_m2), l.status) for l in self.agent.listings()}
+        return {l.listing_id: (l.price_manwon, round(l.area_m2), l.status, l.deposit_manwon, l.monthly_rent_manwon)
+                for l in self.agent.listings()}
 
     def detect_changes(self, source: str = "관리자") -> list[Event]:
         """지난번과 지금의 매물 목록을 비교해 이벤트 발행 + 새 매물·가격 인하는 매칭 작업으로 큐에 넣음.
@@ -132,6 +133,8 @@ class RealtimeHub:
                 topic, extra = "listing.added", {}
             elif now[0] < old[0]:
                 topic, extra = "listing.price_drop", {"old_price_manwon": old[0], "old_price": format_price(old[0])}
+            elif len(old) > 4 and now[4] and old[4] and now[4] < old[4]:  # 임대 공장 월세 인하
+                topic, extra = "listing.price_drop", {"old_rent_manwon": old[4], "old_price": f"월 {format_price(old[4])}"}
             elif now != old:
                 topic, extra = "listing.changed", {}
             else:

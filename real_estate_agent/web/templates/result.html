@@ -30,10 +30,11 @@
     <span class="score" title="조건 일치 점수">{{ item.score }}점</span>
   </div>
   {% if item.office_no %}<p class="office-no">매물번호 <strong>{{ item.office_no }}</strong></p>{% endif %}
-  <h2 id="addr">{{ item.address }}{% if item.use_tag %} <span class="tag use">{{ item.use_tag }}</span>{% endif %}</h2>
+  <h2 id="addr">{% if item.kind %}<span class="tag kind">{{ item.kind }}</span> {% endif %}{{ item.address }}{% if item.use_tag %} <span class="tag use">{{ item.use_tag }}</span>{% endif %}</h2>
   <dl class="facts">
-    <div><dt>가격</dt><dd class="price">{{ item.price }}<small>평당 {{ item.ppp }}만원</small></dd></div>
-    <div><dt>면적</dt><dd>{{ item.area_pyeong }}평<small>{{ item.area_m2 }}㎡</small></dd></div>
+    <div><dt>가격</dt><dd class="price">{{ item.price }}{% if item.ppp and not item.kind %}<small>평당 {{ item.ppp }}만원</small>{% endif %}</dd></div>
+    <div><dt>{% if item.kind %}대지면적{% else %}면적{% endif %}</dt><dd>{{ item.area_pyeong }}평<small>{{ item.area_m2 }}㎡</small></dd></div>
+    {% if item.building_pyeong %}<div><dt>건물면적</dt><dd>{{ item.building_pyeong }}평</dd></div>{% endif %}
     <div><dt>지목</dt><dd>{{ item.jimok }}{% if item.jimok_mix %}<small>{{ item.jimok_mix }}</small>{% endif %}</dd></div>
     <div><dt>용도지역</dt><dd>{{ item.zoning }}{% if item.zoning_mix %}<small>{{ item.zoning_mix }}</small>{% endif %}</dd></div>
     <div class="wide"><dt>매물 특징</dt><dd class="features">{{ item.features or "-" }}</dd></div>
@@ -107,7 +108,7 @@
   <summary>다음 후보 미리보기 ({{ others | length }}건)</summary>
   <ol start="{{ rank + 1 }}">
     {% for o in others %}
-      <li>{% if o.office_no %}<span class="tag">{{ o.office_no }}</span> {% endif %}<strong>{{ o.address }}</strong> · {{ o.jimok }} · {{ o.area_pyeong }}평 · {{ o.price }} <span class="score small">{{ o.score }}점</span></li>
+      <li>{% if o.office_no %}<span class="tag">{{ o.office_no }}</span> {% endif %}{% if o.kind %}<span class="tag kind">{{ o.kind }}</span> {% endif %}<strong>{{ o.address }}</strong> · {{ o.jimok }} · {{ o.area_pyeong }}평 · {{ o.price }} <span class="score small">{{ o.score }}점</span></li>
     {% endfor %}
   </ol>
 </details>
@@ -130,7 +131,7 @@
   {% if listing_count == 0 %}
     <p class="notice warn">등록된 매물이 하나도 없습니다. 관리자 화면에서 매물 파일을 올리거나 매물 폴더 위치를 확인해 주세요.</p>
   {% elif stats %}<p class="meta">보유 매물 {{ listing_count }}건 중 제외된 매물: {% for k, v in stats.items() %}{{ k }} {{ v }}건{% if not loop.last %}, {% endif %}{% endfor %}</p>
-    {% if stats.get("지역 불일치") == listing_count %}<p class="notice">'{{ req.regions | join(", ") }}' 지역에는 현재 보유 중인 토지 매물이 없습니다. 다른 지역으로 찾아보시겠어요?</p>{% endif %}
+    {% if stats.get("지역 불일치") == listing_count %}<p class="notice">'{{ req.regions | join(", ") }}' 지역에는 현재 보유 중인 매물이 없습니다. 다른 지역으로 찾아보시겠어요?</p>{% endif %}
   {% endif %}
   <div class="row">
     {% if can_prev %}

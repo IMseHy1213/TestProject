@@ -49,7 +49,7 @@ def test_index_has_search_and_no_name_field(make_client):
     html = make_client().get("/").get_data(as_text=True)
     assert 'name="q"' in html and "찾아보기" in html
     assert "이름" not in html  # 손님 이름 입력 없음
-    assert "보유 토지 매물 <strong>22</strong>건" in html
+    assert "보유 매물(토지·공장) <strong>22</strong>건" in html
 
 
 def test_search_shows_first_then_next(make_client):

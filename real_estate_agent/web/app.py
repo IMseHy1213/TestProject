@@ -279,7 +279,9 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             "address": l.address if admin else mask_address(l.address),
             "jimok": l.jimok or "-", "zoning": l.zoning or "-",
             "area_m2": f"{l.area_m2:,.0f}", "area_pyeong": f"{l.area_pyeong:,.0f}",
-            "price": format_price(l.price_manwon), "ppp": f"{l.price_per_pyeong:,.0f}",
+            "price": l.price_text, "ppp": f"{l.price_per_pyeong:,.0f}" if l.price_per_pyeong else "",
+            "kind": l.kind_label if l.property_type != "토지" else "",
+            "building_pyeong": f"{l.building_area_pyeong:,.0f}" if l.building_area_pyeong else "",
             "road": l.road_access or "-", "description": l.description, "features": l.features,
             "use_tag": l.use_tag, "jimok_mix": l.extra.get("_지목구성", ""),
             "zoning_mix": l.extra.get("_용도지역구성", ""),
@@ -417,8 +419,11 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         from ..tool_agent.tools import tool_id
 
         return {"id": l.listing_id, "pid": tool_id(l), "office_no": l.office_no if admin else public_office_no(l.office_no),
-                "address": l.address if admin else mask_address(l.address), "price": format_price(l.price_manwon),
-                "ppp": f"{l.price_per_pyeong:,.0f}", "pyeong": f"{l.area_pyeong:,.0f}", "m2": f"{l.area_m2:,.0f}",
+                "address": l.address if admin else mask_address(l.address), "price": l.price_text,
+                "ppp": f"{l.price_per_pyeong:,.0f}" if l.price_per_pyeong else "",
+                "pyeong": f"{l.area_pyeong:,.0f}", "m2": f"{l.area_m2:,.0f}",
+                "kind": l.kind_label if l.property_type != "토지" else "",
+                "building_pyeong": f"{l.building_area_pyeong:,.0f}" if l.building_area_pyeong else "",
                 "jimok": l.jimok or "-", "zoning": l.zoning or "-", "features": features[:5], "badges": badges,
                 "use_tag": l.use_tag, "contact": l.owner_contact if admin else ""}
 
@@ -878,7 +883,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     def admin_row(l, hidden: bool = False) -> dict:
         return {
             "id": l.listing_id, "office_no": l.office_no, "address": l.address, "jimok": l.jimok or "-",
-            "pyeong": f"{l.area_pyeong:,.0f}", "price": format_price(l.price_manwon), "status": l.status,
+            "pyeong": f"{l.area_pyeong:,.0f}", "price": l.price_text, "status": l.status, "kind": l.kind_label,
             "edited": bool(l.extra.get("관리자수정")), "hidden": hidden, "web": l.source == "web"
             or Path(l.source_file).parent.name == WEB_FOLDER,
             "file": Path(l.source_file).name if l.source_file else "-",
@@ -959,7 +964,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             return redirect(url_for("admin_listings"))
         if request.method == "GET":
             return form_page("edit", form_defaults(listing), listing_id)
-        form = parse_form(request.form)
+        form = parse_form(request.form, lease_only=not listing.for_sale)
         if form.errors:
             return form_page("edit", form.raw, listing_id, errors=form.errors, status=400)
         try:

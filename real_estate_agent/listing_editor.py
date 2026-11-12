@@ -47,8 +47,8 @@ class ListingForm:
     raw: dict[str, str] = field(default_factory=dict)  # 오류가 있을 때 화면에 다시 채워 줄 입력값
 
 
-def parse_form(form) -> ListingForm:
-    """관리자 화면의 매물 입력 폼 -> 검사된 값."""
+def parse_form(form, lease_only: bool = False) -> ListingForm:
+    """관리자 화면의 매물 입력 폼 -> 검사된 값. lease_only: 임대 전용 공장 (매매가 없음, 0 또는 빈칸)."""
     keys = ("address", "jimok", "zoning", "area", "area_unit", "price", "road_access", "status",
             "registered_date", "description", "owner_contact")
     raw = {k: (form.get(k) or "").strip() for k in keys}
@@ -73,7 +73,9 @@ def parse_form(form) -> ListingForm:
         err.append("면적은 숫자로 입력하세요. (예: 250)")
 
     price = parse_price_manwon(raw["price"])
-    if price is None or price <= 0:
+    if lease_only and not price:
+        v["price_manwon"] = 0
+    elif price is None or price <= 0:
         err.append("매매가를 입력하세요. ('2억 3천만원', '2.3억', '23000'(만원) 모두 가능)")
     else:
         v["price_manwon"] = price

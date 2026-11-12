@@ -232,6 +232,7 @@ table.listings td:nth-child(2) { min-width: 240px; }
 
 .facts dd.features { font-weight: 500; line-height: 1.7; }
 .tag.use { vertical-align: middle; font-size: .78rem; margin-left: 6px; }
+.tag.kind { vertical-align: middle; font-size: .78rem; margin-right: 4px; background: var(--warn-bg); color: var(--warn-ink); }
 
 /* AI 상담 (Tool-use Agent) */
 .agent-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }

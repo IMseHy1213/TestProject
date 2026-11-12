@@ -1,4 +1,4 @@
-"""도메인 모델: 토지 매물, 손님 요구사항, 추천 결과."""
+"""도메인 모델: 매물(토지·공장), 손님 요구사항, 추천 결과."""
 
 from __future__ import annotations
 
@@ -14,6 +14,23 @@ JIMOK_TYPES = [
     "주차장", "주유소용지", "창고용지", "도로", "철도용지", "제방", "하천", "구거", "유지",
     "양어장", "수도용지", "공원", "체육용지", "유원지", "종교용지", "사적지", "묘지", "잡종지",
 ]
+
+
+# 매물 종류 (매물 폴더: 매물/토지/…, 매물/공장/매매|매매임대|임대/음성군/…)
+PROPERTY_TYPES = ["토지", "공장"]
+DEAL_TYPES = ["매매", "매매/임대", "임대"]
+
+
+def normalize_deal(value: Any) -> str:
+    """'매매' / '매매임대', '매매·임대', '매매 또는 임대' -> '매매/임대' / '임대', '월세' -> '임대'."""
+    s = str(value or "")
+    sale = "매매" in s or "매도" in s
+    lease = any(w in s for w in ("임대", "월세", "전세", "렌트"))
+    if sale and lease:
+        return "매매/임대"
+    if lease:
+        return "임대"
+    return "매매"
 
 
 @dataclass
@@ -35,6 +52,48 @@ class LandListing:
     source: str = "local"  # local / serve / naver / public ...
     source_file: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+    property_type: str = "토지"  # 토지 / 공장
+    building_area_m2: Optional[float] = None  # 공장: 건물(연)면적
+    deposit_manwon: Optional[int] = None  # 임대 보증금 (만원)
+    monthly_rent_manwon: Optional[int] = None  # 임대 월세 (만원)
+
+    @property
+    def for_sale(self) -> bool:
+        """살 수 있는 매물 (매매, 매매/임대)."""
+        return self.deal_type != "임대"
+
+    @property
+    def for_lease(self) -> bool:
+        """빌릴 수 있는 매물 (임대, 매매/임대)."""
+        return "임대" in self.deal_type
+
+    @property
+    def building_area_pyeong(self) -> Optional[float]:
+        return self.building_area_m2 / PYEONG_M2 if self.building_area_m2 else None
+
+    @property
+    def lease_text(self) -> str:
+        """'보증금 5,000만원 / 월 300만원'"""
+        parts = []
+        if self.deposit_manwon:
+            parts.append(f"보증금 {format_price(self.deposit_manwon)}")
+        if self.monthly_rent_manwon:
+            parts.append(f"월 {format_price(self.monthly_rent_manwon)}")
+        return " / ".join(parts) or "임대 조건 상담"
+
+    @property
+    def price_text(self) -> str:
+        """화면·답변에 쓰는 가격: 매매 '3억원', 임대 '보증금 5,000만원 / 월 300만원', 둘 다면 '매매 … · 임대 …'."""
+        if self.deal_type == "임대":
+            return f"임대 {self.lease_text}"
+        if self.deal_type == "매매/임대":
+            return f"매매 {format_price(self.price_manwon)} · 임대 {self.lease_text}"
+        return format_price(self.price_manwon)
+
+    @property
+    def kind_label(self) -> str:
+        """'토지' / '공장(매매)' / '공장(임대)' / '공장(매매/임대)'"""
+        return self.property_type if self.property_type == "토지" else f"{self.property_type}({self.deal_type})"
 
     @property
     def area_pyeong(self) -> float:
@@ -42,7 +101,7 @@ class LandListing:
 
     @property
     def price_per_pyeong(self) -> float:
-        return self.price_manwon / self.area_pyeong if self.area_m2 > 0 else 0.0
+        return self.price_manwon / self.area_pyeong if self.area_m2 > 0 and self.for_sale else 0.0
 
     @property
     def office_no(self) -> str:
@@ -82,7 +141,7 @@ class LandListing:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "LandListing":
-        d = dict(d)
+        d = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
         if d.get("registered_date"):
             d["registered_date"] = date.fromisoformat(d["registered_date"])
         return cls(**d)
@@ -107,6 +166,10 @@ class CustomerRequirement:
     excluded_keywords: list[str] = field(default_factory=list)
     raw_text: str = ""
     notes: list[str] = field(default_factory=list)  # 해석 중 참고사항 (예: 취급하지 않는 매물 종류)
+    property_types: list[str] = field(default_factory=list)  # 찾는 매물 종류 (['공장'], ['토지']; 비면 전체)
+    deal: str = ""  # '매매' (사려는 것) / '임대' (빌리려는 것) / '' (상관없음)
+    deposit_max: Optional[int] = None  # 임대 보증금 상한 (만원)
+    rent_max: Optional[int] = None  # 월세 상한 (만원)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -118,6 +181,10 @@ class CustomerRequirement:
 
     def describe(self) -> str:
         parts = []
+        if self.property_types:
+            parts.append("종류=" + ",".join(self.property_types))
+        if self.deal:
+            parts.append("거래=" + self.deal)
         if self.regions:
             parts.append("지역=" + ",".join(self.regions))
         if self.excluded_regions:
@@ -136,6 +203,10 @@ class CustomerRequirement:
             parts.append(f"면적={lo}~{hi}")
         if self.purpose:
             parts.append("목적=" + self.purpose)
+        if self.deposit_max:
+            parts.append(f"보증금={format_price(self.deposit_max)} 이하")
+        if self.rent_max:
+            parts.append(f"월세={format_price(self.rent_max)} 이하")
         if self.need_road:
             parts.append("도로접함 필수")
         if self.keywords:

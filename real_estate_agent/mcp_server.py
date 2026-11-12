@@ -24,7 +24,7 @@ from typing import Any, Optional
 log = logging.getLogger(__name__)
 
 SERVER_NAME = "real-estate-land-agent"
-INSTRUCTIONS = ("충북 음성의 토지 전문 중개사무소가 보유한 토지 매물을 찾고, 비교하고, 건축 가능 여부를 1차 판단하는 도구입니다. "
+INSTRUCTIONS = ("충북 음성의 토지·공장 전문 중개사무소가 보유한 토지·공장(매매·임대) 매물을 찾고, 비교하고, 건축 가능 여부를 1차 판단하는 도구입니다. "
                 "가격 단위는 만원(1억=10000)입니다. 주소는 시/도+시/군/구까지만 제공됩니다.")
 PUBLIC_TOOLS = ("search_listings", "get_listing", "check_land_use", "compare_listings", "list_regions")
 

@@ -205,7 +205,7 @@ def create_api(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             return None
         return ListingOut(
             id=tool_id(l), office_no=public_office_no(l.office_no) or None, name=display_name(l),
-            region=mask_address(l.address), price_manwon=l.price_manwon, price_text=format_price(l.price_manwon),
+            region=mask_address(l.address), price_manwon=l.price_manwon, price_text=l.price_text,
             area_pyeong=round(l.area_pyeong), price_per_pyeong_manwon=round(l.price_per_pyeong),
             jimok=l.jimok or None, zoning=l.zoning or None, use_tag=l.use_tag or None,
             features=[f.lstrip("● ").strip() for f in (l.features or "").split(" / ") if f.strip()],

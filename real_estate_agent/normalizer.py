@@ -11,7 +11,7 @@ import re
 from datetime import date, datetime
 from typing import Any, Optional
 
-from .models import JIMOK_TYPES, PYEONG_M2, LandListing
+from .models import JIMOK_TYPES, PYEONG_M2, LandListing, normalize_deal
 
 COLUMN_ALIASES: dict[str, list[str]] = {
     "listing_id": ["매물번호", "번호", "관리번호", "매물id", "id", "no", "매물코드"],
@@ -25,10 +25,18 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "area_m2": ["면적", "면적(㎡)", "면적㎡", "대지면적", "토지면적", "면적(m2)", "area", "공부면적", "총면적",
                 "총면적(㎡)", "합계면적", "면적합계", "면적합계(㎡)", "토지면적(㎡)", "공부면적(㎡)", "대지면적(㎡)",
                 "지적면적", "실면적", "면적(m²)"],
-    "area_pyeong": ["면적(평)", "평수", "평", "토지평수", "총면적(평)", "총평수", "평수(평)", "환산평수"],
+    "area_pyeong": ["면적(평)", "평수", "평", "토지평수", "총면적(평)", "총평수", "평수(평)", "환산평수",
+                    "대지면적(평)", "토지면적(평)", "대지(평)", "대지평수"],
     "price_manwon": ["매매가", "가격", "금액", "매매가(만원)", "매매금액", "희망가", "price", "총액", "매도가",
                      "매도금액", "매매대금", "총매매가", "총매매금액", "매가", "금액(만원)", "가격(만원)",
                      "매매가격", "총금액", "매매가(원)", "금액(원)", "총액(만원)"],
+    "building_area_m2": ["건물면적", "연면적", "건축면적", "공장면적", "건물면적(㎡)", "연면적(㎡)", "건축면적(㎡)",
+                         "공장면적(㎡)", "건평(㎡)", "바닥면적"],
+    "building_area_pyeong": ["건물면적(평)", "연면적(평)", "건축면적(평)", "공장면적(평)", "건평", "건물평수",
+                             "공장평수", "건물(평)"],
+    "deposit_manwon": ["보증금", "임대보증금", "보증금(만원)", "보증금(원)"],
+    "monthly_rent_manwon": ["월세", "월임대료", "임대료", "월차임", "차임", "월세(만원)", "임대료(만원)", "월임대료(만원)"],
+    "property_type": ["매물종류", "물건종류", "매물유형", "물건유형", "부동산종류"],
     "price_per_pyeong": ["평당가", "평단가", "평당가격", "평당(만원)"],
     "jimok": ["지목", "토지종류", "지목(공부)", "공부지목"],
     "zoning": ["용도지역", "용도", "지역지구", "용도지역지구", "용도지역(지구)"],
@@ -246,11 +254,31 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
     if area is None:
         area = parse_area_m2(mapped.get("area_pyeong"), assume_pyeong=True)
 
+    building = parse_area_m2(mapped.get("building_area_m2"))
+    if building is None:
+        building = parse_area_m2(mapped.get("building_area_pyeong"), assume_pyeong=True)
+    if area is None and building:  # 공장인데 대지면적 없이 건물면적만 적힌 경우
+        area = 0.0
+
     price = parse_price_manwon(mapped.get("price_manwon"))
     if price is None and area and not _is_blank(mapped.get("price_per_pyeong")):
         ppp = parse_price_manwon(mapped.get("price_per_pyeong"))
         if ppp:
             price = int(round(ppp * area / PYEONG_M2))
+    deposit = parse_price_manwon(mapped.get("deposit_manwon"))
+    rent = parse_price_manwon(mapped.get("monthly_rent_manwon"))
+
+    # 매물 종류·거래 방식: 표의 칸 -> 매물 폴더 이름 (공장/매매임대/…)
+    ptype = str(record.get("_매물종류") or "").strip()
+    if not _is_blank(mapped.get("property_type")):
+        ptype = "공장" if "공장" in str(mapped["property_type"]) else ptype or "토지"
+    ptype = ptype if ptype in {"토지", "공장"} else "토지"
+    deal_raw = record.get("_거래방식") or ("" if _is_blank(mapped.get("deal_type")) else mapped.get("deal_type"))
+    deal = normalize_deal(deal_raw) if deal_raw else ("임대" if price is None and (deposit or rent) else "매매")
+    if deal == "매매/임대" and price is None and (deposit or rent):
+        deal = "임대"  # 매매가가 비어 있으면 임대만
+    if deal == "임대" and price is None:
+        price = 0  # 임대 전용 매물은 매매가가 없음
 
     if not address:
         errors.append("소재지(주소) 없음")
@@ -258,6 +286,8 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
         errors.append(f"면적 해석 불가: {mapped.get('area_m2', mapped.get('area_pyeong'))!r}")
     if price is None:
         errors.append(f"가격 해석 불가: {mapped.get('price_manwon')!r}")
+    if deal == "임대" and not (deposit or rent) and not errors:
+        errors.append("임대 매물인데 보증금·월세가 없음")
     if errors:
         return None, errors
 
@@ -266,6 +296,8 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
         listing_id = listing_id[:-2]
     # 엑셀에 적힌 매물번호 (화면 표시용). 매물 폴더 방식은 수집기가 따로 넘겨줌 (자동 번호와 구분)
     extra.pop("_파일매물번호", None)
+    extra.pop("_매물종류", None)
+    extra.pop("_거래방식", None)
     for key in ("_매물특징", "_용도태그", "_지목구성", "_용도지역구성"):  # 매물 폴더 수집기가 넘긴 표시용 값 (빈 값도 유지)
         if key in record:
             extra[key] = "" if _is_blank(record[key]) else str(record[key])
@@ -281,7 +313,7 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
         jimok=normalize_jimok(mapped.get("jimok")),
         zoning=normalize_zoning(mapped.get("zoning")),
         road_access="" if _is_blank(mapped.get("road_access")) else str(mapped["road_access"]).strip(),
-        deal_type="매매" if _is_blank(mapped.get("deal_type")) else str(mapped["deal_type"]).strip(),
+        deal_type=deal,
         status=normalize_status(mapped.get("status")),
         registered_date=parse_date(mapped.get("registered_date")),
         description="" if _is_blank(mapped.get("description")) else str(mapped["description"]).strip(),
@@ -291,5 +323,9 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
         source=default_source if _is_blank(mapped.get("source")) else str(mapped["source"]).strip(),
         source_file=source_file,
         extra=extra,
+        property_type=ptype,
+        building_area_m2=round(building, 2) if building else None,
+        deposit_manwon=deposit,
+        monthly_rent_manwon=rent,
     )
     return listing, []

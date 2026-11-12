@@ -402,7 +402,8 @@ class RealEstateAgent:
             l = s.listing
             info = {
                 "주소": address, "지목": l.jimok, "용도지역": l.zoning, "면적_평": round(l.area_pyeong),
-                "면적_㎡": l.area_m2, "가격": format_price(l.price_manwon), "평당가_만원": round(l.price_per_pyeong),
+                "면적_㎡": l.area_m2, "가격": l.price_text, "평당가_만원": round(l.price_per_pyeong) or None,
+                "종류": l.kind_label, "건물면적_평": round(l.building_area_pyeong) if l.building_area_pyeong else None,
                 "도로": l.road_access, "특이사항": l.description, "점수": s.score,
                 "장점": s.reasons, "확인필요": s.penalties,
             }
@@ -542,8 +543,13 @@ def public_office_no(office_no: str) -> str:
 
 def template_explanation(s: ScoredListing, address: Optional[str] = None) -> str:
     l = s.listing
-    text = (f"{(address or l.address).replace(' ***', '')} 소재 {l.jimok or '토지'} {l.area_pyeong:,.0f}평 매물로, "
-            f"매매가는 {format_price(l.price_manwon)}(평당 약 {l.price_per_pyeong:,.0f}만원)입니다.")
+    where = (address or l.address).replace(' ***', '')
+    if l.property_type == "공장":
+        size = f"대지 {l.area_pyeong:,.0f}평" + (f"·건물 {l.building_area_pyeong:,.0f}평" if l.building_area_pyeong else "")
+        text = f"{where} 소재 공장({l.deal_type}) {size} 매물로, {l.price_text}입니다."
+    else:
+        text = (f"{where} 소재 {l.jimok or '토지'} {l.area_pyeong:,.0f}평 매물로, "
+                f"매매가는 {format_price(l.price_manwon)}(평당 약 {l.price_per_pyeong:,.0f}만원)입니다.")
     if s.reasons:
         text += " 장점: " + ", ".join(s.reasons[:4]) + "."
     if s.penalties:

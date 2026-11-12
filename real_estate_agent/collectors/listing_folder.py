@@ -372,6 +372,19 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
         "_용도지역구성": zoning_mix,
         "_필지수": n_parcels or 1,
     }
+    # 공장: 건물면적·보증금·월세 (항목값 -> 합계 줄)
+    def first(field: str) -> Any:
+        if field in kv:
+            return kv[field][1]
+        if total:
+            return _value(total, field)[1]
+        return None
+    for out_key, field in (("건물면적(㎡)", "building_area_m2"), ("건물면적(평)", "building_area_pyeong"),
+                           ("보증금", "deposit_manwon"), ("월세", "monthly_rent_manwon"),
+                           ("거래유형", "deal_type"), ("매물종류", "property_type")):
+        v = first(field)
+        if v is not None and _text(v):
+            record[out_key] = v
     if price is None and "price_per_pyeong" in kv:
         record["평당가"] = kv_val("price_per_pyeong")
     if not parcels and not kv:
