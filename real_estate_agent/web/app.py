@@ -40,7 +40,7 @@ from ..listing_editor import describe_changes, form_defaults, parse_form, web_fi
 from ..models import JIMOK_TYPES
 from ..requirement_parser import ZONING_TYPES
 from ..config import PROJECT_ROOT, Settings, get_settings, is_sample_data
-from ..models import format_price
+from ..models import DEAL_TYPES, PROPERTY_TYPES, format_price
 from ..recommender import EXHAUSTED_MESSAGE, NOT_FOUND_MESSAGE, RecommendationSession
 
 log = logging.getLogger(__name__)
@@ -898,7 +898,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             folder = listing_folder(settings.data_dir, original.source_file) if original else ""
             office_no = original.office_no if original else ""
         return render_template("listing_form.html", mode=mode, v=values, listing_id=listing_id, errors=list(errors),
-                               jimok_choices=JIMOK_TYPES, zoning_choices=ZONING_TYPES, statuses=LISTING_STATUSES,
+                               jimok_choices=JIMOK_TYPES, zoning_choices=ZONING_TYPES,
+                               kind_choices=PROPERTY_TYPES, deal_choices=DEAL_TYPES, statuses=LISTING_STATUSES,
                                changes=changes, hidden=bool(edit.get(HIDDEN)), source_file=source_file,
                                folder=folder, office_no=office_no, folder_files=files_in(settings.data_dir, folder) if listing_id else [],
                                web_file=str(Path(settings.data_dir.name) / WEB_FOLDER / web_file(settings.data_dir).name)), status
@@ -964,7 +965,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             return redirect(url_for("admin_listings"))
         if request.method == "GET":
             return form_page("edit", form_defaults(listing), listing_id)
-        form = parse_form(request.form, lease_only=not listing.for_sale)
+        form = parse_form(request.form)
         if form.errors:
             return form_page("edit", form.raw, listing_id, errors=form.errors, status=400)
         try:

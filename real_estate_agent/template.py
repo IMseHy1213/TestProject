@@ -102,7 +102,29 @@ def write_template(path: Optional[Path] = None) -> Path:
 
 
 TEMPLATE_NAME = "토지매물_입력양식.xlsx"
-FOLDER_GUIDE = """이 폴더에 토지 매물 엑셀 파일(.xlsx)을 넣으면 프로그램이 읽습니다.
+FOLDER_GUIDE = """이 폴더에 매물 엑셀 파일(.xlsx)을 넣으면 프로그램이 읽습니다. (하위 폴더도 모두 읽습니다)
+
+[토지]
+1. '토지매물_입력양식.xlsx' 를 열어 '매물입력' 시트에 한 줄에 매물 하나씩 적고 저장하세요.
+   (파일 이름은 바꿔도 되고, 여러 파일로 나눠도 됩니다)
+2. 이미 쓰고 계신 엑셀 장부가 있으면 그 파일을 그대로 넣어도 됩니다.
+
+[공장]  '공장' 폴더 아래에 거래 방식 -> 지역 순서로 넣으세요.
+   공장/매매/음성군, 공장/매매/진천군
+   공장/매매임대/음성군, 공장/매매임대/진천군
+   공장/임대/음성군, 공장/임대/진천군
+   공장 엑셀에서 더 읽는 칸: 대지면적(평), 건물면적(평), 보증금, 월세. 임대만 하는 공장은 매매가를 비워 두세요.
+
+웹 관리자 화면의 '매물 폴더 다시 읽기' 를 누르거나 프로그램을 다시 켜면 반영됩니다.
+관리자 화면의 '새 매물 추가' 로 토지·공장을 하나씩 넣을 수도 있습니다.
+
+※ 이 폴더의 파일(이 안내문 포함)은 소유자 연락처가 들어 있어 GitHub 에 올라가지 않도록 설정되어 있습니다.
+   이 안내문은 프로그램이 만들어 주는 파일이라, 지우면 다음에 켤 때 다시 생깁니다.
+"""
+
+# 예전 프로그램이 만든 안내문 (그대로면 새 안내문으로 바꿔 줌 - 직접 고친 안내문은 건드리지 않음)
+_OLD_GUIDES = [
+    """이 폴더에 토지 매물 엑셀 파일(.xlsx)을 넣으면 프로그램이 읽습니다.
 
 1. '토지매물_입력양식.xlsx' 를 열어 '매물입력' 시트에 한 줄에 매물 하나씩 적고 저장하세요.
    (파일 이름은 바꿔도 되고, 여러 파일로 나눠도 됩니다. 하위 폴더도 읽습니다)
@@ -110,7 +132,27 @@ FOLDER_GUIDE = """이 폴더에 토지 매물 엑셀 파일(.xlsx)을 넣으면 
 3. 웹 관리자 화면의 '매물 폴더 다시 읽기' 를 누르거나 프로그램을 다시 켜면 반영됩니다.
 
 ※ 이 폴더의 매물 파일은 소유자 연락처가 들어 있어 GitHub 에 올라가지 않도록 설정되어 있습니다.
-"""
+""",
+    """이 폴더에 토지 매물 엑셀 파일(.xlsx)을 넣으면 프로그램이 읽습니다.
+
+1. '토지매물_입력양식.xlsx' 를 열어 '매물입력' 시트에 한 줄에 매물 하나씩 적고 저장하세요.
+   (파일 이름은 바꿔도 되고, 여러 파일로 나눠도 됩니다. 하위 폴더도 읽습니다)
+2. 이미 쓰고 계신 엑셀 장부가 있으면 그 파일을 그대로 넣어도 됩니다.
+※ 공장 매물은 '공장' 폴더 아래에 거래 방식 → 지역 순서로 넣으세요.
+   공장/매매/음성군, 공장/매매/진천군, 공장/매매임대/음성군, 공장/매매임대/진천군, 공장/임대/음성군, 공장/임대/진천군
+   (공장 엑셀에서 더 읽는 칸: 대지면적(평), 건물면적(평), 보증금, 월세. 임대만 하는 공장은 매매가를 비워 두세요)
+3. 웹 관리자 화면의 '매물 폴더 다시 읽기' 를 누르거나 프로그램을 다시 켜면 반영됩니다.
+
+※ 이 폴더의 매물 파일은 소유자 연락처가 들어 있어 GitHub 에 올라가지 않도록 설정되어 있습니다.
+""",
+]
+
+
+def _same_text(a: str, b: str) -> bool:
+    """줄바꿈(윈도 CRLF)·BOM·끝 공백 차이는 무시하고 비교."""
+    def norm(t: str) -> str:
+        return "\n".join(line.rstrip() for line in t.lstrip("\ufeff").replace("\r\n", "\n").split("\n")).strip()
+    return norm(a) == norm(b)
 
 
 def prepare_data_folder(folder: Path) -> bool:
@@ -123,6 +165,10 @@ def prepare_data_folder(folder: Path) -> bool:
     if not has_data:
         (folder / TEMPLATE_NAME).write_bytes(build_template())
     guide = folder / "README.txt"
-    if not guide.exists():
+    try:
+        current = guide.read_text(encoding="utf-8-sig") if guide.exists() else None
+    except (OSError, UnicodeDecodeError):
+        current = ""  # 읽을 수 없으면 (직접 고친 파일일 수 있으니) 그대로 둠
+    if current is None or any(_same_text(current, old) for old in _OLD_GUIDES):
         guide.write_text(FOLDER_GUIDE, encoding="utf-8")
     return created

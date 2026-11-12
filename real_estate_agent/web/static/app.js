@@ -126,3 +126,24 @@ document.querySelectorAll("form").forEach(function (f) {
     f.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
   });
 });
+
+
+// 관리자 매물 입력: 매물 종류(토지/공장)·거래 방식에 따라 공장 칸, 매매가, 보증금·월세 칸을 보이거나 숨김
+(function () {
+  var kind = document.querySelector("[data-kind-select]");
+  if (!kind) return;
+  var deal = document.querySelector("[data-deal-select]");
+  function show(sel, on) {
+    document.querySelectorAll(sel).forEach(function (el) { el.hidden = !on; });
+  }
+  function update() {
+    var factory = kind.value === "공장";
+    var d = factory && deal ? deal.value : "매매";
+    show("[data-factory-only]", factory);
+    show("[data-sale-only]", d !== "임대");
+    show("[data-lease-only]", factory && d.indexOf("임대") >= 0);
+  }
+  kind.addEventListener("change", update);
+  if (deal) deal.addEventListener("change", update);
+  update();
+})();

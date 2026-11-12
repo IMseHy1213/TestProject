@@ -133,3 +133,70 @@ def test_list_search_and_edit_link_on_result(admin):
     assert some.listing_id in html and "새 매물 추가" in html
     r = c.post("/search", data={"q": "음성군 2억원대 땅", "csrf": token(c, "/")}, follow_redirects=True)
     assert "이 매물 수정" in r.get_data(as_text=True)
+
+
+FACTORY_LEASE = {**NEW, "address": "충청북도 진천군 이월면 신계리 88", "jimok": "공장용지", "area": "600",
+                 "price": "", "property_type": "공장", "deal_type": "임대", "building_area": "250",
+                 "deposit": "5천만원", "rent": "350", "description": "층고 8m, 호이스트 3톤"}
+
+
+def test_add_factory_lease_from_admin(admin):
+    c, agent, data, _ = admin
+    form = c.get("/admin/listings/new").get_data(as_text=True)
+    assert 'name="property_type"' in form and 'name="deposit"' in form and 'name="building_area"' in form
+    r = c.post("/admin/listings/new", data={**FACTORY_LEASE, "csrf": token(c)}, follow_redirects=True)
+    assert "새 매물을 추가했습니다" in r.get_data(as_text=True)
+    new = next(l for l in agent.listings() if "신계리 88" in l.address)
+    assert (new.property_type, new.deal_type, new.deposit_manwon, new.monthly_rent_manwon) == ("공장", "임대", 5000, 350)
+    assert round(new.building_area_pyeong) == 250 and new.price_manwon == 0
+    ws = load_workbook(data / WEB_FOLDER / WEB_FILE).active  # 엑셀에도 공장 칸이 저장됨
+    header = [x.value for x in ws[1]]
+    row = dict(zip(header, [x.value for x in ws[ws.max_row]]))
+    assert row["매물종류"] == "공장" and row["거래유형"] == "임대" and row["월세"] == 350 and not row["매매가"]
+
+    from real_estate_agent.tool_agent import AgentContext, ToolAgent
+
+    res, _ = ToolAgent(agent, ctx=AgentContext(), log_dir="").run("진천 공장 임대 월세 400 이하")
+    assert new.listing_id in res.listing_ids
+
+
+def test_factory_form_checks(admin):
+    c, agent, _, _ = admin
+    bad = {**FACTORY_LEASE, "deposit": "", "rent": ""}
+    r = c.post("/admin/listings/new", data={**bad, "csrf": token(c)})
+    assert r.status_code == 400 and "보증금이나 월세" in r.get_data(as_text=True)
+    sale = {**FACTORY_LEASE, "deal_type": "매매", "price": "", "address": "충청북도 음성군 대소면 삼정리 9"}
+    r = c.post("/admin/listings/new", data={**sale, "csrf": token(c)})
+    assert r.status_code == 400 and "매매가를 입력하세요" in r.get_data(as_text=True)
+    land = {**NEW, "address": "충청북도 음성군 감곡면 오향리 778", "deal_type": "임대", "deposit": "1억"}
+    c.post("/admin/listings/new", data={**land, "csrf": token(c)})  # 토지는 임대를 골라도 매매로
+    l = next(x for x in agent.listings() if "오향리 778" in x.address)
+    assert (l.property_type, l.deal_type, l.deposit_manwon) == ("토지", "매매", None)
+
+
+def test_old_web_excel_gets_factory_columns(admin):
+    """예전 프로그램이 만든 웹입력 엑셀(공장 칸 없음)에 공장을 추가해도 칸이 늘어나 그대로 저장됨."""
+    from openpyxl import Workbook
+
+    c, agent, data, _ = admin
+    path = data / WEB_FOLDER / WEB_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "매물입력"
+    ws.append(["매물번호", "소재지", "지목", "용도지역", "면적(㎡)", "매매가", "도로", "상태", "등록일", "특이사항", "연락처", "입력일시"])
+    wb.save(path)
+    c.post("/admin/listings/new", data={**FACTORY_LEASE, "csrf": token(c)})
+    assert "월세" in [x.value for x in load_workbook(path).active[1]]
+    assert any(l.property_type == "공장" and "신계리 88" in l.address for l in agent.listings())
+
+
+def test_edit_factory_keeps_lease(admin):
+    c, agent, _, _ = admin
+    c.post("/admin/listings/new", data={**FACTORY_LEASE, "csrf": token(c)})
+    lid = next(l for l in agent.listings() if "신계리 88" in l.address).listing_id
+    form = c.get(f"/admin/listings/edit?id={lid}").get_data(as_text=True)
+    assert 'value="350"' in form and "<option value=\"임대\" selected" in form
+    c.post("/admin/listings/edit", data={**FACTORY_LEASE, "rent": "300", "id": lid, "csrf": token(c)})
+    l = agent.find_listing(lid)
+    assert l.monthly_rent_manwon == 300 and l.deal_type == "임대"

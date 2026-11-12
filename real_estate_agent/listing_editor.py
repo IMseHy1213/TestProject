@@ -14,7 +14,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from .models import JIMOK_TYPES, PYEONG_M2, LandListing
+from .models import DEAL_TYPES, JIMOK_TYPES, PROPERTY_TYPES, PYEONG_M2, LandListing
 from .normalizer import normalize_jimok, normalize_zoning, parse_date, parse_price_manwon
 from .requirement_parser import ZONING_TYPES
 
@@ -26,15 +26,18 @@ HIDDEN = "hidden"  # 목록에서 숨김(삭제) 표시
 
 # 고칠 수 있는 항목 (LandListing 속성 이름)
 EDITABLE = ("address", "jimok", "zoning", "area_m2", "price_manwon", "road_access", "status",
-            "registered_date", "description", "owner_contact")
+            "registered_date", "description", "owner_contact",
+            "property_type", "deal_type", "building_area_m2", "deposit_manwon", "monthly_rent_manwon")
 LABELS = {
+    "property_type": "매물 종류", "deal_type": "거래 방식", "building_area_m2": "건물면적",
+    "deposit_manwon": "보증금", "monthly_rent_manwon": "월세",
     "address": "소재지", "jimok": "지목", "zoning": "용도지역", "area_m2": "면적", "price_manwon": "매매가",
     "road_access": "도로", "status": "상태", "registered_date": "등록일", "description": "특이사항",
     "owner_contact": "연락처", HIDDEN: "숨김",
 }
 # 웹입력 엑셀의 열 (프로그램이 읽는 열 이름과 같음)
 WEB_COLUMNS = ["매물번호", "소재지", "지목", "용도지역", "면적(㎡)", "매매가", "도로", "상태", "등록일", "특이사항",
-               "연락처", "입력일시"]
+               "연락처", "입력일시", "매물종류", "거래유형", "건물면적(㎡)", "보증금", "월세"]
 MAX_TEXT = {"address": 200, "road_access": 100, "description": 2000, "owner_contact": 100}
 
 
@@ -47,13 +50,20 @@ class ListingForm:
     raw: dict[str, str] = field(default_factory=dict)  # 오류가 있을 때 화면에 다시 채워 줄 입력값
 
 
-def parse_form(form, lease_only: bool = False) -> ListingForm:
-    """관리자 화면의 매물 입력 폼 -> 검사된 값. lease_only: 임대 전용 공장 (매매가 없음, 0 또는 빈칸)."""
+def parse_form(form) -> ListingForm:
+    """관리자 화면의 매물 입력 폼 -> 검사된 값.
+    공장은 거래 방식(매매 / 매매/임대 / 임대)과 건물면적·보증금·월세를 받음. 임대만 하는 공장은 매매가 없이."""
     keys = ("address", "jimok", "zoning", "area", "area_unit", "price", "road_access", "status",
-            "registered_date", "description", "owner_contact")
+            "registered_date", "description", "owner_contact", "property_type", "deal_type",
+            "building_area", "deposit", "rent")
     raw = {k: (form.get(k) or "").strip() for k in keys}
     out = ListingForm(raw=raw)
     v, err = out.values, out.errors
+
+    v["property_type"] = raw["property_type"] if raw["property_type"] in PROPERTY_TYPES else "토지"
+    factory = v["property_type"] == "공장"
+    v["deal_type"] = raw["deal_type"] if factory and raw["deal_type"] in DEAL_TYPES else "매매"  # 토지는 매매만
+    lease, sale = "임대" in v["deal_type"], v["deal_type"] != "임대"
 
     v["address"] = " ".join(raw["address"].split())
     if not v["address"]:
@@ -73,12 +83,33 @@ def parse_form(form, lease_only: bool = False) -> ListingForm:
         err.append("면적은 숫자로 입력하세요. (예: 250)")
 
     price = parse_price_manwon(raw["price"])
-    if lease_only and not price:
-        v["price_manwon"] = 0
+    if not sale:
+        v["price_manwon"] = 0  # 임대만 하는 공장: 매매가 없음
     elif price is None or price <= 0:
         err.append("매매가를 입력하세요. ('2억 3천만원', '2.3억', '23000'(만원) 모두 가능)")
     else:
         v["price_manwon"] = price
+
+    # 공장: 건물면적(선택, 면적과 같은 단위), 보증금·월세(임대일 때 둘 중 하나는 필수)
+    v["building_area_m2"] = v["deposit_manwon"] = v["monthly_rent_manwon"] = None
+    if factory and raw["building_area"]:
+        try:
+            b = float(raw["building_area"].replace(",", ""))
+            if b <= 0:
+                raise ValueError
+            v["building_area_m2"] = round(b * PYEONG_M2 if raw["area_unit"] != "m2" else b, 2)
+        except ValueError:
+            err.append("건물면적은 숫자로 입력하세요. (예: 300)")
+    if lease:
+        for key, field, label in (("deposit", "deposit_manwon", "보증금"), ("rent", "monthly_rent_manwon", "월세")):
+            if raw[key]:
+                n = parse_price_manwon(raw[key])
+                if n is None or n <= 0:
+                    err.append(f"{label}은(는) 금액으로 입력하세요. (예: '5천만원', '300'(만원))")
+                else:
+                    v[field] = n
+        if not (v["deposit_manwon"] or v["monthly_rent_manwon"]):
+            err.append("임대 공장은 보증금이나 월세를 입력하세요.")
 
     v["road_access"] = raw["road_access"]
     v["status"] = raw["status"] if raw["status"] in STATUSES else "거래가능"
@@ -102,10 +133,15 @@ def form_defaults(listing: Optional[LandListing] = None) -> dict[str, str]:
     if listing is None:
         return {"area_unit": "pyeong", "status": "거래가능", "registered_date": date.today().isoformat()}
     pyeong = listing.area_m2 / PYEONG_M2
+    building = listing.building_area_pyeong
     return {
         "address": listing.address, "jimok": listing.jimok, "zoning": listing.zoning,
         "area": f"{pyeong:.2f}".rstrip("0").rstrip("."), "area_unit": "pyeong",
-        "price": str(listing.price_manwon), "road_access": listing.road_access, "status": listing.status,
+        "property_type": listing.property_type, "deal_type": listing.deal_type,
+        "building_area": f"{building:.2f}".rstrip("0").rstrip(".") if building else "",
+        "deposit": str(listing.deposit_manwon or ""), "rent": str(listing.monthly_rent_manwon or ""),
+        "price": str(listing.price_manwon) if listing.for_sale else "",
+        "road_access": listing.road_access, "status": listing.status,
         "registered_date": listing.registered_date.isoformat() if listing.registered_date else "",
         "description": listing.description, "owner_contact": listing.owner_contact,
     }
@@ -121,8 +157,10 @@ def _from_json(key: str, value: Any) -> Any:
         return parse_date(value)
     if key == "area_m2" and value is not None:
         return float(value)
-    if key == "price_manwon" and value is not None:
+    if key in {"price_manwon", "deposit_manwon", "monthly_rent_manwon"} and value is not None:
         return int(value)
+    if key == "building_area_m2" and value is not None:
+        return float(value)
     return value
 
 
@@ -133,7 +171,8 @@ def diff_fields(original: LandListing, values: dict[str, Any]) -> dict[str, Any]
         if k not in values:
             continue
         new, old = values[k], getattr(original, k)
-        if k == "area_m2" and new is not None and old is not None and abs(float(new) - float(old)) < 0.05:
+        if k in {"area_m2", "building_area_m2"} and new is not None and old is not None \
+                and abs(float(new) - float(old)) < 0.05:
             continue
         if (new or None) != (old or None):
             out[k] = _jsonable(new)
@@ -170,9 +209,9 @@ def describe_changes(original: LandListing, fields: dict[str, Any]) -> list[str]
     def show(k, v):
         if v in (None, ""):
             return "(없음)"
-        if k == "price_manwon":
-            return format_price(int(v))
-        if k == "area_m2":
+        if k in {"price_manwon", "deposit_manwon", "monthly_rent_manwon"}:
+            return format_price(int(v)) if int(v) else "(없음)"
+        if k in {"area_m2", "building_area_m2"}:
             return f"{float(v) / PYEONG_M2:,.1f}평"
         return str(v)
 
@@ -226,9 +265,20 @@ def append_listing(data_dir: Path, listing_id: str, values: dict[str, Any]) -> P
             ws.column_dimensions[c.column_letter].width = 42 if name in {"소재지", "특이사항"} else 14
         ws.freeze_panes = "A2"
     header = [c.value for c in ws[1]]
+    for name in WEB_COLUMNS:  # 예전 프로그램이 만든 웹입력 엑셀에는 공장 칸이 없음 -> 오른쪽에 추가
+        if name not in header:
+            c = ws.cell(row=1, column=len(header) + 1, value=name)
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1F5F4A")
+            header.append(name)
+    for_sale = values.get("deal_type", "매매") != "임대"
     row = {
         "매물번호": listing_id, "소재지": values["address"], "지목": values.get("jimok", ""),
-        "용도지역": values.get("zoning", ""), "면적(㎡)": values["area_m2"], "매매가": values["price_manwon"],
+        "용도지역": values.get("zoning", ""), "면적(㎡)": values["area_m2"],
+        "매매가": values["price_manwon"] if for_sale else "",
+        "매물종류": values.get("property_type", "토지"), "거래유형": values.get("deal_type", "매매"),
+        "건물면적(㎡)": values.get("building_area_m2") or "", "보증금": values.get("deposit_manwon") or "",
+        "월세": values.get("monthly_rent_manwon") or "",
         "도로": values.get("road_access", ""), "상태": values.get("status", "거래가능"),
         "등록일": values["registered_date"].isoformat() if values.get("registered_date") else "",
         "특이사항": values.get("description", ""), "연락처": values.get("owner_contact", ""),

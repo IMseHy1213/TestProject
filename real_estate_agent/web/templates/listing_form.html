@@ -23,6 +23,22 @@
   <input type="hidden" name="csrf" value="{{ csrf_token() }}">
   {% if listing_id %}<input type="hidden" name="id" value="{{ listing_id }}">{% endif %}
 
+  <div class="two">
+    <div>
+      <label for="property_type">매물 종류</label>
+      <select id="property_type" name="property_type" data-kind-select>
+        {% for k in kind_choices %}<option {% if (v.property_type or '토지') == k %}selected{% endif %}>{{ k }}</option>{% endfor %}
+      </select>
+    </div>
+    <div data-factory-only>
+      <label for="deal_type">거래 방식 <small class="muted">— 공장만</small></label>
+      <select id="deal_type" name="deal_type" data-deal-select>
+        {% for d in deal_choices %}<option value="{{ d }}" {% if (v.deal_type or '매매') == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
+      </select>
+      <small class="muted">공장 폴더의 매매 / 매매임대 / 임대와 같습니다. 토지는 매매로 저장됩니다.</small>
+    </div>
+  </div>
+
   <label for="address">소재지 <span class="req">필수</span></label>
   <input id="address" name="address" value="{{ v.address or '' }}" required maxlength="200"
          placeholder="충청북도 음성군 금왕읍 무극리 210-3">
@@ -44,7 +60,7 @@
 
   <div class="two">
     <div>
-      <label for="area">면적 <span class="req">필수</span></label>
+      <label for="area">면적 <span class="muted" data-factory-only>(공장은 대지면적)</span> <span class="req">필수</span></label>
       <div class="with-unit">
         <input id="area" name="area" value="{{ v.area or '' }}" required inputmode="decimal" placeholder="250">
         <select name="area_unit" aria-label="면적 단위">
@@ -53,11 +69,34 @@
         </select>
       </div>
     </div>
-    <div>
+    <div data-sale-only>
       <label for="price">매매가 <span class="req">필수</span></label>
-      <input id="price" name="price" value="{{ v.price or '' }}" required placeholder="2억 3천만원 또는 23000(만원)">
+      <input id="price" name="price" value="{{ v.price or '' }}" placeholder="2억 3천만원 또는 23000(만원)">
+      <small class="muted" data-factory-only>임대만 하는 공장은 비워 두세요 (거래 방식: 임대).</small>
     </div>
   </div>
+
+  <fieldset class="factory-fields" data-factory-only>
+    <legend>공장 정보</legend>
+    <div class="two">
+      <div>
+        <label for="building_area">건물면적 <small class="muted">— 면적과 같은 단위(평/㎡)</small></label>
+        <input id="building_area" name="building_area" value="{{ v.building_area or '' }}" inputmode="decimal" placeholder="300">
+      </div>
+      <div></div>
+    </div>
+    <div class="two" data-lease-only>
+      <div>
+        <label for="deposit">보증금</label>
+        <input id="deposit" name="deposit" value="{{ v.deposit or '' }}" placeholder="5천만원 또는 5000(만원)">
+      </div>
+      <div>
+        <label for="rent">월세</label>
+        <input id="rent" name="rent" value="{{ v.rent or '' }}" placeholder="300만원 또는 300(만원)">
+      </div>
+    </div>
+    <small class="muted" data-lease-only>임대(매매/임대 포함)는 보증금이나 월세 중 하나는 꼭 적어 주세요.</small>
+  </fieldset>
 
   <label for="road_access">도로</label>
   <input id="road_access" name="road_access" value="{{ v.road_access or '' }}" maxlength="100" placeholder="6m 포장도로 접함 / 맹지">

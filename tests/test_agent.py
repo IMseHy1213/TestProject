@@ -434,3 +434,32 @@ def test_no_cheaper_listing_returns_none_instead_of_pricier():
     assert sess.current().listing.listing_id == "a"  # 가장 싼 매물부터
     assert sess.next("너무 비싸요") is None  # 더 비싼 b 를 보여주지 않음
     assert sess.filter_stats.get("앞서 본 매물보다 비쌈") == 1
+
+
+def test_folder_guide_is_refreshed_only_if_program_made(tmp_path):
+    """매물/README.txt: 예전 프로그램이 만든 안내문(윈도 줄바꿈이어도)은 새 안내문으로, 직접 고친 것은 그대로."""
+    from real_estate_agent.template import _OLD_GUIDES, FOLDER_GUIDE, prepare_data_folder
+
+    old = tmp_path / "a"
+    old.mkdir()
+    (old / "README.txt").write_bytes(_OLD_GUIDES[0].replace("\n", "\r\n").encode("utf-8"))
+    prepare_data_folder(old)
+    assert (old / "README.txt").read_text(encoding="utf-8") == FOLDER_GUIDE and "공장/임대/진천군" in FOLDER_GUIDE
+    mine = tmp_path / "b"
+    mine.mkdir()
+    (mine / "README.txt").write_text("내 메모", encoding="utf-8")
+    prepare_data_folder(mine)
+    assert (mine / "README.txt").read_text(encoding="utf-8") == "내 메모"
+
+
+def test_listing_folder_is_not_tracked_by_git():
+    """매물 폴더는 (안내문 포함) 통째로 git 에서 빠짐 -> PC 쪽 파일이 달라도 git pull 이 멈추지 않음."""
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent
+    out = subprocess.run(["git", "ls-files", "매물"], cwd=root, capture_output=True, text=True)
+    if out.returncode != 0:
+        pytest.skip("git 없음")
+    assert out.stdout.strip() == ""
+    check = subprocess.run(["git", "check-ignore", "-q", "매물/README.txt"], cwd=root)
+    assert check.returncode == 0

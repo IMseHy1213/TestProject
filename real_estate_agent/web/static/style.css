@@ -414,3 +414,6 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 .model-desc { white-space: pre-wrap; font-size: .84rem; background: var(--bg); padding: 10px; border-radius: 8px; }
 @media (max-width: 600px) { .mode-help dl { grid-template-columns: 1fr; } }
 .sample-banner { margin-top: 12px; }
+.factory-fields { border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 8px 12px 12px; margin: 12px 0; }
+.factory-fields legend { font-weight: 600; padding: 0 4px; }
+[hidden] { display: none !important; }
