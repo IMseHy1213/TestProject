@@ -245,3 +245,63 @@ def test_switch_from_sale_to_lease_factory(agent, runner_cls):
 def test_parser_reads_excluded_deal_and_kind(q, types, deal):
     r = RequirementParser(None, ["음성군"], []).parse(q)
     assert (r.property_types, r.deal) == (types, deal) and not set(r.excluded_keywords) & {"공장", "매매", "임대"}
+
+
+def _info_agent(tmp_path, sheets):
+    """매물 하나 = 폴더 하나 (공장 설명서) 로 매물 폴더를 만들고 읽음."""
+    data = tmp_path / "매물"
+    for i, rows in enumerate(sheets):
+        _sheet(data / "공장" / "임대" / "음성군" / f"대소면 오류리 {100 + i}(공장)" / "설명서.xlsx", rows)
+    a = RealEstateAgent(Settings(data_dir=data, db_path=tmp_path / "i.db", log_dir=tmp_path / "l", llm_providers=["rule"]))
+    a.sync()
+    return sorted(a.listings(), key=lambda l: l.address)
+
+
+def test_factory_sheet_jimok_zoning_and_won_amounts(tmp_path):
+    """설명서의 '지목'·'지역/지구' 를 읽고, 원 단위로 적은 보증금·월세를 만원으로 (6500억원 X → 6,500만원)."""
+    a_side = [["소재지", "충청북도 음성군 대소면 오류리 100"],
+              ["지목", "대", "지역/지구", "계획관리지역, 성장관리계획구역"],   # 한 줄에 '항목 | 값' 두 쌍
+              ["대지면적(평)", 500], ["건물면적(평)", 200], ["보증금", 65000000], ["월세", 6500000]]
+    two_rows = [["소재지", "충청북도 음성군 대소면 오류리 101"],
+                ["지목", "지역/지구"],                                      # 항목 줄 + 아래 값 줄
+                ["전", "계획관리지역\n성장관리계획구역"],
+                [None, None],
+                ["대지면적(평)", 300], ["보증금", "3,000만원"], ["월세", "250만원"]]
+    below = [["소재지", "충청북도 음성군 대소면 오류리 102"],
+             ["지목", None, "지역·지구 등", None],                          # 값이 아래 칸에
+             ["답", None, "자연녹지지역", None],
+             ["대지면적(평)", 300], ["보증금", "5천만원"], ["월세", 3000000]]
+    l0, l1, l2 = _info_agent(tmp_path, [a_side, two_rows, below])
+    assert (l0.jimok, l0.zoning, l0.extra.get("_지역지구")) == ("대", "계획관리지역", "계획관리지역, 성장관리계획구역")
+    assert (l0.deposit_manwon, l0.monthly_rent_manwon) == (6500, 650)
+    assert l0.price_text == "임대 보증금 6,500만원 / 월 650만원"
+    assert (l1.jimok, l1.zoning, l1.extra.get("_지역지구")) == ("전", "계획관리지역", "계획관리지역, 성장관리계획구역")
+    assert (l1.deposit_manwon, l1.monthly_rent_manwon) == (3000, 250)
+    assert (l2.jimok, l2.zoning, l2.monthly_rent_manwon) == ("답", "자연녹지지역", 300)
+
+    from real_estate_agent.tool_agent.tools import brief
+
+    b = brief(l0)
+    assert b["지목"] == "대" and b["지역지구"] == "계획관리지역, 성장관리계획구역"
+
+
+def test_lease_only_factories(agent):
+    """'음성군에 임대공장' 은 임대 + 매매/임대, '임대만 하는 공장' 은 임대 전용만."""
+    no = lambda r: {agent.find_listing(i).office_no for i in r.listing_ids}
+    t, h = ToolAgent(agent, ctx=AgentContext(), log_dir=""), None
+    r, h = t.run("음성군에 임대공장을 찾아줘.", h)
+    assert no(r) == {"F-3", "F-4", "F-5"}
+    r, h = t.run("오로지 임대만 하는 공장만 보고 싶어.", h)
+    assert no(r) == {"F-4", "F-5"} and "임대 전용" in r.answer
+    for q in ("임대만 하는 공장을 찾아줘.", "오로지 임대만 하는 공장만 보고 싶어.", "매매는 안 되는 임대 공장"):
+        r, _ = MultiAgent(agent, ctx=AgentContext(), log_dir="").run(q)
+        assert no(r) == {"F-4", "F-5", "F-6"}, q  # 매매/임대 F-3 은 빠짐
+    r, _ = ToolAgent(agent, ctx=AgentContext(), log_dir="").run("매매만 하는 공장")
+    assert no(r) == {"F-1", "F-2"}
+
+
+@pytest.mark.parametrize("q, deal", [("임대만 하는 공장을 찾아줘", "임대만"), ("오로지 임대만 하는 공장만 보고 싶어", "임대만"),
+                                     ("임대 전용 공장", "임대만"), ("음성군에 임대공장을 찾아줘", "임대"),
+                                     ("매매만 하는 공장", "매매만"), ("음성군 매매 공장", "매매")])
+def test_parser_lease_only(q, deal):
+    assert RequirementParser(None, ["음성군"], []).parse(q).deal == deal

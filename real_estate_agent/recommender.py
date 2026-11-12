@@ -145,11 +145,15 @@ def hard_filter(l: LandListing, req: CustomerRequirement, opt: RecommendOptions)
         return f"상태 '{l.status}'"
     if req.property_types and l.property_type not in req.property_types:
         return "매물 종류 다름"
-    leasing = req.deal == "임대" or bool(req.deposit_max or req.rent_max)
+    leasing = req.deal in {"임대", "임대만"} or bool(req.deposit_max or req.rent_max)
     if leasing and not l.for_lease:
         return "임대 매물 아님"
-    if req.deal == "매매" and not l.for_sale:
+    if req.deal in {"매매", "매매만"} and not l.for_sale:
         return "매매 매물 아님"
+    if req.deal == "임대만" and l.deal_type != "임대":
+        return "임대 전용 아님"  # '임대만 하는 공장' -> 매매/임대 공장은 빼고
+    if req.deal == "매매만" and l.deal_type != "매매":
+        return "매매 전용 아님"
     if leasing:
         reason = lease_fit(l, req, opt.budget_tolerance)
         if reason:
@@ -208,7 +212,7 @@ def score_listing(l: LandListing, req: CustomerRequirement, opt: RecommendOption
 
     # 가격
     p = l.price_manwon
-    if req.deal == "임대" or req.deposit_max or req.rent_max:  # 임대: 보증금·월세가 상한 안인지
+    if req.deal in {"임대", "임대만"} or req.deposit_max or req.rent_max:  # 임대: 보증금·월세가 상한 안인지
         f["price"] = 1.0 if lease_fit(l, req) is None else 0.45
         reasons.append(f"임대 조건: {l.lease_text}")
     elif req.budget_max:

@@ -103,7 +103,9 @@ def parse_form(form) -> ListingForm:
     if lease:
         for key, field, label in (("deposit", "deposit_manwon", "보증금"), ("rent", "monthly_rent_manwon", "월세")):
             if raw[key]:
-                n = parse_price_manwon(raw[key])
+                from .normalizer import parse_lease_manwon
+
+                n = parse_lease_manwon(raw[key], won_from=1_000_000 if key == "deposit" else 100_000)
                 if n is None or n <= 0:
                     err.append(f"{label}은(는) 금액으로 입력하세요. (예: '5천만원', '300'(만원))")
                 else:

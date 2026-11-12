@@ -284,7 +284,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             "building_pyeong": f"{l.building_area_pyeong:,.0f}" if l.building_area_pyeong else "",
             "road": l.road_access or "-", "description": l.description, "features": l.features,
             "use_tag": l.use_tag, "jimok_mix": l.extra.get("_지목구성", ""),
-            "zoning_mix": l.extra.get("_용도지역구성", ""),
+            "zoning_mix": l.extra.get("_용도지역구성", "") or l.extra.get("_지역지구", ""),
             "score": f"{s.score:.1f}", "reasons": s.reasons, "penalties": s.penalties,
             "registered": l.registered_date.isoformat() if l.registered_date else "-",
             # 관리자 전용
@@ -424,7 +424,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                 "pyeong": f"{l.area_pyeong:,.0f}", "m2": f"{l.area_m2:,.0f}",
                 "kind": l.kind_label if l.property_type != "토지" else "",
                 "building_pyeong": f"{l.building_area_pyeong:,.0f}" if l.building_area_pyeong else "",
-                "jimok": l.jimok or "-", "zoning": l.zoning or "-", "features": features[:5], "badges": badges,
+                "jimok": l.jimok or "-", "zoning": l.extra.get("_지역지구") or l.zoning or "-",
+                "features": features[:5], "badges": badges,
                 "use_tag": l.use_tag, "contact": l.owner_contact if admin else ""}
 
     def render_turns(turns: list[dict], admin: bool, ctx=None) -> list[dict]:

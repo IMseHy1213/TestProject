@@ -77,6 +77,12 @@ _EXCL_KIND = re.compile(r"(공장|토지|땅)(?:\s*(?:매매|임대|매물|물�
 DEAL_KIND_WORDS = {"공장", "토지", "땅", "매매", "매입", "매도", "임대", "월세", "전세", "렌트", "매물", "물건"}
 
 
+# '임대만 하는 공장', '오로지 임대만', '임대 전용' -> 임대만 (매매/임대 공장은 빼고) / '매매만 하는' -> 매매만
+_LEASE_ONLY = re.compile(r"임대\s*(?:로)?\s*만(?![가-힣]*원)|임대\s*전용|임대\s*만\s*(?:하는|되는|가능)|매매\s*(?:는|가)?\s*안\s*(?:되는|하는)")
+_SALE_ONLY = re.compile(r"매매\s*(?:로)?\s*만(?![가-힣]*원)|매매\s*전용|임대\s*(?:는|가)?\s*안\s*(?:되는|하는)")
+DEAL_LABELS = {"매매": "매매", "임대": "임대", "매매만": "매매 전용", "임대만": "임대 전용"}
+
+
 def excluded_terms(text: str) -> tuple[set[str], set[str], str]:
     """(뺀 거래 방식 {'매매'|'임대'}, 뺀 종류 {'공장'|'토지'}, 그 부분을 지운 문장)."""
     deals, kinds = set(), set()
@@ -119,6 +125,10 @@ def property_terms(text: str) -> tuple[list[str], str, Optional[int], Optional[i
         deal = "임대"
     elif no_deals == {"임대"}:
         deal = "매매"
+    if _LEASE_ONLY.search(t):  # '오로지 임대만 하는 공장' -> 매매/임대 공장은 빼고 임대 전용만
+        deal = "임대만"
+    elif _SALE_ONLY.search(t):
+        deal = "매매만"
     types = [x for x in types if x not in no_kinds]
     if not types and no_kinds and len(no_kinds) == 1:  # '공장 말고 땅은?' -> 토지
         types = ["토지" if "공장" in no_kinds else "공장"]
@@ -134,7 +144,7 @@ def property_terms(text: str) -> tuple[list[str], str, Optional[int], Optional[i
         rest = rest.replace(m.group(0), " ")
     if (deposit or rent) and not deal:
         deal = "임대"
-    if deal == "임대" and "토지" in types and "공장" not in types and not to_build:
+    if deal in {"임대", "임대만"} and "토지" in types and "공장" not in types and not to_build:
         types = ["공장"] if factory_noun else types  # 토지는 임대 매물이 없음
     return types, deal, deposit, rent, rest
 
@@ -155,7 +165,8 @@ SYSTEM_PROMPT = f"""당신은 한국 토지·공장 매물 중개 보조 AI 입�
 - excluded_keywords: 원하지 않는 것 (예: "묘지", "고압선", "임야" 등). 지역 이름은 넣지 마세요.
 - property_types: 찾는 매물 종류. "토지" 와 "공장" 중에서 (예: "공장 임대 있어?" -> ["공장"],
   "공장 지을 땅" -> ["토지"] 이고 purpose "공장"). 말하지 않았으면 [].
-- deal: "매매"(사려는 것) / "임대"(빌리려는 것, 월세·보증금) / "" (말하지 않음)
+- deal: "매매"(사려는 것, 매매/임대 공장 포함) / "임대"(빌리려는 것, 매매/임대 공장 포함) /
+  "임대만"('임대만 하는 공장', '오로지 임대만' - 매매/임대 공장은 빼고 임대 전용만) / "매매만" / "" (말하지 않음)
 - deposit_max, rent_max: 임대 보증금 상한, 월세 상한 (만원). "보증금 5천에 월세 300" -> 5000, 300. 이때 budget 은 비워 둠
 - excluded_regions: 빼고 찾을 지역 모두 ("음성군 말고 다른 지역" -> ["음성군"], "진천군이랑 음성군 말고" -> ["진천군", "음성군"]).
   regions 에는 넣지 않음
@@ -182,7 +193,7 @@ def apply_property_terms(req: CustomerRequirement, text: str, overwrite: bool = 
             req.need_road = False
     if req.purpose and not req.property_types:
         req.property_types = ["토지"]  # '창고 지을 수 있는 곳' -> 땅
-    if req.deal == "임대" and not req.deposit_max and req.budget_max:
+    if req.deal in {"임대", "임대만"} and not req.deposit_max and req.budget_max:
         req.deposit_max, req.budget_min, req.budget_max = req.budget_max, None, None  # '1억 이하 임대' = 보증금
     return req
 
@@ -351,7 +362,7 @@ def sanitize(req: CustomerRequirement) -> CustomerRequirement:
                            req.purpose)
     req.need_road = bool(req.need_road)
     req.property_types = [p for p in dict.fromkeys(_list(req.property_types)) if p in {"토지", "공장"}]
-    req.deal = req.deal if req.deal in {"매매", "임대"} else ""
+    req.deal = req.deal if req.deal in DEAL_LABELS else ""
     for f in ("deposit_max", "rent_max"):
         v = getattr(req, f)
         setattr(req, f, int(v) if isinstance(v, (int, float)) and v > 0 else None)

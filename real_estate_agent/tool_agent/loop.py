@@ -78,7 +78,8 @@ SYSTEM_PROMPT = """당신은 충북 음성의 토지·공장 전문 공인중개
   search_listings(regions=[그 지역], sort=..., limit=1) (전체 매물에서 찾지 마세요).
 - 매물 종류는 토지와 공장입니다. '공장 있어?', '공장 임대', '공장 매매' 는 공장 매물이므로 search_listings(property_type="공장"),
   '공장 지을 땅', '공장 부지' 는 토지이므로 property_type="토지", purpose="공장" 을 주세요.
-  공장은 매매·매매/임대·임대가 있습니다. 빌리려 하면 deal="임대", 보증금·월세 상한은 deposit_max_manwon, rent_max_manwon (만원).
+  공장은 매매·매매/임대·임대가 있습니다. 빌리려 하면 deal="임대"(매매/임대 공장 포함),
+  '임대만 하는 공장', '오로지 임대만' 이면 deal="임대만"(임대 전용만), '매매만 하는' 이면 deal="매매만". 보증금·월세 상한은 deposit_max_manwon, rent_max_manwon (만원).
   임대 매물은 '가격' 에 보증금·월세가 적혀 있으니 그대로 말하세요.
 - 건축 가능 여부는 프로그램의 1차 판단이며 토지이용계획 확인이 필요하다고 덧붙이세요.
 """
@@ -399,6 +400,8 @@ def _switches_deal_or_kind(q: str) -> bool:
     if deals or kinds:
         return True
     types, deal = property_terms(q)[:2]
+    if deal in {"임대만", "매매만"}:  # '오로지 임대만 하는 공장만 보고 싶어' -> 앞 조건(지역 등) 그대로 임대 전용만
+        return True
     short = len(q.replace(" ", "")) <= 16  # '임대는?', '임대 공장은 없어?', '매매로는 없어?'
     return bool(deal) and short and bool(re.search(r"없|있|는\?|은\?|으로는|로는|도\s", q))
 
@@ -526,8 +529,11 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
         lines.append(f"{'토지' if kind == '공장' else '공장'} 말고 {kind} 매물로 다시 찾았습니다.")
     elif found and res.get("거래_바꿈"):  # '매매 공장 말고 임대 공장은 없어?'
         deal = res["거래_바꿈"]
-        other = "매매" if deal == "임대" else "임대"
-        lines.append(f"{other} 말고 {deal}(매매/임대 포함) 매물로 다시 찾았습니다.")
+        if deal in {"임대만", "매매만"}:
+            lines.append(f"매매/임대 매물은 빼고 {deal[:2]}만 하는 매물로 다시 찾았습니다.")
+        else:
+            other = "매매" if deal == "임대" else "임대"
+            lines.append(f"{other} 말고 {deal}(매매/임대 포함) 매물로 다시 찾았습니다.")
     elif found and res.get("앞_조건_출처") == "지난 상담":
         lines.append(f"지난 상담에서 찾으신 조건({cond})으로 다시 찾았습니다.")
     elif found and res.get("제외_지역") and res.get("앞_조건_이어서") and not res.get("앞서_보여준_매물_수"):

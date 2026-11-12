@@ -143,6 +143,7 @@ def brief(l: LandListing, s: Optional[ScoredListing] = None) -> dict[str, Any]:
         "주소": mask_address(l.address),
         "지목": l.jimok or None,
         "용도지역": l.zoning or None,
+        "지역지구": l.extra.get("_지역지구") or None,
         "종류": l.property_type,
         "거래": l.deal_type,
         "면적_평": round(l.area_pyeong),
@@ -164,11 +165,13 @@ def brief(l: LandListing, s: Optional[ScoredListing] = None) -> dict[str, Any]:
 
 def condition_summary(req: CustomerRequirement) -> str:
     """손님에게 보여줄 조건 요약: '음성군 · 창고 용도 · 3억 이하 · 도로 접한 땅'"""
+    from ..requirement_parser import DEAL_LABELS
+
     parts = []
     if req.property_types and (req.property_types != ["토지"] or req.deal):  # 땅만 찾으면 '토지' 는 굳이 쓰지 않음
-        parts.append("·".join(req.property_types) + (f" {req.deal}" if req.deal else ""))
+        parts.append("·".join(req.property_types) + (f" {DEAL_LABELS[req.deal]}" if req.deal else ""))
     elif req.deal:
-        parts.append(req.deal)
+        parts.append(DEAL_LABELS[req.deal])
     if req.regions:
         parts.append(", ".join(req.regions))
     if req.excluded_regions:
@@ -291,7 +294,7 @@ def requirement_from_args(agent, given: dict[str, Any]) -> CustomerRequirement:
         req.deposit_max = given["deposit_max_manwon"]
     if given.get("rent_max_manwon") is not None:
         req.rent_max = given["rent_max_manwon"]
-    if req.deal == "임대" and not req.deposit_max and req.budget_max and budget_max_manwon is None:
+    if req.deal in {"임대", "임대만"} and not req.deposit_max and req.budget_max and budget_max_manwon is None:
         req.deposit_max, req.budget_min, req.budget_max = req.budget_max, None, None
     for r in given.get("exclude_regions") or []:
         c = canonical_region(r)
@@ -501,7 +504,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         req.customer_name = ctx.customer
         session = agent.recommend(req, pref_key=ctx.pref_key or None)  # v1.2: 이 방문자에게서 배운 중요도로 점수
         ranked = [s for s in session.ranked if s.listing.listing_id not in ctx.rejected]
-        leasing = req.deal == "임대" or bool(req.deposit_max or req.rent_max)
+        leasing = req.deal in {"임대", "임대만"} or bool(req.deposit_max or req.rent_max)
         # 지역·거래 방식·종류를 바꾸면 전체에서 다시 ('그 중에' 는 직전에 보여준 매물 안에서)
         pool = list(ctx.last_shown) if follow_up and not region_change and not kind_change else []
         if pool:  # '그 중에' -> 직전에 보여준 매물 안에서만
@@ -545,7 +548,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         req = requirement_from_args(agent, given)
         req.customer_name = ctx.customer
         ranked = [s for s in agent.recommend(req).ranked if s.listing.listing_id not in ctx.rejected]
-        sort_ranked(ranked, sort, req.deal == "임대" or bool(req.deposit_max or req.rent_max))
+        sort_ranked(ranked, sort, req.deal in {"임대", "임대만"} or bool(req.deposit_max or req.rent_max))
         shown = ranked[:limit]
         ctx.last_shown = [s.listing.listing_id for s in shown]
         for s in shown:
@@ -692,8 +695,9 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                      "다시 확인해 달라고 하면 true: 직전 조건(뺀 지역 포함)을 그대로 전체 매물에서 다시 찾고 지역별 개수를 돌려줌"},
                  "property_type": {"type": "string", "enum": ["토지", "공장"], "description":
                      "매물 종류. '공장 있어?', '공장 임대' -> '공장'. '공장 지을 땅' 은 '토지' (purpose='공장')"},
-                 "deal": {"type": "string", "enum": ["매매", "임대"], "description":
-                     "사려는 것(매매) / 빌리려는 것(임대: 월세·보증금). 공장만 임대 매물이 있음"},
+                 "deal": {"type": "string", "enum": ["매매", "임대", "매매만", "임대만"], "description":
+                     "사려는 것(매매) / 빌리려는 것(임대: 월세·보증금). 둘 다 매매/임대 공장을 포함. "
+                     "'임대만 하는 공장', '오로지 임대만' 이면 임대만 (매매/임대 공장은 뺌), '매매만 하는' 이면 매매만"},
                  "deposit_max_manwon": {"type": "integer", "minimum": 0, "description": "임대 보증금 상한 (만원)"},
                  "rent_max_manwon": {"type": "integer", "minimum": 0, "description": "월세 상한 (만원)"},
                  "use_previous_conditions": {"type": "boolean", "description":

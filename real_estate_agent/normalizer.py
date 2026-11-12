@@ -38,8 +38,9 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "monthly_rent_manwon": ["월세", "월임대료", "임대료", "월차임", "차임", "월세(만원)", "임대료(만원)", "월임대료(만원)"],
     "property_type": ["매물종류", "물건종류", "매물유형", "물건유형", "부동산종류"],
     "price_per_pyeong": ["평당가", "평단가", "평당가격", "평당(만원)"],
-    "jimok": ["지목", "토지종류", "지목(공부)", "공부지목"],
-    "zoning": ["용도지역", "용도", "지역지구", "용도지역지구", "용도지역(지구)"],
+    "jimok": ["지목", "토지종류", "지목(공부)", "공부지목", "지목(현황)", "현황지목", "공부상지목", "지목(대장)"],
+    "zoning": ["용도지역", "용도", "지역지구", "용도지역지구", "용도지역(지구)", "지역지구등", "지역지구구역",
+               "용도지역및지구", "용도지역지구등", "토지이용계획", "용도지역(계획)", "지역지구(용도지역)"],
     "road_access": ["도로", "도로조건", "도로접면", "접도", "진입로", "도로여부", "도로현황", "접면도로"],
     "deal_type": ["거래유형", "거래종류", "거래구분"],
     "status": ["상태", "진행상태", "거래상태", "매물상태"],
@@ -70,7 +71,10 @@ STATUS_MAP = {
 
 def map_column(name: Any) -> Optional[str]:
     key = re.sub(r"\s+", "", str(name)).lower()
-    return _ALIAS_LOOKUP.get(key)
+    hit = _ALIAS_LOOKUP.get(key)
+    if hit is None:  # '지역/지구', '지역·지구', '용도 지역:' 처럼 사이에 기호가 들어간 항목 이름
+        hit = _ALIAS_LOOKUP.get(re.sub(r"[/·・,.:：\-_]", "", key))
+    return hit
 
 
 def _is_blank(v: Any) -> bool:
@@ -119,6 +123,24 @@ def parse_price_manwon(value: Any) -> Optional[int]:
         total += num
         matched = True
     return int(round(total)) if matched else None
+
+
+def parse_lease_manwon(value: Any, won_from: int) -> Optional[int]:
+    """보증금·월세 -> 만원. 단위 없이 큰 숫자는 '원' 으로 적은 것으로 봄.
+    보증금 65,000,000 / 월세 6,500,000 (원) -> 6500 / 650 (만원). ('6500만원', '650', '6천5백만' 은 그대로)
+    won_from: 이 값 이상이면 원 단위 (보증금 100만 = 만원으로는 100억이라 비현실적, 월세 10만 = 만원으로는 월 10억)."""
+    if _is_blank(value):
+        return None
+    has_unit = isinstance(value, str) and re.search(r"[억천만백]", value)
+    v = parse_price_manwon(value)
+    if v is None:
+        return None
+    if not has_unit:
+        if isinstance(value, (int, float)) and float(value) >= 1e8:
+            return v  # parse_price_manwon 이 이미 원 -> 만원으로 바꿈
+        if v >= won_from:
+            return int(round(v / 10000))
+    return v
 
 
 def parse_area_m2(value: Any, assume_pyeong: bool = False) -> Optional[float]:
@@ -185,16 +207,33 @@ def normalize_jimok(value: Any) -> str:
     return s  # 알 수 없는 값은 그대로 두고 cleaner 가 경고로 처리
 
 
-def normalize_zoning(value: Any) -> str:
-    """'계획관리' -> '계획관리지역', '2종일반주거' -> '제2종일반주거지역'."""
-    if _is_blank(value):
-        return ""
-    s = re.sub(r"\s+", "", str(value))
+_ZONE = re.compile(r"(관리|녹지|주거|상업|공업|농림|보전)지역$")
+
+
+def _zoning_token(s: str) -> str:
+    s = re.sub(r"\s+", "", s).strip("()[]<>「」『』-")
     if re.match(r"^\d종", s):
         s = "제" + s
     if not s.endswith("지역") and re.search(r"(관리|녹지|주거|상업|공업|농림|보전)$", s):
         s += "지역"
     return s
+
+
+def zoning_parts(value: Any) -> list[str]:
+    """'계획관리지역, 성장관리계획구역' / '계획관리지역\n성장관리계획구역' -> ['계획관리지역', '성장관리계획구역']"""
+    if _is_blank(value):
+        return []
+    tokens = [_zoning_token(t) for t in re.split(r"[,，/·・;\n\r]+|\s{2,}|\s+및\s+", str(value))]
+    return list(dict.fromkeys(t for t in tokens if t and t not in {"-", "없음"}))
+
+
+def normalize_zoning(value: Any) -> str:
+    """대표 용도지역 하나: '계획관리' -> '계획관리지역', '2종일반주거' -> '제2종일반주거지역',
+    '계획관리지역, 성장관리계획구역' -> '계획관리지역' (나머지 지역·지구는 zoning_parts 로)."""
+    parts = zoning_parts(value)
+    if not parts:
+        return ""
+    return next((p for p in parts if _ZONE.search(p)), parts[0])
 
 
 def normalize_status(value: Any) -> str:
@@ -265,8 +304,8 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
         ppp = parse_price_manwon(mapped.get("price_per_pyeong"))
         if ppp:
             price = int(round(ppp * area / PYEONG_M2))
-    deposit = parse_price_manwon(mapped.get("deposit_manwon"))
-    rent = parse_price_manwon(mapped.get("monthly_rent_manwon"))
+    deposit = parse_lease_manwon(mapped.get("deposit_manwon"), won_from=1_000_000)
+    rent = parse_lease_manwon(mapped.get("monthly_rent_manwon"), won_from=100_000)
 
     # 매물 종류·거래 방식: 표의 칸 -> 매물 폴더 이름 (공장/매매임대/…)
     ptype = str(record.get("_매물종류") or "").strip()
@@ -305,6 +344,9 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
     if file_no:
         extra["매물번호"] = file_no
 
+    zones = zoning_parts(mapped.get("zoning"))
+    if len(zones) > 1:  # '계획관리지역, 성장관리계획구역' -> 대표 용도지역 + 전체 지역·지구 (화면에 같이 보여줌)
+        extra["_지역지구"] = ", ".join(zones)
     listing = LandListing(
         listing_id=listing_id or make_listing_id(address, area),
         address=address,

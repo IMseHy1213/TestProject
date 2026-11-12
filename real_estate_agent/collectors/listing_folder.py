@@ -120,6 +120,9 @@ def extract_table(grid: list[list[Any]]) -> tuple[list[dict], Optional[dict], se
                 continue
             rec = {header[j]: cells[j] for j in range(min(len(header), len(cells))) if header[j]}
             first = next((_text(c) for c in cells if _text(c)), "")
+            filled = sum(1 for k, v in rec.items() if map_column(k) and _text(v))
+            if filled < 2 and any(_label(c) for c in cells) and not _TOTAL_ROW.match(first):
+                break  # 표가 끝나고 '대지면적 | 300' 같은 다른 항목이 시작됨 (그 줄은 항목·값으로 따로 읽음)
             used.add(r)
             if _TOTAL_ROW.match(first) or any(_TOTAL_ROW.match(_text(c)) for c in cells[:3]):
                 total = rec
@@ -131,8 +134,21 @@ def extract_table(grid: list[list[Any]]) -> tuple[list[dict], Optional[dict], se
     return [], None, set()
 
 
+def _fits(field: str, value: Any) -> bool:
+    """지목·용도지역 칸의 값이 정말 그 값처럼 보이는지 ('지목' 오른쪽 칸이 '지역/지구' 같은 다른 항목 이름이면 아님)."""
+    t = _text(value)
+    if field == "jimok":
+        from ..models import JIMOK_TYPES
+
+        return normalize_jimok(t) in JIMOK_TYPES
+    if field == "zoning":
+        return bool(re.search(r"지역|구역|지구|관리|녹지|주거|상업|공업|농림|보전", t)) and not map_column(t)
+    return True
+
+
 def extract_key_values(grid: list[list[Any]], skip_rows: set[int]) -> dict[str, Any]:
-    """'항목 | 값' (오른쪽) 또는 '항목 / 값' (아래) 형태. 같은 항목은 처음 것만."""
+    """'항목 | 값' (오른쪽) 또는 '항목 / 값' (아래) 형태. 같은 항목은 처음 것만.
+    지목·용도지역은 값이 그럴듯할 때만 (아니면 아래 칸, 그래도 아니면 다음에 나오는 같은 항목에서)."""
     kv: dict[str, Any] = {}
     for r, row in enumerate(grid):
         if r in skip_rows:
@@ -146,9 +162,11 @@ def extract_key_values(grid: list[list[Any]], skip_rows: set[int]) -> dict[str, 
                 if _text(row[j]):
                     value = None if _label(row[j]) else row[j]
                     break
+            if value is not None and not _fits(field, value):
+                value = None
             if value is None and r + 1 < len(grid) and r + 1 not in skip_rows and c < len(grid[r + 1]):
                 below = grid[r + 1][c]
-                if _text(below) and not _label(below):
+                if _text(below) and not _label(below) and _fits(field, below):
                     value = below
             if value is not None:
                 kv[field] = (_text(cell), value)
@@ -306,16 +324,21 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
 
     # 지목·용도지역: 항목값, 없으면 필지 중 면적이 가장 큰 것
     def dominant(field: str, normalize) -> tuple[str, str]:
-        if field in kv:
-            return normalize(kv_val(field)), ""
+        if field in kv:  # 용도지역은 '계획관리지역, 성장관리계획구역' 전체를 넘김 (정규화는 normalizer 에서)
+            return (_text(kv_val(field)) if field == "zoning" else normalize(kv_val(field))), ""
         weights: Counter = Counter()
+        raw: dict[str, str] = {}
         for p in parcels:
             _, v = _value(p, field)
-            if v is not None:
-                weights[normalize(v)] += _area_of(p) or 1
+            if v is not None and _fits(field, v):
+                key = normalize(v)
+                weights[key] += _area_of(p) or 1
+                raw.setdefault(key, _text(v))
         if not weights:
             return "", ""
         top = weights.most_common()
+        if field == "zoning" and len(top) == 1:  # 한 가지면 '계획관리지역, 성장관리계획구역' 전체를 넘김
+            return raw[top[0][0]], ""
         summary = ", ".join(k for k, _ in top[:4]) if len(top) > 1 else ""
         return top[0][0], summary
 
