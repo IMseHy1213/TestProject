@@ -143,6 +143,10 @@ def _fits(field: str, value: Any) -> bool:
         return normalize_jimok(t) in JIMOK_TYPES
     if field == "zoning":
         return bool(re.search(r"지역|구역|지구|관리|녹지|주거|상업|공업|농림|보전", t)) and not map_column(t)
+    if field == "jimok_zoning":
+        from ..normalizer import split_jimok_zoning
+
+        return any(split_jimok_zoning(t)) and not map_column(t)
     return True
 
 
@@ -404,7 +408,7 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
         return None
     for out_key, field in (("건물면적(㎡)", "building_area_m2"), ("건물면적(평)", "building_area_pyeong"),
                            ("보증금", "deposit_manwon"), ("월세", "monthly_rent_manwon"),
-                           ("거래유형", "deal_type"), ("매물종류", "property_type")):
+                           ("거래유형", "deal_type"), ("매물종류", "property_type"), ("지목/용도", "jimok_zoning")):
         v = first(field)
         if v is not None and _text(v):
             record[out_key] = v

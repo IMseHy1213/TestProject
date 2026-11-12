@@ -38,6 +38,8 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "monthly_rent_manwon": ["월세", "월임대료", "임대료", "월차임", "차임", "월세(만원)", "임대료(만원)", "월임대료(만원)"],
     "property_type": ["매물종류", "물건종류", "매물유형", "물건유형", "부동산종류"],
     "price_per_pyeong": ["평당가", "평단가", "평당가격", "평당(만원)"],
+    "jimok_zoning": ["지목/용도", "지목/용도지역", "지목·용도지역", "지목및용도지역", "지목/지역지구", "지목/지역",
+                     "지목(용도지역)", "지목/용도지구", "용도지역/지목", "용도/지목"],
     "jimok": ["지목", "토지종류", "지목(공부)", "공부지목", "지목(현황)", "현황지목", "공부상지목", "지목(대장)"],
     "zoning": ["용도지역", "용도", "지역지구", "용도지역지구", "용도지역(지구)", "지역지구등", "지역지구구역",
                "용도지역및지구", "용도지역지구등", "토지이용계획", "용도지역(계획)", "지역지구(용도지역)"],
@@ -236,6 +238,23 @@ def normalize_zoning(value: Any) -> str:
     return next((p for p in parts if _ZONE.search(p)), parts[0])
 
 
+def split_jimok_zoning(value: Any) -> tuple[str, str]:
+    """'대 / 계획관리' -> ('대', '계획관리'), '계획관리지역, 공장용지' -> ('공장용지', '계획관리지역')."""
+    if _is_blank(value):
+        return "", ""
+    jimok, rest = "", []
+    for tok in re.split(r"[/,，·・;\n\r]+|\s{2,}|\s+및\s+", str(value)):
+        tok = tok.strip()
+        if not tok:
+            continue
+        j = normalize_jimok(tok)
+        if not jimok and j in JIMOK_TYPES and not re.search(r"지역|구역|지구", tok):
+            jimok = j
+        else:
+            rest.append(tok)
+    return jimok, ", ".join(rest)
+
+
 def normalize_status(value: Any) -> str:
     if _is_blank(value):
         return "거래가능"
@@ -344,6 +363,12 @@ def record_to_listing(record: dict[str, Any], source_file: str = "", default_sou
     if file_no:
         extra["매물번호"] = file_no
 
+    if not _is_blank(mapped.get("jimok_zoning")):  # '지목/용도' 한 칸에 '대 / 계획관리지역, 성장관리계획구역'
+        j, z = split_jimok_zoning(mapped["jimok_zoning"])
+        if j and _is_blank(mapped.get("jimok")):
+            mapped["jimok"] = j
+        if z and _is_blank(mapped.get("zoning")):
+            mapped["zoning"] = z
     zones = zoning_parts(mapped.get("zoning"))
     if len(zones) > 1:  # '계획관리지역, 성장관리계획구역' -> 대표 용도지역 + 전체 지역·지구 (화면에 같이 보여줌)
         extra["_지역지구"] = ", ".join(zones)

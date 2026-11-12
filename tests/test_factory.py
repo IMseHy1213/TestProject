@@ -305,3 +305,52 @@ def test_lease_only_factories(agent):
                                      ("매매만 하는 공장", "매매만"), ("음성군 매매 공장", "매매")])
 def test_parser_lease_only(q, deal):
     assert RequirementParser(None, ["음성군"], []).parse(q).deal == deal
+
+
+def test_combined_jimok_zoning_cell_and_ledger_columns(tmp_path):
+    """'지목/용도 | 대 / 계획관리' 한 칸, 장부의 '지목/용도지역'·'지역/지구' 열도 읽음."""
+    data = tmp_path / "매물"
+    _sheet(data / "공장" / "임대" / "음성군" / "대소면 오류리 9(공장)" / "설명서.xlsx",
+           [["공장 매물 설명서"], ["소재지", "충청북도 음성군 대소면 오류리 9"], ["지목/용도", "대 / 계획관리"],
+            ["대지면적(평)", 500], ["보증금", 65000000], ["월세", 6500000]])
+    _sheet(data / "공장" / "매매" / "진천군" / "공장장부.xlsx",
+           [["매물번호", "소재지", "지목/용도지역", "대지면적(평)", "매매가"],
+            ["J-1", "충청북도 진천군 덕산읍 용몽리 1", "공장용지/계획관리지역, 성장관리계획구역", 800, "12억"]])
+    _sheet(data / "공장" / "매매" / "진천군" / "공장장부2.xlsx",
+           [["매물번호", "소재지", "지목", "지역/지구", "대지면적(평)", "매매가"],
+            ["J-2", "충청북도 진천군 이월면 신계리 2", "전", "계획관리지역", 600, "8억"]])
+    a = RealEstateAgent(Settings(data_dir=data, db_path=tmp_path / "c.db", log_dir=tmp_path / "l", llm_providers=["rule"]))
+    a.sync()
+    got = {l.office_no or l.address.split()[-1]: (l.jimok, l.zoning, l.extra.get("_지역지구", "")) for l in a.listings()}
+    assert got == {"9": ("대", "계획관리지역", ""), "J-1": ("공장용지", "계획관리지역", "계획관리지역, 성장관리계획구역"),
+                   "J-2": ("전", "계획관리지역", "")}
+
+
+def test_sheet_layout_hides_private_values(tmp_path):
+    from real_estate_agent.sheet_layout import layout_lines
+
+    p = tmp_path / "설명서.xlsx"
+    _sheet(p, [["소재지", "충청북도 음성군 대소면 오류리 9", "소유자", "홍길동"], ["연락처", "010-1234-5678"],
+               ["성명"], ["김철수"], ["지역/지구", "계획관리지역"], ["지목", "대"]])
+    text = "\n".join(layout_lines(p))
+    for secret in ("홍길동", "010", "오류리", "김철수"):
+        assert secret not in text
+    assert "지역/지구✓" in text and "계획관리지역" in text and "지목✓ | 대" in text
+
+
+@pytest.mark.parametrize("q", ["임대 공장만 보여줘.", "임대 매물만 보여줘", "임대 공장만"])
+def test_parser_lease_factory_only(q):
+    assert RequirementParser(None, ["음성군"], []).parse(q).deal == "임대만"
+
+
+def test_cli_sheet_layout_and_other_commands_run(tmp_path, capsys):
+    """명령 하나에서 쓰는 import 가 다른 명령을 망가뜨리지 않는지 (sheet-layout, benchmark 경로)."""
+    from real_estate_agent.cli import main
+
+    data = tmp_path / "매물"
+    _sheet(data / "공장" / "임대" / "음성군" / "장부.xlsx",
+           [["매물번호", "소재지", "지목", "대지면적(평)", "보증금", "월세"], ["Z-1", "충청북도 음성군 대소면 오류리 9", "대", 300, "3천만", "200만"]])
+    args = ["--no-llm", "--data-dir", str(data), "--db", str(tmp_path / "c.db")]
+    assert main(args + ["sheet-layout"]) == 0
+    assert "지목 또는 용도지역이 비어 있는 매물 1건" in capsys.readouterr().out
+    assert main(args + ["organize-folders", "--dry-run"]) == 0

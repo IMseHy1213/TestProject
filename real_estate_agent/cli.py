@@ -655,6 +655,9 @@ def build_parser() -> argparse.ArgumentParser:
     of.add_argument("--dry-run", action="store_true", help="무엇을 옮길지만 보여줌")
     of.add_argument("--undo", action="store_true", help="마지막 정리를 되돌림")
     of.add_argument("--check", action="store_true", help="최근 매물 목록에서 빠진 매물과 이유만 보여줌")
+    sl = sub.add_parser("sheet-layout", help="매물 엑셀의 칸 배치를 개인정보를 가리고 보여줌 (지목·용도지역을 못 읽을 때)")
+    sl.add_argument("file", nargs="?", default="", help="엑셀 파일 (없으면 지목·용도지역이 빈 공장 매물의 파일을 골라 줌)")
+    sl.add_argument("--kind", default="공장", help="토지 / 공장 / 전체(빈칸)")
     cp = sub.add_parser("clean-practice", help="실제 운영 DB 에 섞인 연습용 샘플 매물 기록만 지움 (지우기 전 백업)")
     cp.add_argument("--yes", action="store_true", help="묻지 않고 바로 정리")
     cp.add_argument("--dry-run", action="store_true", help="무엇을 지울지만 보여줌")
@@ -739,6 +742,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         return mcp_main(settings, http=args.http, host=args.host, port=args.port)
     if args.command == "clean-practice":
         return run_clean_practice(settings, args.yes, args.dry_run)
+    if args.command == "sheet-layout":
+        from .agent import RealEstateAgent as _Agent
+        from .sheet_layout import report
+
+        agent = _Agent(settings)
+        agent.sync()
+        text = report(agent, args.file or None, "" if args.kind == "전체" else args.kind)
+        print(text)
+        out = Path(settings.log_dir) / "양식점검.txt"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+        print(f"\n저장: {out}  (이 내용을 그대로 붙여 넣어 주시면 됩니다. 이름 같은 것이 남아 있으면 지우고 보내 주세요)")
+        return 0
     if args.command == "organize-folders":
         return run_organize_folders(settings, args.yes, args.dry_run, args.undo, args.check)
     if args.command == "a2a-call":
