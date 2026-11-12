@@ -99,6 +99,8 @@ def _is_header_row(row: list[Any]) -> bool:
     labels = [i for i, c in enumerate(row) if _label(c)]
     if len(labels) < 2:
         return False
+    if any(isinstance(c, (int, float, date, datetime)) and not isinstance(c, bool) for c in row):
+        return False  # 숫자·날짜가 있는 줄은 값이 든 줄 ('토지면적 | 600 | 평 | 건축면적 | 250 | 평 | 평단가')
     followed_by_value = sum(
         1 for i in labels if i + 1 < len(row) and _text(row[i + 1]) and not _label(row[i + 1])
     )
@@ -183,6 +185,32 @@ def _fits(field: str, value: Any) -> bool:
 
         return any(split_jimok_zoning(t)) and not map_column(t)
     return True
+
+
+def _number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+
+
+def sale_lease_terms(grid: list[list[Any]]) -> tuple[Any, Any]:
+    """'매매/임대' 공장 설명서: '가  격 | 매매가 | · | 보증금' / 다음 줄 같은 칸에 월세 (보증금·월세 칸에 이름표가 없음).
+    -> (보증금, 월세) 원본 값. 못 찾으면 (None, None)."""
+    for r, row in enumerate(grid[:15]):
+        for c, cell in enumerate(row):
+            if _label(cell) != "price_manwon":
+                continue
+            vals = [j for j in range(c + 1, len(row)) if _text(row[j])]
+            if not vals or not _number(row[vals[0]]):
+                return None, None
+            rest = [j for j in vals[1:] if not _label(row[j])]
+            if any(_label(row[j]) for j in vals[1:]):
+                return None, None  # 오른쪽에 다른 항목 이름이 있으면 이 양식이 아님
+            dep_col = next((j for j in rest if _number(row[j])), None)
+            if dep_col is None:
+                return None, None
+            below = grid[r + 1] if r + 1 < len(grid) else []
+            rent = below[dep_col] if dep_col < len(below) and _number(below[dep_col]) else None
+            return row[dep_col], rent
+    return None, None
 
 
 def extract_key_values(grid: list[list[Any]], skip_rows: set[int]) -> dict[str, Any]:
@@ -455,6 +483,14 @@ def build_listing_record(unit_name: str, region_parts: list[str], grids: list[li
         v = first(field)
         if v is not None and _text(v):
             record[out_key] = v
+    if "보증금" not in record and "월세" not in record:  # 매매/임대 양식: 가격 오른쪽의 이름표 없는 보증금·월세
+        for grid in grids:
+            dep, rent = sale_lease_terms(grid)
+            if dep is not None:
+                record["보증금"] = dep
+                if rent is not None:
+                    record["월세"] = rent
+                break
     if price is None and "price_per_pyeong" in kv:
         record["평당가"] = kv_val("price_per_pyeong")
     if not parcels and not kv:

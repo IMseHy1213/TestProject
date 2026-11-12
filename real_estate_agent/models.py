@@ -87,7 +87,8 @@ class LandListing:
         if self.deal_type == "임대":
             return f"임대 {self.lease_text}"
         if self.deal_type == "매매/임대":
-            return f"매매 {format_price(self.price_manwon)} · 임대 {self.lease_text}"
+            lease = self.lease_text if (self.deposit_manwon or self.monthly_rent_manwon) else "조건 상담"
+            return f"매매 {format_price(self.price_manwon)} · 임대 {lease}"
         return format_price(self.price_manwon)
 
     @property

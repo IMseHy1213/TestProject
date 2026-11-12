@@ -77,7 +77,7 @@ def map_column(name: Any) -> Optional[str]:
     if hit is None:  # '지역/지구', '지역·지구', '용도 지역:' 처럼 사이에 기호가 들어간 항목 이름
         bare = re.sub(r"[/·・,，.:：\-_()（）]", "", key)
         hit = _ALIAS_LOOKUP.get(bare)
-        if hit is None and len(bare) <= 14:  # '지역,지구/구조', '용도지역및지구등', '지목(현황)/용도' …
+        if hit is None and len(bare) <= 14 and "목록" not in bare:  # '지역,지구/구조', '지목(현황)/용도' … ('토지목록' 은 아님)
             if "지목" in bare:
                 hit = "jimok_zoning" if ("지역" in bare or "용도" in bare) else "jimok"
             elif "용도지역" in bare or ("지역" in bare and "지구" in bare):
@@ -209,6 +209,13 @@ def normalize_jimok(value: Any) -> str:
         return s
     if s in JIMOK_ALIASES:
         return JIMOK_ALIASES[s]
+    m = re.match(r"^([가-힣]{1,3})\s*[(（]\s*([가-힣]{1,6})\s*[)）]$", s)  # 토지목록의 '도(도로)', '장(공장)', '전(밭)', '잡(잡종지)'
+    if m:
+        for part in (m.group(2), m.group(1)):
+            if part in JIMOK_TYPES:
+                return part
+            if part in JIMOK_ALIASES:
+                return JIMOK_ALIASES[part]
     for j in sorted(JIMOK_TYPES, key=len, reverse=True):  # '임야(보전)' 같은 표기
         if s.startswith(j):
             return j
@@ -225,6 +232,10 @@ def _zoning_token(s: str) -> str:
     m = re.match(r"^성장관리(?:계획)?(?:구역|지역)?(\(.+\))?$", s)  # '성장관리(산업)' -> '성장관리계획구역(산업)'
     if m:
         return "성장관리계획구역" + (m.group(1) or "")
+    short = {"도시": "도시지역", "관리": "관리지역", "지구단위": "지구단위계획구역", "지구단위계획": "지구단위계획구역",
+             "자연취락": "자연취락지구", "취락": "자연취락지구", "개발제한": "개발제한구역"}  # 설명서의 줄임말
+    if s in short:
+        return short[s]
     if re.match(r"^\d종", s):
         s = "제" + s
     if not s.endswith("지역") and re.search(r"(관리|녹지|주거|상업|공업|농림|보전)$", s):
