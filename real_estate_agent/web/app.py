@@ -283,6 +283,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             "ppp": f"{l.price_per_pyeong:,.0f}" if l.price_per_pyeong else "",
             "kind": l.kind_label if l.property_type != "토지" else "",
             "building_pyeong": f"{l.building_area_pyeong:,.0f}" if l.building_area_pyeong else "",
+                "building_m2": f"{l.building_area_m2:,.0f}" if l.building_area_m2 else "",
             "road": l.road_access or "-", "description": l.description, "features": l.features,
             "use_tag": l.use_tag, "jimok_mix": l.extra.get("_지목구성", ""),
             "zoning_mix": l.extra.get("_용도지역구성", "") or l.extra.get("_지역지구", ""),
@@ -426,6 +427,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                 "pyeong": f"{l.area_pyeong:,.0f}", "m2": f"{l.area_m2:,.0f}",
                 "kind": l.kind_label if l.property_type != "토지" else "",
                 "building_pyeong": f"{l.building_area_pyeong:,.0f}" if l.building_area_pyeong else "",
+                "building_m2": f"{l.building_area_m2:,.0f}" if l.building_area_m2 else "",
                 "jimok": l.jimok or "미기재", "zoning": l.extra.get("_지역지구") or l.zoning or "미기재",
                 "features": features[:5], "badges": badges,
                 "use_tag": l.use_tag, "contact": l.owner_contact if admin else ""}

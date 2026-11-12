@@ -34,7 +34,7 @@
   <dl class="facts">
     <div class="price-box{% if item.price_lines|length > 1 %} wide2{% endif %}"><dt>가격</dt><dd class="price">{% for p in item.price_lines %}<span class="pl">{{ p }}</span>{% endfor %}{% if item.ppp and not item.kind %}<small>평당 {{ item.ppp }}만원</small>{% endif %}</dd></div>
     <div><dt>{% if item.kind %}대지면적{% else %}면적{% endif %}</dt><dd>{{ item.area_pyeong }}평<small>{{ item.area_m2 }}㎡</small></dd></div>
-    {% if item.building_pyeong %}<div><dt>건물면적</dt><dd>{{ item.building_pyeong }}평</dd></div>{% endif %}
+    {% if item.building_pyeong %}<div><dt>건물면적</dt><dd>{{ item.building_pyeong }}평<small>{{ item.building_m2 }}㎡</small></dd></div>{% endif %}
     <div><dt>지목</dt><dd>{{ item.jimok }}{% if item.jimok_mix %}<small>{{ item.jimok_mix }}</small>{% endif %}</dd></div>
     <div><dt>용도지역</dt><dd>{{ item.zoning }}{% if item.zoning_mix %}<small>{{ item.zoning_mix }}</small>{% endif %}</dd></div>
     <div class="wide"><dt>매물 특징</dt><dd class="features">{{ item.features or "-" }}</dd></div>

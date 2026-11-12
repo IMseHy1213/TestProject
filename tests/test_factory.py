@@ -387,4 +387,4 @@ def test_agent_card_price_box_is_separate_from_area_boxes(tmp_path, monkeypatch)
                   follow_redirects=True).get_data(as_text=True)
     assert 'class="price-box wide"' in html
     assert '<span class="pl">임대 보증금 5,000만원</span><span class="pl">월 300만원</span>' in html
-    assert "<div><dt>건물면적</dt>" in html  # 건물면적은 보통 칸
+    assert "<div><dt>건물면적</dt><dd>180평<small>595㎡</small></dd></div>" in html  # 보통 칸, 평 아래 작은 ㎡
