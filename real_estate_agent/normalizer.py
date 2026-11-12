@@ -75,7 +75,13 @@ def map_column(name: Any) -> Optional[str]:
     key = re.sub(r"\s+", "", str(name)).lower()
     hit = _ALIAS_LOOKUP.get(key)
     if hit is None:  # '지역/지구', '지역·지구', '용도 지역:' 처럼 사이에 기호가 들어간 항목 이름
-        hit = _ALIAS_LOOKUP.get(re.sub(r"[/·・,.:：\-_]", "", key))
+        bare = re.sub(r"[/·・,，.:：\-_()（）]", "", key)
+        hit = _ALIAS_LOOKUP.get(bare)
+        if hit is None and len(bare) <= 14:  # '지역,지구/구조', '용도지역및지구등', '지목(현황)/용도' …
+            if "지목" in bare:
+                hit = "jimok_zoning" if ("지역" in bare or "용도" in bare) else "jimok"
+            elif "용도지역" in bare or ("지역" in bare and "지구" in bare):
+                hit = "zoning"
     return hit
 
 

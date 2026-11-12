@@ -19,6 +19,8 @@
     <h2>매물 현황</h2>
     <p class="big-num">{{ data.count }}<small>건</small></p>
     {% if data.kinds %}<p class="meta">{{ data.kinds }}</p>{% endif %}
+    {% if data.unnumbered %}<p class="meta">매물번호 미등록 {{ data.unnumbered }}건은 손님 검색·AI 상담에 나오지 않습니다
+      (<a href="{{ url_for('admin_listings') }}">매물 관리</a>에서 확인 · 엑셀에 매물번호를 적으면 나옵니다).</p>{% endif %}
     {% if layout_moves %}<p class="notice warn">매물 폴더가 아직 '매물 종류 → 지역' 순서가 아닙니다 (토지로 옮길 것 {{ layout_moves }}개).
       <a href="{{ url_for('admin_organize_folders') }}">📂 종류별로 정리하기</a></p>{% endif %}
     <p class="meta">매물 폴더: {{ data_dir }}<br>마지막으로 읽은 시각: {{ data.synced_at }}</p>

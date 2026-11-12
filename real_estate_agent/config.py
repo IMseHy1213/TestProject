@@ -98,6 +98,8 @@ class Settings:
     # 선제 추천: 이 점수 이상인 신규 매물만 알림
     proactive_threshold: float = field(default_factory=lambda: float(os.getenv("REA_PROACTIVE_THRESHOLD", "70")))
     watch_interval_sec: int = field(default_factory=lambda: int(os.getenv("REA_WATCH_INTERVAL", "600")))
+    # 매물번호가 없는(미등록) 매물은 손님 검색·AI 상담에 내보내지 않음 (관리자 매물 목록에는 그대로 보임)
+    hide_unnumbered: bool = field(default_factory=lambda: os.getenv("REA_HIDE_UNNUMBERED", "1") not in {"0", "false", "no"})
 
 
 SAMPLE_DATA_DIR = PROJECT_ROOT / "sample_data"  # 연습용 가짜 매물 (실제 사무실 매물 아님)

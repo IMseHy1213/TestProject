@@ -153,9 +153,9 @@ def extract_table(grid: list[list[Any]]) -> tuple[list[dict], Optional[dict], se
             used.add(r)
             if is_total:
                 total = rec
-                if rows:
-                    break  # 합계 아래는 다른 목록 (예: '건물' 동 목록)
-                continue
+                break  # 합계 아래는 다른 목록 (예: '건물' 동 목록)
+            if rows and any(_text(c) == "건물" for c in cells[:3]):
+                break  # '구분' 이 '건물' 로 바뀌면 필지 목록 끝
             if filled >= 2:
                 rows.append(rec)
         if rows or total:

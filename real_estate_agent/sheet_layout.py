@@ -61,6 +61,17 @@ def layout_lines(path: Path, max_rows: int = MAX_ROWS) -> list[str]:
     return out
 
 
+def _same_listing_files(path: Path, limit: int = 4) -> list[Path]:
+    from .collectors.listing_folder import looks_like_listing_name
+
+    folder = path.parent
+    if not looks_like_listing_name(folder.name):
+        return [path]
+    files = [path] + sorted(f for f in folder.glob("*") if f.is_file() and f != path
+                            and f.suffix.lower() in {".xlsx", ".xlsm", ".xls", ".csv"} and not f.name.startswith("~$"))
+    return files[:limit]
+
+
 def files_needing_check(agent, kind: str = "공장", limit: int = 3) -> list[tuple[Path, Any]]:
     """지목이나 용도지역이 비어 있는 매물의 엑셀 (같은 파일은 한 번만)."""
     seen: dict[Path, Any] = {}
@@ -91,11 +102,12 @@ def report(agent, path: Optional[str] = None, kind: str = "공장") -> str:
             return "\n".join(lines)
     for p, l in targets:
         if l is not None:
-            lines.append(f"\n지금 읽은 값 → 지목: {l.jimok or '-'} / 용도지역: {l.zoning or '-'} / "
-                         f"거래: {l.deal_type} / 가격: {l.price_text}")
-        try:
-            lines += layout_lines(p)
-        except Exception as e:  # noqa: BLE001 - 깨진 파일도 다른 파일은 계속
-            lines.append(f"■ 파일: {p.name} - 읽기 실패 ({e.__class__.__name__})")
+            lines.append(f"\n지금 읽은 값 → 매물번호: {l.office_no or '미등록'} / 지목: {l.jimok or '-'} / "
+                         f"용도지역: {l.zoning or '-'} / 거래: {l.deal_type} / 가격: {l.price_text}")
+        for f in _same_listing_files(p):  # 매물 하나 = 폴더 하나면 그 폴더의 엑셀 모두 (토지 목록 파일 등)
+            try:
+                lines += layout_lines(f)
+            except Exception as e:  # noqa: BLE001 - 깨진 파일도 다른 파일은 계속
+                lines.append(f"■ 파일: {f.name} - 읽기 실패 ({e.__class__.__name__})")
     lines.append("\n✓ = 프로그램이 알아보는 항목 이름, # = 숫자가 든 값, (글) = 긴 글, (가림) = 소유자·연락처 칸")
     return "\n".join(lines)

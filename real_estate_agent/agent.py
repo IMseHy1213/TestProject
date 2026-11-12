@@ -269,10 +269,16 @@ class RealEstateAgent:
         if session.req.customer_name and session.opt.pref is not None:
             self.storage.save_preference(session.req.customer_name, session.opt.pref)
 
+    def customer_listings(self) -> list[LandListing]:
+        """손님에게 보여줄 수 있는 매물: 매물번호가 미등록인 매물은 뺌 (설정 REA_HIDE_UNNUMBERED=0 이면 모두)."""
+        if not getattr(self.settings, "hide_unnumbered", True):
+            return self.listings()
+        return [l for l in self.listings() if l.office_no]
+
     def recommend(self, req: CustomerRequirement, pref_key: Optional[str] = None) -> RecommendationSession:
         """pref_key: 학습 모델 이름 (v1.2 AI 상담 방문자 모델). 없으면 손님 이름의 모델."""
         exclude = self.storage.rejected_ids(req.customer_name)
-        return RecommendationSession(self.listings(), req, self._options(pref_key or req.customer_name),
+        return RecommendationSession(self.customer_listings(), req, self._options(pref_key or req.customer_name),
                                      exclude_ids=exclude)
 
     def reject(self, session: RecommendationSession, reason: str = "", ai: bool = True) -> Optional[ScoredListing]:

@@ -299,6 +299,9 @@ def test_listing_without_office_number_gets_readable_name(tmp_path):
     a = RealEstateAgent(Settings(data_dir=tmp_path / "매물", db_path=tmp_path / "n.db", log_dir=tmp_path / "l",
                                  llm_providers=["rule"]))
     a.sync()
+    result, _ = ToolAgent(a).run("음성군 땅")  # 기본: 매물번호 미등록 매물은 손님에게 보이지 않음
+    assert not result.listing_ids and "F-" not in result.answer
+    a.settings.hide_unnumbered = False  # 설정(REA_HIDE_UNNUMBERED=0)으로 보이게 하면 읽기 쉬운 이름으로
     result, _ = ToolAgent(a).run("음성군 땅")
     assert "F-" not in result.answer and "음성군 물류부지 15,005평 매물" in result.answer  # 지역 + 매물 종류 + 면적
 

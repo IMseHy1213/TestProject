@@ -309,6 +309,11 @@ def requirement_from_args(agent, given: dict[str, Any]) -> CustomerRequirement:
     return req
 
 
+def _customer(agent) -> list:
+    """손님에게 보여줄 수 있는 매물 (매물번호 미등록 매물 제외)."""
+    return agent.customer_listings() if hasattr(agent, "customer_listings") else agent.listings()
+
+
 class ToolRegistry:
     """도구 목록 + 실행 (인자 검사, 오류를 관찰로 변환, 실행 시간 측정)."""
 
@@ -419,7 +424,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         from ..agent import public_office_no
 
         key = listing_id.strip()
-        for l in agent.listings():
+        for l in _customer(agent):
             if key in {l.listing_id, tool_id(l)} or (l.office_no and key in {l.office_no, public_office_no(l.office_no)}):
                 return l
         raise ToolError(f"매물 '{listing_id}' 을(를) 찾을 수 없습니다. search_listings 결과의 id 를 쓰세요.")
@@ -559,7 +564,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
             "다시_확인": True, "이해한_조건": req.describe(), "조건_요약": condition_summary(req),
             "제외_지역": req.excluded_regions or None, "정렬": "추천순" if sort == "score" else sort,
             "조건에_맞는_매물_수": len(ranked), "지역별_매물_수": dict(by_region.most_common()),
-            "전체_보유_매물_수": len(agent.listings()), "매물": [brief(s.listing, s) for s in shown]}
+            "전체_보유_매물_수": len(_customer(agent)), "매물": [brief(s.listing, s) for s in shown]}
         if not ranked:  # 정말 없으면 어떤 조건 때문에 없는지 알려 줌
             out["안내"] = NOT_FOUND_MESSAGE
             hints = {}
@@ -648,7 +653,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
     def list_regions(limit: int = 40, property_type: str = "") -> dict[str, Any]:
         """지금 살 수 있는 매물(계약완료·보류 제외)을 시/군 단위로 셈. 순위는 대화 상태에 기억 ('그 지역 매물 보여줘').
         property_type 을 주면 그 종류(토지/공장)만."""
-        every = [l for l in agent.listings() if l.status not in {"계약완료", "보류"}]
+        every = [l for l in _customer(agent) if l.status not in {"계약완료", "보류"}]
         available = [l for l in every if not property_type or l.property_type == property_type]
         by_city: Counter = Counter(shown_region(l) for l in available if shown_region(l))
         by_town: Counter = Counter()

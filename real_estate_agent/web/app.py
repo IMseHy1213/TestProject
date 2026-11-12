@@ -297,7 +297,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     def index():
         with lock:
             agent.maybe_reconnect_llm()  # 꺼져 있으면 몇 분마다 자동으로 다시 연결 시도
-            count = len(agent.listings())
+            count = len(agent.customer_listings())
         return render_template("index.html", examples=EXAMPLES, count=count, llm=agent.llm.last_used,
                                llm_on=agent.llm.available, llm_mode=agent.llm.mode(),
                                llm_wait=agent.llm.seconds_until_retry(), llm_reason=agent.llm.off_reason(),
@@ -338,7 +338,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             item=listing_view(top, admin) if top else None, rank=sess.cursor + 1, total=sess.total,
             relaxed=sess.relaxed, stats=sess.filter_stats, notes=sess.req.notes, others=others,
             learning=learning, reordered=reordered, quick_reasons=QUICK_REASONS,
-            can_prev=bool(sess.history), pref=sess.opt.pref, listing_count=len(agent.listings()),
+            can_prev=bool(sess.history), pref=sess.opt.pref, listing_count=len(agent.customer_listings()),
             not_found_message=NOT_FOUND_MESSAGE, exhausted_message=EXHAUSTED_MESSAGE,
             ai_summary=getattr(sess.opt.pref, "ai_summary", ""), ai_changes=ai_changes,
             ai_on=agent.llm.available,
@@ -809,6 +809,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             report = agent.last_sync
             data = {
                 "count": len(agent.listings()),
+                "unnumbered": sum(1 for l in agent.listings() if not l.office_no),
                 "kinds": " · ".join(f"{k} {n}건" for k, n in sorted(
                     Counter(l.property_type for l in agent.listings()).items(), key=lambda kv: kv[0] != "토지")),
                 "report": report.clean.report() if report else "",
