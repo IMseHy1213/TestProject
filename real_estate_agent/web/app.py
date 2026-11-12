@@ -22,7 +22,7 @@ import re
 import secrets
 import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -33,7 +33,7 @@ from ..admin_auth import MIN_LENGTH as MIN_PASSWORD_LEN
 from ..admin_auth import AdminAuth, auth_file
 from ..agent import RealEstateAgent, is_condition_change, mask_address, public_office_no
 from ..collectors.local_folder import SUPPORTED
-from ..file_uploads import DEFAULT_FOLDER as DEFAULT_UPLOAD_FOLDER
+from ..file_uploads import default_folder as default_upload_folder
 from ..file_uploads import destination_folders, files_in, listing_folder, save_uploads
 from ..listing_editor import HIDDEN, STATUSES as LISTING_STATUSES, WEB_FOLDER
 from ..listing_editor import describe_changes, form_defaults, parse_form, web_file
@@ -266,7 +266,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     def inject():
         return {"csrf_token": csrf_token, "is_admin": is_admin(), "format_price": format_price,
                 "upload_folders": lambda: destination_folders(settings.data_dir),
-                "upload_accept": ",".join(sorted(SUPPORTED)), "default_upload_folder": DEFAULT_UPLOAD_FOLDER,
+                "upload_accept": ",".join(sorted(SUPPORTED)), "default_upload_folder": default_upload_folder(settings.data_dir),
                 "office": OFFICE_INFO, "sample_mode": app.config.get("SAMPLE_MODE", False)}
 
     def current() -> Optional[tuple[RecommendationSession, str]]:
@@ -571,6 +571,42 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                 else "정리할 연습 기록이 없습니다.")
         return redirect(url_for("admin"))
 
+    @app.get("/admin/organize-folders")
+    def admin_organize_folders():
+        """매물 폴더 종류별 정리: 옮길 것 미리 보기."""
+        from ..folder_layout import describe, last_log, make_plan
+
+        if not is_admin():
+            return login_page()
+        plan = make_plan(settings.data_dir)
+        return render_template("organize_folders.html", lines=describe(plan, 200), plan=plan,
+                               data_dir=Path(settings.data_dir).name, can_undo=last_log(settings.log_dir) is not None,
+                               sample_mode=app.config.get("SAMPLE_MODE", False))
+
+    @app.post("/admin/organize-folders")
+    def admin_organize_folders_run():
+        """정리 실행 (op=apply) 또는 마지막 정리 되돌리기 (op=undo). 끝나면 매물 폴더를 다시 읽음."""
+        from ..folder_layout import apply_plan, undo_last
+
+        if not is_admin():
+            abort(403)
+        if app.config.get("SAMPLE_MODE"):
+            session["admin_msg"] = "연습용(sample_data) 폴더는 이미 종류별(공장/토지)입니다."
+            return redirect(url_for("admin"))
+        op = request.form.get("op", "")
+        with lock:
+            if op == "apply":
+                r = apply_plan(settings.data_dir, settings.log_dir)
+                msg = ("📂 매물 폴더를 종류별로 정리했습니다: " if not r.failed else "⚠ 일부만 정리했습니다: ") + r.summary()
+            elif op == "undo":
+                r = undo_last(settings.data_dir, settings.log_dir)
+                msg = ("↩ 되돌렸습니다: " + r.summary()) if r.moved else "❌ " + "; ".join(r.failed)
+            else:
+                abort(400)
+            do_sync(detect=False)  # 옮긴 매물은 번호가 같아 '새 매물' 알림이 가지 않음
+        session["admin_msg"] = msg
+        return redirect(url_for("admin"))
+
     @app.get("/admin/online")
     def admin_online():
         """v1.2 온라인 학습·평가: 만족도, '자동' 방식의 실험 현황, 배운 취향, 아쉬웠던 답."""
@@ -766,6 +802,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             report = agent.last_sync
             data = {
                 "count": len(agent.listings()),
+                "kinds": " · ".join(f"{k} {n}건" for k, n in sorted(
+                    Counter(l.property_type for l in agent.listings()).items(), key=lambda kv: kv[0] != "토지")),
                 "report": report.clean.report() if report else "",
                 "summary": report.summary() if report else "",
                 "synced_at": agent.last_sync_at.strftime("%Y-%m-%d %H:%M:%S") if agent.last_sync_at else "-",
@@ -773,7 +811,11 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             }
         from ..reliability.health import readiness
 
+        from ..folder_layout import make_plan
+
+        layout_moves = 0 if app.config.get("SAMPLE_MODE") else len(make_plan(settings.data_dir).moves)
         return render_template("admin.html", data=data, data_dir=str(settings.data_dir), realtime=realtime_view(),
+                               layout_moves=layout_moves,
                                ready=readiness(agent, lock, app.config.get("REALTIME"), agent_service),
                                llm_status=agent.llm.status(), sync_error=state["sync_error"],
                                message=session.pop("admin_msg", ""), pw_source=auth.source,
@@ -902,7 +944,17 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                kind_choices=PROPERTY_TYPES, deal_choices=DEAL_TYPES, statuses=LISTING_STATUSES,
                                changes=changes, hidden=bool(edit.get(HIDDEN)), source_file=source_file,
                                folder=folder, office_no=office_no, folder_files=files_in(settings.data_dir, folder) if listing_id else [],
-                               web_file=str(Path(settings.data_dir.name) / WEB_FOLDER / web_file(settings.data_dir).name)), status
+                               web_file=web_file_label()), status
+
+    def web_file_label() -> str:
+        """'매물/토지/웹입력/웹입력매물.xlsx (공장은 매물/공장/웹입력/…)'"""
+        from ..folder_layout import is_organized
+
+        land = Path(settings.data_dir.name) / web_file(settings.data_dir).relative_to(settings.data_dir)
+        if not is_organized(settings.data_dir):
+            return land.as_posix()
+        factory = Path(settings.data_dir.name) / web_file(settings.data_dir, "공장").relative_to(settings.data_dir)
+        return f"{land.as_posix()} (공장은 {factory.as_posix()})"
 
     @app.get("/admin/listings")
     def admin_listings():
@@ -1033,7 +1085,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                 if "/" in p and "/" not in (f.filename or "").replace("\\", "/"):
                     f.filename = p
         files = request.files.getlist("files") + folder_files + request.files.getlist("file")
-        dest = request.form.get("dest", DEFAULT_UPLOAD_FOLDER)
+        dest = request.form.get("dest", default_upload_folder(settings.data_dir))
         if dest == "__new__":
             dest = (request.form.get("new_dest") or "").strip()
             if not dest:

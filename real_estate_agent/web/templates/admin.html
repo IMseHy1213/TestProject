@@ -18,6 +18,9 @@
   <div class="panel">
     <h2>매물 현황</h2>
     <p class="big-num">{{ data.count }}<small>건</small></p>
+    {% if data.kinds %}<p class="meta">{{ data.kinds }}</p>{% endif %}
+    {% if layout_moves %}<p class="notice warn">매물 폴더가 아직 '매물 종류 → 지역' 순서가 아닙니다 (토지로 옮길 것 {{ layout_moves }}개).
+      <a href="{{ url_for('admin_organize_folders') }}">📂 종류별로 정리하기</a></p>{% endif %}
     <p class="meta">매물 폴더: {{ data_dir }}<br>마지막으로 읽은 시각: {{ data.synced_at }}</p>
     <div class="row left">
       <form method="post" action="{{ url_for('admin_sync') }}" class="inline">
@@ -103,7 +106,8 @@
   <p class="meta">질문마다 어느 Agent·AI·도구·서버에서 얼마나 걸렸는지(추적), 응답 시간·AI 토큰·오류율(지표)을 봅니다.</p>
   <div class="row left"><a class="btn primary" href="{{ url_for('admin_observe') }}">관측 화면 열기</a>
     <a class="btn" href="{{ url_for('admin_online') }}">🎯 온라인 학습·평가 (v1.2)</a>
-    <a class="btn" href="{{ url_for('admin_clean_practice') }}">🧹 연습 기록 정리</a></div>
+    <a class="btn" href="{{ url_for('admin_clean_practice') }}">🧹 연습 기록 정리</a>
+    <a class="btn" href="{{ url_for('admin_organize_folders') }}">📂 매물 폴더 종류별로 정리</a></div>
 </section>
 
 <section class="panel reliability-panel">

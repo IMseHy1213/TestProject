@@ -372,11 +372,13 @@ def test_prepare_data_folder(tmp_path):
 
     folder = tmp_path / "매물"
     assert prepare_data_folder(folder) is True
-    assert (folder / TEMPLATE_NAME).exists() and (folder / "README.txt").exists()
+    template = folder / "토지" / TEMPLATE_NAME  # 종류별 구조 (sample_data 와 같은 모양)
+    assert template.exists() and (folder / "README.txt").exists()
+    assert all((folder / "공장" / d).is_dir() for d in ("매매", "매매임대", "임대"))
     assert LocalFolderCollector(folder).collect() == []  # 빈 양식은 매물 0건, 오류 없음
-    (folder / TEMPLATE_NAME).write_bytes(b"user data")  # 작성 중인 파일은 덮어쓰지 않음
+    template.write_bytes(b"user data")  # 작성 중인 파일은 덮어쓰지 않음
     assert prepare_data_folder(folder) is False
-    assert (folder / TEMPLATE_NAME).read_bytes() == b"user data"
+    assert template.read_bytes() == b"user data"
 
 
 # ---------------- '너무 비싸요' / '너무 좁아요' 다음 매물 방향 ----------------

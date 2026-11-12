@@ -64,12 +64,36 @@ def clean_relative_path(name: str) -> Optional[PurePosixPath]:
 
 
 def destination_folders(data_dir: Path) -> list[str]:
-    """올릴 곳으로 고를 수 있는 폴더: 매물 폴더 바로 아래 폴더들."""
+    """올릴 곳으로 고를 수 있는 폴더: 매물 폴더 바로 아래 폴더들 + 종류별 구조의 지역 폴더
+    ('토지/음성군', '공장/임대/진천군' …). 매물 1건짜리 폴더(지번 이름)는 빼고."""
+    from .collectors.listing_folder import looks_like_listing_name
+
     data_dir = Path(data_dir)
     if not data_dir.exists():
         return []
-    return sorted(p.name for p in data_dir.iterdir()
-                  if p.is_dir() and not p.name.startswith((".", "~", BACKUP_FOLDER)))
+
+    def ok(p: Path) -> bool:
+        return p.is_dir() and not p.name.startswith((".", "~", BACKUP_FOLDER)) and not looks_like_listing_name(p.name)
+
+    out = []
+    for p in sorted(data_dir.iterdir(), key=lambda x: x.name):
+        if not ok(p):
+            continue
+        out.append(p.name)
+        if p.name in {"토지", "공장"}:  # 종류 폴더 아래는 지역(공장은 거래 방식/지역)까지
+            for sub in sorted(p.iterdir(), key=lambda x: x.name):
+                if ok(sub):
+                    out.append(f"{p.name}/{sub.name}")
+                    if p.name == "공장":
+                        out += [f"공장/{sub.name}/{r.name}" for r in sorted(sub.iterdir(), key=lambda x: x.name) if ok(r)]
+    return out
+
+
+def default_folder(data_dir: Path) -> str:
+    """올릴 곳 기본값: 종류별 구조면 '토지/웹업로드', 아니면 '웹업로드'."""
+    from .folder_layout import is_organized
+
+    return f"토지/{DEFAULT_FOLDER}" if is_organized(data_dir) else DEFAULT_FOLDER
 
 
 def resolve_destination(data_dir: Path, dest: str) -> Path:

@@ -225,8 +225,11 @@ def describe_changes(original: LandListing, fields: dict[str, Any]) -> list[str]
 
 
 # ---------------------------------------------------------------------- 새 매물 (웹입력 엑셀에 추가)
-def web_file(data_dir: Path) -> Path:
-    return Path(data_dir) / WEB_FOLDER / WEB_FILE
+def web_file(data_dir: Path, kind: str = "토지") -> Path:
+    """웹에서 추가한 매물을 적는 엑셀. 매물 폴더가 종류별(토지/공장)이면 그 종류 폴더 안의 '웹입력'."""
+    from .folder_layout import kind_base
+
+    return kind_base(data_dir, kind) / WEB_FOLDER / WEB_FILE
 
 
 def new_listing_id(existing: set[str]) -> str:
@@ -249,7 +252,7 @@ def append_listing(data_dir: Path, listing_id: str, values: dict[str, Any]) -> P
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill
 
-    path = web_file(data_dir)
+    path = web_file(data_dir, values.get("property_type", "토지"))
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         wb = load_workbook(path)

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}매물 폴더 정리{% endblock %}
+{% block content %}
+<p class="meta"><a href="{{ url_for('admin') }}">← 관리자</a></p>
+<h1>📂 매물 폴더 종류별로 정리</h1>
+<p class="meta">연습용 <code>sample_data</code> 처럼 <strong>매물 종류 → 지역</strong> 순서로 맞춥니다.
+  <code>{{ data_dir }}/음성군/…</code> 같이 매물 폴더 바로 아래에 있는 토지 폴더·파일을 <code>{{ data_dir }}/토지/음성군/…</code> 으로 옮기고,
+  <code>{{ data_dir }}/공장/매매|매매임대|임대/지역/…</code> 은 그대로 둡니다.</p>
+<section class="panel">
+  {% if sample_mode %}
+    <p class="notice">지금은 연습용(sample_data) 폴더로 실행 중입니다. 이 폴더는 이미 종류별(공장/토지)입니다.</p>
+  {% else %}
+    {% for w in plan.warnings %}<p class="notice warn">⚠ {{ w }}</p>{% endfor %}
+    {% if not plan.needed %}
+      <p class="notice">✅ 이미 '매물 종류 → 지역' 순서입니다. 옮길 것이 없습니다.</p>
+    {% else %}
+      <h2>토지 폴더로 옮길 것 ({{ plan.moves | length }}개)</h2>
+      <ul class="mono-list">{% for line in lines %}<li><code>{{ line }}</code></li>{% endfor %}</ul>
+      <p class="meta">매물번호, 관리자가 고친 내용, 손님의 관심·제외 기록은 폴더 위치와 상관없어 그대로 이어집니다.
+        옮기기 전에 매물 엑셀 파일을 모두 닫아 주세요 (열려 있는 파일은 옮기지 못하고 알려 드립니다).</p>
+      <form method="post" action="{{ url_for('admin_organize_folders_run') }}">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="op" value="apply">
+        <button class="btn primary">토지 폴더로 옮기고 다시 읽기</button>
+      </form>
+    {% endif %}
+    {% for c in plan.conflicts %}<p class="notice warn">옮기지 못함: {{ c }} — 두 파일을 비교해 하나만 남겨 주세요.</p>{% endfor %}
+    {% if can_undo %}
+      <form method="post" action="{{ url_for('admin_organize_folders_run') }}" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="op" value="undo">
+        <button class="btn">↩ 마지막 정리 되돌리기</button>
+      </form>
+    {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

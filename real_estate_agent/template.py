@@ -104,8 +104,14 @@ def write_template(path: Optional[Path] = None) -> Path:
 TEMPLATE_NAME = "토지매물_입력양식.xlsx"
 FOLDER_GUIDE = """이 폴더에 매물 엑셀 파일(.xlsx)을 넣으면 프로그램이 읽습니다. (하위 폴더도 모두 읽습니다)
 
-[토지]
-1. '토지매물_입력양식.xlsx' 를 열어 '매물입력' 시트에 한 줄에 매물 하나씩 적고 저장하세요.
+폴더는 sample_data 처럼 '매물 종류 -> 지역' 순서입니다.
+   매물/토지/음성군/…, 매물/토지/진천군/…
+   매물/공장/매매|매매임대|임대/음성군|진천군/…
+   (예전처럼 매물 폴더 바로 아래에 지역 폴더가 있으면, 관리자 화면 '매물 폴더 종류별로 정리' 또는
+    python main.py organize-folders 로 토지 폴더 안으로 옮길 수 있습니다)
+
+[토지]  '토지' 폴더 아래에 지역 폴더(음성군, 진천군 …)를 두고 넣으세요.
+1. '토지/토지매물_입력양식.xlsx' 를 열어 '매물입력' 시트에 한 줄에 매물 하나씩 적고 저장하세요.
    (파일 이름은 바꿔도 되고, 여러 파일로 나눠도 됩니다)
 2. 이미 쓰고 계신 엑셀 장부가 있으면 그 파일을 그대로 넣어도 됩니다.
 
@@ -156,14 +162,20 @@ def _same_text(a: str, b: str) -> bool:
 
 
 def prepare_data_folder(folder: Path) -> bool:
-    """매물 폴더가 없으면 만들고, 매물 파일이 하나도 없으면 입력 양식과 안내문을 넣어 둠. 만들었으면 True."""
+    """매물 폴더가 없으면 만들고, 매물 파일이 하나도 없으면 종류별 폴더(토지, 공장/매매·매매임대·임대)와
+    입력 양식(토지 폴더 안)·안내문을 넣어 둠. 만들었으면 True."""
+    from .folder_layout import FACTORY_DEALS, kind_base
+
     folder = Path(folder)
     created = not folder.exists()
     folder.mkdir(parents=True, exist_ok=True)
     has_data = any(p.suffix.lower() in {".xlsx", ".xlsm", ".xls", ".csv", ".json"}
                    for p in folder.rglob("*") if p.is_file() and not p.name.startswith("~$"))
     if not has_data:
-        (folder / TEMPLATE_NAME).write_bytes(build_template())
+        (folder / "토지").mkdir(exist_ok=True)
+        for deal in FACTORY_DEALS:
+            (folder / "공장" / deal).mkdir(parents=True, exist_ok=True)
+        (kind_base(folder, "토지") / TEMPLATE_NAME).write_bytes(build_template())
     guide = folder / "README.txt"
     try:
         current = guide.read_text(encoding="utf-8-sig") if guide.exists() else None

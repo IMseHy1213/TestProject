@@ -169,7 +169,9 @@ class RealEstateAgent:
 
         existing = {l.listing_id for l in self.listings() + self.hidden_listings}
         listing_id = new_listing_id(existing)
-        errors, warnings = self.check_listing(preview_listing(listing_id, values, web_file(self.settings.data_dir)))
+        errors, warnings = self.check_listing(preview_listing(listing_id, values,
+                                                                    web_file(self.settings.data_dir,
+                                                                             values.get("property_type", "토지"))))
         if errors:
             raise ValueError(" / ".join(errors))
         try:

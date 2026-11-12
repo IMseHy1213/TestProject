@@ -464,6 +464,50 @@ def run_benchmark_cli(agent: RealEstateAgent, configs: str = "", load: bool = Tr
     return 0
 
 
+def run_organize_folders(settings, yes: bool = False, dry_run: bool = False, undo: bool = False) -> int:
+    """매물 폴더를 '매물 종류 → 지역' 순서로 정리 (매물/음성군 → 매물/토지/음성군). 되돌리기 가능."""
+    from .config import is_sample_data
+    from .folder_layout import apply_plan, describe, make_plan, undo_last
+
+    data_dir = Path(settings.data_dir)
+    if is_sample_data(data_dir):
+        print("연습용(sample_data) 폴더는 이미 종류별(공장/토지)입니다. 실제 매물 폴더를 정리하려면 --data-dir 없이 실행하세요.")
+        return 1
+    if undo:
+        r = undo_last(data_dir, settings.log_dir)
+        if r.moved:
+            print("✅ 되돌렸습니다: " + r.summary())
+        else:
+            print("❌ " + "; ".join(r.failed))
+        return 0 if r.moved and not r.failed else 1
+    plan = make_plan(data_dir)
+    print(f"매물 폴더: {data_dir}")
+    for w in plan.warnings:
+        print(f"  ⚠ {w}")
+    if not plan.needed:
+        print("✅ 이미 '매물 종류 → 지역' 순서입니다. 옮길 것이 없습니다.")
+        for c in plan.conflicts:
+            print(f"  ⚠ 옮기지 못함: {c}")
+        return 0
+    print("\n토지 폴더로 옮길 것:")
+    for line in describe(plan):
+        print(f"  · {line}")
+    for c in plan.conflicts:
+        print(f"  ⚠ 옮기지 못함: {c}")
+    print("(매물번호·관리자가 고친 내용·손님 기록은 그대로 이어집니다. 엑셀 파일은 닫아 두세요)")
+    if dry_run:
+        print("\n(--dry-run: 아무것도 옮기지 않았습니다)")
+        return 0
+    if not yes and input("\n옮길까요? 나중에 --undo 로 되돌릴 수 있습니다. (y/N) ").strip().lower() not in {"y", "yes", "ㅛ"}:
+        print("취소했습니다.")
+        return 1
+    r = apply_plan(data_dir, settings.log_dir, plan)
+    print(("✅ " if not r.failed else "⚠ ") + r.summary())
+    if r.log_file:
+        print(f"옮긴 내역: {r.log_file}  (되돌리기: python main.py organize-folders --undo)")
+    return 0 if not r.failed else 1
+
+
 def run_clean_practice(settings, yes: bool = False, dry_run: bool = False) -> int:
     """실제 운영 DB 에 섞인 연습용 샘플 매물 기록만 지움 (지우기 전 백업)."""
     import sqlite3
@@ -583,6 +627,10 @@ def build_parser() -> argparse.ArgumentParser:
     tr = sub.add_parser("trace", help="v1.1 질문 하나의 처리 과정을 시간 막대로 (기본: 가장 최근)")
     tr.add_argument("trace_id", nargs="?", default="last")
     sub.add_parser("architecture-study", help="v0.4·v0.5 구조 비교 (Workflow·ReAct·Plan-and-Execute·Multi·LangGraph) → docs/")
+    of = sub.add_parser("organize-folders", help="매물 폴더를 sample_data 처럼 '매물 종류 → 지역' 순서로 정리 (매물/음성군 → 매물/토지/음성군)")
+    of.add_argument("--yes", action="store_true", help="묻지 않고 바로 옮김")
+    of.add_argument("--dry-run", action="store_true", help="무엇을 옮길지만 보여줌")
+    of.add_argument("--undo", action="store_true", help="마지막 정리를 되돌림")
     cp = sub.add_parser("clean-practice", help="실제 운영 DB 에 섞인 연습용 샘플 매물 기록만 지움 (지우기 전 백업)")
     cp.add_argument("--yes", action="store_true", help="묻지 않고 바로 정리")
     cp.add_argument("--dry-run", action="store_true", help="무엇을 지울지만 보여줌")
@@ -667,6 +715,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         return mcp_main(settings, http=args.http, host=args.host, port=args.port)
     if args.command == "clean-practice":
         return run_clean_practice(settings, args.yes, args.dry_run)
+    if args.command == "organize-folders":
+        return run_organize_folders(settings, args.yes, args.dry_run, args.undo)
     if args.command == "a2a-call":
         return run_a2a_call(args.url, args.question, args.context)
     if args.command == "a2a-serve":
