@@ -194,6 +194,19 @@ class RulePolicy:
             if _sort_in(question):
                 args["sort"] = _sort_in(question)
             return _call("search_listings", args)
+        if "search_listings" not in names and self.ctx and self.ctx.last_search and _switches_deal_or_kind(question):
+            # '매매 공장 말고 임대 공장은 없어?' / '임대는?' / '공장 말고 땅은?' -> 앞 조건 그대로, 거래 방식·종류만 바꿔서
+            from ..requirement_parser import property_terms
+
+            types, deal = property_terms(question)[:2]
+            args = {"query": question, "use_previous_conditions": True, "limit": _wanted_count(question) or 5}
+            if deal:
+                args["deal"] = deal
+            if len(types) == 1:
+                args["property_type"] = types[0]
+            if _sort_in(question):
+                args["sort"] = _sort_in(question)
+            return _call("search_listings", args)
         if "search_listings" not in names and self.ctx and self.ctx.last_search and _wants_other_region(question):
             # '음성군 말고 다른 지역에도 있어?' / '다른 지역에도 있어?' -> 앞 조건(용도 등) 그대로, 지역만 바꿔 전체에서
             sort = _sort_in(question)
@@ -369,7 +382,25 @@ def _wants_to_see(q: str) -> bool:
 
 
 def _wants_other_region(q: str) -> bool:
+    if _switches_deal_or_kind(q) and not re.search(r"다른\s*(지역|곳|데|동네|시|군|쪽)|딴\s*(데|곳|지역)", q):
+        return False  # '매매 공장 말고 임대 공장은?' 은 지역이 아니라 거래 방식을 바꾸는 말
     return bool(_OTHER_REGION.search(q))
+
+
+def _switches_deal_or_kind(q: str) -> bool:
+    """'매매 말고 임대', '임대 공장은 없어?', '공장 말고 땅은?' 처럼 거래 방식이나 매물 종류를 바꾸는 이어 묻기.
+    (지역을 말했으면 지역 쪽 규칙이 처리)"""
+    from ..regions import find_regions
+    from ..requirement_parser import excluded_terms, property_terms
+
+    if find_regions(q) or _names_excluded_region(q):
+        return False
+    deals, kinds, _ = excluded_terms(q)
+    if deals or kinds:
+        return True
+    types, deal = property_terms(q)[:2]
+    short = len(q.replace(" ", "")) <= 16  # '임대는?', '임대 공장은 없어?', '매매로는 없어?'
+    return bool(deal) and short and bool(re.search(r"없|있|는\?|은\?|으로는|로는|도\s", q))
 
 
 def _names_excluded_region(q: str) -> bool:
@@ -490,7 +521,14 @@ def rule_answer(question: str, done: list[tuple[str, dict]]) -> str:
     order = res.get("정렬", "추천순")
     lines: list[str] = []
 
-    if found and res.get("앞_조건_출처") == "지난 상담":
+    if found and res.get("종류_바꿈"):  # '공장 말고 땅은 없어?'
+        kind = res["종류_바꿈"]
+        lines.append(f"{'토지' if kind == '공장' else '공장'} 말고 {kind} 매물로 다시 찾았습니다.")
+    elif found and res.get("거래_바꿈"):  # '매매 공장 말고 임대 공장은 없어?'
+        deal = res["거래_바꿈"]
+        other = "매매" if deal == "임대" else "임대"
+        lines.append(f"{other} 말고 {deal}(매매/임대 포함) 매물로 다시 찾았습니다.")
+    elif found and res.get("앞_조건_출처") == "지난 상담":
         lines.append(f"지난 상담에서 찾으신 조건({cond})으로 다시 찾았습니다.")
     elif found and res.get("제외_지역") and res.get("앞_조건_이어서") and not res.get("앞서_보여준_매물_수"):
         lines.append(f"{', '.join(res['제외_지역'])} 말고 다른 지역에서 같은 조건으로 다시 찾았습니다.")

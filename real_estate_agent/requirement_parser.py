@@ -58,7 +58,7 @@ NON_LAND_TYPES = ["아파트", "빌라", "오피스텔", "원룸", "투룸", "�
 #   '공장 지을 땅', '공장 부지', '공장 용지', '공장 짓기 좋은 토지' -> 목적 (토지 매물)
 #   '공장 있어?', '공장 임대', '음성군 공장 매매', '공장 매물' -> 공장 매물
 _FACTORY_TO_BUILD = re.compile(
-    r"공장\s*(?:을|를|이|도|하나)?\s*(?:지을|짓|지으|지어|세울|세우|건축|신축|설립|부지|용지|터\b|자리|하기|하려|할\s*(?:땅|부지|토지|곳)|"
+    r"공장\s*(?:을|를|이|도|하나)?\s*(?:지을|짓|지으|지어|세울|세우|건축|신축|설립|부지|용지|용\b|용도|땅|토지|터\b|자리|하기|하려|운영할|돌릴|할\s*(?:땅|부지|토지|곳)|"
     r"(?:으로|로)\s*(?:쓸|쓰기|사용)?\s*(?:땅|부지|토지))")
 _FACTORY_WORD = re.compile(r"공장(?!용지)")
 _LAND_WORDS = re.compile(r"땅|토지|부지|임야|농지|대지|전답|논|밭|(?:지을|짓|지으|세울|건축할)")
@@ -68,6 +68,24 @@ _DEPOSIT = re.compile(r"보증금\s*(?:은|는|이|가|:)?\s*" + r"(\d[\d,.]*\s*
                       r"\s*(이하|이내|까지|안쪽|미만|정도|쯤|내외|선)?")
 _RENT = re.compile(r"(?:월세|월\s*임대료|임대료|월)\s*(?:은|는|이|가|:)?\s*" + r"(\d[\d,.]*\s*천\s*만?|\d[\d,.]*\s*만?|\d[\d,.]*\s*억)\s*원?"
                    r"\s*(이하|이내|까지|안쪽|미만|정도|쯤|내외|선)?")
+
+
+# '매매 공장 말고 임대 공장', '임대 말고 매매로', '공장 말고 땅은?' -> 앞쪽(빼는 것)은 찾는 조건이 아님
+_NOT = r"\s*(?:은|는|이|가|을|를|로|으로)?\s*(?:말고|빼고|제외(?:하고|한)?|대신|아니고|아닌|외에)"
+_EXCL_DEAL = re.compile(r"(매매|매입|매도|임대|월세|전세|렌트)(?:\s*(?:공장|매물|물건|땅|토지))?" + _NOT)
+_EXCL_KIND = re.compile(r"(공장|토지|땅)(?:\s*(?:매매|임대|매물|물건))?" + _NOT)
+DEAL_KIND_WORDS = {"공장", "토지", "땅", "매매", "매입", "매도", "임대", "월세", "전세", "렌트", "매물", "물건"}
+
+
+def excluded_terms(text: str) -> tuple[set[str], set[str], str]:
+    """(뺀 거래 방식 {'매매'|'임대'}, 뺀 종류 {'공장'|'토지'}, 그 부분을 지운 문장)."""
+    deals, kinds = set(), set()
+    for m in _EXCL_DEAL.finditer(text):
+        deals.add("매매" if m.group(1) in {"매매", "매입", "매도"} else "임대")
+    for m in _EXCL_KIND.finditer(text):
+        kinds.add("공장" if m.group(1) == "공장" else "토지")
+    rest = _EXCL_KIND.sub(" ", _EXCL_DEAL.sub(" ", text))
+    return deals, kinds, rest
 
 
 def _lease_money(m: re.Match) -> Optional[int]:
@@ -83,7 +101,7 @@ def _lease_money(m: re.Match) -> Optional[int]:
 def property_terms(text: str) -> tuple[list[str], str, Optional[int], Optional[int], str]:
     """(찾는 매물 종류, 거래 방식, 보증금 상한, 월세 상한, 금액 조건을 뺀 문장).
     '음성군 공장 임대 보증금 5천 월세 300 이하' -> (['공장'], '임대', 5000, 300, '음성군 공장 임대   ')"""
-    t = text
+    no_deals, no_kinds, t = excluded_terms(text)
     types: list[str] = []
     to_build = bool(_FACTORY_TO_BUILD.search(t))
     factory_noun = bool(_FACTORY_WORD.search(_FACTORY_TO_BUILD.sub(" ", t)))
@@ -97,6 +115,13 @@ def property_terms(text: str) -> tuple[list[str], str, Optional[int], Optional[i
         deal = "임대"
     elif sale and not lease:
         deal = "매매"
+    if no_deals == {"매매"}:  # '매매 공장 말고 임대 공장은?' -> 임대 (매매/임대 포함)
+        deal = "임대"
+    elif no_deals == {"임대"}:
+        deal = "매매"
+    types = [x for x in types if x not in no_kinds]
+    if not types and no_kinds and len(no_kinds) == 1:  # '공장 말고 땅은?' -> 토지
+        types = ["토지" if "공장" in no_kinds else "공장"]
     deposit = rent = None
     rest = t
     m = _DEPOSIT.search(t)
@@ -149,6 +174,10 @@ def apply_property_terms(req: CustomerRequirement, text: str, overwrite: bool = 
     req.rent_max = req.rent_max or rent
     if "공장" in req.property_types and "토지" not in req.property_types and req.purpose == "공장":
         req.purpose = ""  # '공장 매물' 은 공장을 지을 땅을 찾는 것이 아님
+        if not re.search(r"맹지|도로|진입로", text):
+            req.need_road = False
+    if req.purpose == "공장" and not _FACTORY_TO_BUILD.search(text) and "제조" not in text:
+        req.purpose = ""  # '공장' 이 '공장 매물' 이라는 말로만 쓰였으면 '공장 지을 땅' 조건이 아님 ('공장 말고 땅은?')
         if not re.search(r"맹지|도로|진입로", text):
             req.need_road = False
     if req.purpose and not req.property_types:
@@ -436,7 +465,7 @@ def parse_rule_based(text: str, known_regions: Iterable[str] = ()) -> CustomerRe
     # --- 제외 조건 ---
     for m in re.finditer(r"([가-힣A-Za-z]{1,8})\s*(?:은|는|이|가)?\s*(?:제외|말고|빼고|싫어|싫고|안\s*돼|피해)", t):
         w = re.sub(r"(은|는|이|가|을|를)$", "", m.group(1))
-        if not w or w in {"맹지", "도로", "곳", "거", "것", "땅", "데", "건", "지역", "동네"}:
+        if not w or w in {"맹지", "도로", "곳", "거", "것", "땅", "데", "건", "지역", "동네"} | DEAL_KIND_WORDS:
             continue
         if _region_word(w, known_regions):  # '음성군 말고' -> 지역 제외 (그 지역으로 찾는 것이 아님)
             continue

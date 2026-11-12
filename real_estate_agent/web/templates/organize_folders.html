@@ -6,6 +6,19 @@
 <p class="meta">연습용 <code>sample_data</code> 처럼 <strong>매물 종류 → 지역</strong> 순서로 맞춥니다.
   <code>{{ data_dir }}/음성군/…</code> 같이 매물 폴더 바로 아래에 있는 토지 폴더·파일을 <code>{{ data_dir }}/토지/음성군/…</code> 으로 옮기고,
   <code>{{ data_dir }}/공장/매매|매매임대|임대/지역/…</code> 은 그대로 둡니다.</p>
+{% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
+{% if missing %}
+<section class="panel">
+  <h2>최근 매물 목록에서 빠진 매물 ({{ missing | length }}건)</h2>
+  <p class="meta">최근 3일 사이에 매물 목록에서 빠진 매물과 그 이유입니다. 옮기기 전에는 있었는데 없어졌다면
+    아래 이유를 고치거나 '↩ 마지막 정리 되돌리기' 를 누르세요.</p>
+  <table class="obs-table"><thead><tr><th>매물번호</th><th>주소</th><th>원래 파일 → 지금</th><th>이유</th></tr></thead><tbody>
+  {% for m in missing %}<tr><td>{{ m.office_no or m.listing_id }}</td><td>{{ m.address }}</td>
+    <td><code>{{ m.old_file }}</code>{% if m.now_file and m.now_file != m.old_file %} → <code>{{ m.now_file }}</code>{% endif %}</td>
+    <td>{{ m.reason }}</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+{% endif %}
 <section class="panel">
   {% if sample_mode %}
     <p class="notice">지금은 연습용(sample_data) 폴더로 실행 중입니다. 이 폴더는 이미 종류별(공장/토지)입니다.</p>

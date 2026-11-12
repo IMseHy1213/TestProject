@@ -464,12 +464,25 @@ def run_benchmark_cli(agent: RealEstateAgent, configs: str = "", load: bool = Tr
     return 0
 
 
-def run_organize_folders(settings, yes: bool = False, dry_run: bool = False, undo: bool = False) -> int:
+def run_organize_folders(settings, yes: bool = False, dry_run: bool = False, undo: bool = False,
+                         check: bool = False) -> int:
     """매물 폴더를 '매물 종류 → 지역' 순서로 정리 (매물/음성군 → 매물/토지/음성군). 되돌리기 가능."""
     from .config import is_sample_data
     from .folder_layout import apply_plan, describe, make_plan, undo_last
 
     data_dir = Path(settings.data_dir)
+    if check:  # 최근 매물 목록에서 빠진 매물과 이유
+        from .agent import RealEstateAgent
+        from .folder_layout import find_missing
+
+        agent = RealEstateAgent(settings)
+        agent.sync()
+        missing = find_missing(agent)
+        print(f"지금 매물 {len(agent.listings())}건 · 최근 3일 사이 목록에서 빠진 매물 {len(missing)}건")
+        for m in missing:
+            moved = f" → {m.now_file}" if m.now_file and m.now_file != m.old_file else ""
+            print(f"  · {m.office_no or m.listing_id} | {m.address}\n      파일: {m.old_file}{moved}\n      이유: {m.reason}")
+        return 0
     if is_sample_data(data_dir):
         print("연습용(sample_data) 폴더는 이미 종류별(공장/토지)입니다. 실제 매물 폴더를 정리하려면 --data-dir 없이 실행하세요.")
         return 1
@@ -501,8 +514,18 @@ def run_organize_folders(settings, yes: bool = False, dry_run: bool = False, und
     if not yes and input("\n옮길까요? 나중에 --undo 로 되돌릴 수 있습니다. (y/N) ").strip().lower() not in {"y", "yes", "ㅛ"}:
         print("취소했습니다.")
         return 1
+    from .agent import RealEstateAgent
+    from .folder_layout import count_change, find_missing
+
+    agent = RealEstateAgent(settings)
+    agent.sync()
+    before = {l.listing_id for l in agent.listings()}
     r = apply_plan(data_dir, settings.log_dir, plan)
-    print(("✅ " if not r.failed else "⚠ ") + r.summary())
+    agent.sync()
+    after = {l.listing_id for l in agent.listings()}
+    print(("✅ " if not r.failed else "⚠ ") + r.summary() + " · " + count_change(before, after))
+    for m in find_missing(agent) if before - after else []:
+        print(f"  · 빠진 매물 {m.office_no or m.listing_id} ({m.old_file}): {m.reason}")
     if r.log_file:
         print(f"옮긴 내역: {r.log_file}  (되돌리기: python main.py organize-folders --undo)")
     return 0 if not r.failed else 1
@@ -631,6 +654,7 @@ def build_parser() -> argparse.ArgumentParser:
     of.add_argument("--yes", action="store_true", help="묻지 않고 바로 옮김")
     of.add_argument("--dry-run", action="store_true", help="무엇을 옮길지만 보여줌")
     of.add_argument("--undo", action="store_true", help="마지막 정리를 되돌림")
+    of.add_argument("--check", action="store_true", help="최근 매물 목록에서 빠진 매물과 이유만 보여줌")
     cp = sub.add_parser("clean-practice", help="실제 운영 DB 에 섞인 연습용 샘플 매물 기록만 지움 (지우기 전 백업)")
     cp.add_argument("--yes", action="store_true", help="묻지 않고 바로 정리")
     cp.add_argument("--dry-run", action="store_true", help="무엇을 지울지만 보여줌")
@@ -716,7 +740,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command == "clean-practice":
         return run_clean_practice(settings, args.yes, args.dry_run)
     if args.command == "organize-folders":
-        return run_organize_folders(settings, args.yes, args.dry_run, args.undo)
+        return run_organize_folders(settings, args.yes, args.dry_run, args.undo, args.check)
     if args.command == "a2a-call":
         return run_a2a_call(args.url, args.question, args.context)
     if args.command == "a2a-serve":

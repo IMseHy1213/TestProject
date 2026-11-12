@@ -122,3 +122,43 @@ def test_admin_page_organizes(old_layout, tmp_path, monkeypatch):
     assert "종류별로 정리했습니다" in html and "종류별로 정리하기" not in html
     assert (old_layout / "토지" / "음성군").is_dir()
     assert "토지 4건 · 공장 1건" in html
+
+
+def test_open_file_is_left_in_place_without_duplicates(old_layout, tmp_path, monkeypatch):
+    """윈도에서 엑셀로 열어 둔 파일: 옮기지 못하면 그 자리에 그대로 (반쯤 복사·삭제되지 않음), 매물 수도 그대로."""
+    import os
+
+    import real_estate_agent.folder_layout as fl
+
+    a = make_agent(old_layout, tmp_path)
+    before = {l.listing_id for l in a.listings()}
+    real_rename = os.rename
+
+    def locked(src, dst):
+        if str(src).endswith("정보.xlsx"):
+            raise PermissionError("[WinError 32] 다른 프로세스가 파일을 사용 중")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(fl.os, "rename", locked)
+    r = apply_plan(old_layout, tmp_path / "logs")
+    assert len(r.failed) == 1 and "정보.xlsx" in r.failed[0]
+    assert (old_layout / "음성군" / "감곡면 문촌리 5(물류부지)" / "정보.xlsx").exists()
+    assert not (old_layout / "토지" / "음성군" / "감곡면 문촌리 5(물류부지)" / "정보.xlsx").exists()
+    a.sync()
+    assert {l.listing_id for l in a.listings()} == before
+
+
+def test_find_missing_explains_why(old_layout, tmp_path):
+    from real_estate_agent.folder_layout import find_missing
+
+    a = make_agent(old_layout, tmp_path)
+    apply_plan(old_layout, tmp_path / "logs")
+    # 옮긴 뒤 한 파일이 망가지고(매매가 없음), 한 파일은 사라졌다고 해 봄
+    _sheet(old_layout / "토지" / "음성군" / "장부.xlsx", [HEAD, ["L-1", "충청북도 음성군 대소면 오류리 1", "잡종지", "", 600, None, ""]])
+    (old_layout / "토지" / "기타지역" / "문경시" / "장부.xlsx").unlink()
+    a.sync()
+    found = {m.office_no: m for m in find_missing(a)}
+    assert set(found) == {"L-1", "L-3"}
+    assert "가격" in found["L-1"].reason and found["L-1"].old_file == "음성군/장부.xlsx"
+    assert found["L-1"].now_file == "토지/음성군/장부.xlsx"
+    assert "찾을 수 없습니다" in found["L-3"].reason

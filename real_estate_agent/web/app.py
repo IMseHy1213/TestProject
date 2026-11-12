@@ -574,19 +574,22 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
     @app.get("/admin/organize-folders")
     def admin_organize_folders():
         """매물 폴더 종류별 정리: 옮길 것 미리 보기."""
-        from ..folder_layout import describe, last_log, make_plan
+        from ..folder_layout import describe, find_missing, last_log, make_plan
 
         if not is_admin():
             return login_page()
         plan = make_plan(settings.data_dir)
+        with lock:
+            missing = find_missing(agent)
         return render_template("organize_folders.html", lines=describe(plan, 200), plan=plan,
                                data_dir=Path(settings.data_dir).name, can_undo=last_log(settings.log_dir) is not None,
+                               missing=missing, message=session.pop("admin_msg", ""),
                                sample_mode=app.config.get("SAMPLE_MODE", False))
 
     @app.post("/admin/organize-folders")
     def admin_organize_folders_run():
         """정리 실행 (op=apply) 또는 마지막 정리 되돌리기 (op=undo). 끝나면 매물 폴더를 다시 읽음."""
-        from ..folder_layout import apply_plan, undo_last
+        from ..folder_layout import apply_plan, count_change, undo_last
 
         if not is_admin():
             abort(403)
@@ -595,6 +598,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             return redirect(url_for("admin"))
         op = request.form.get("op", "")
         with lock:
+            before = {l.listing_id for l in agent.listings()}
             if op == "apply":
                 r = apply_plan(settings.data_dir, settings.log_dir)
                 msg = ("📂 매물 폴더를 종류별로 정리했습니다: " if not r.failed else "⚠ 일부만 정리했습니다: ") + r.summary()
@@ -604,8 +608,10 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             else:
                 abort(400)
             do_sync(detect=False)  # 옮긴 매물은 번호가 같아 '새 매물' 알림이 가지 않음
-        session["admin_msg"] = msg
-        return redirect(url_for("admin"))
+            after = {l.listing_id for l in agent.listings()}
+        session["admin_msg"] = f"{msg} · {count_change(before, after)}"
+        # 매물이 빠졌으면 이유를 보여 주는 정리 화면으로
+        return redirect(url_for("admin_organize_folders" if before - after else "admin"))
 
     @app.get("/admin/online")
     def admin_online():

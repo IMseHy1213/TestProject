@@ -460,6 +460,21 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         said = requirement_from_args(agent, {"query": given["query"]}) if given.get("query") else None
         named_region = bool(given.get("regions") or given.get("exclude_regions")
                             or (said and (said.regions or said.excluded_regions)))
+        switched_deal = ""
+        if follow_up and said:  # '매매 공장 말고 임대 공장은?' -> 이번에 말한 거래 방식·종류가 앞 조건보다 우선
+            if said.deal and "deal" not in given:
+                given["deal"] = said.deal
+            if len(said.property_types) == 1 and "property_type" not in given:
+                given["property_type"] = said.property_types[0]
+        if follow_up and given.get("deal") and given["deal"] != ctx.last_search.get("deal", ""):
+            switched_deal = given["deal"]
+        switched_kind = given["property_type"] if (
+            follow_up and given.get("property_type")
+            and given["property_type"] != (ctx.last_search.get("property_type")
+                                          or (requirement_from_args(agent, ctx.last_search).property_types or [""])[0])) else ""
+        if switched_kind == "토지" and ctx.last_search.get("deal") == "임대" and not (said and said.deal):
+            given["deal"] = "매매"  # 토지는 임대 매물이 없음 ('임대 공장' 다음의 '공장 말고 땅은?')
+        kind_change = bool(switched_deal or switched_kind)
         region_change = other_regions or named_region
         if follow_up:  # '그 중에 넓은 건?' -> 직전 검색 조건 그대로 + 새 정렬/개수 (새로 준 조건은 덧붙임)
             merged = dict(ctx.last_search)
@@ -487,7 +502,8 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
         session = agent.recommend(req, pref_key=ctx.pref_key or None)  # v1.2: 이 방문자에게서 배운 중요도로 점수
         ranked = [s for s in session.ranked if s.listing.listing_id not in ctx.rejected]
         leasing = req.deal == "임대" or bool(req.deposit_max or req.rent_max)
-        pool = list(ctx.last_shown) if follow_up and not region_change else []  # 지역을 바꾸면 전체에서 다시
+        # 지역·거래 방식·종류를 바꾸면 전체에서 다시 ('그 중에' 는 직전에 보여준 매물 안에서)
+        pool = list(ctx.last_shown) if follow_up and not region_change and not kind_change else []
         if pool:  # '그 중에' -> 직전에 보여준 매물 안에서만
             ranked = [s for s in ranked if s.listing.listing_id in pool]
         sort_ranked(ranked, sort, leasing)
@@ -505,6 +521,7 @@ def build_tools(reg: ToolRegistry) -> list[Tool]:
                                "앞_조건_이어서": follow_up, "앞서_보여준_매물_수": len(pool) or None,
                                "제외_지역": req.excluded_regions or None,
                                "앞_조건_출처": "지난 상담" if from_memory else None,
+                               "거래_바꿈": switched_deal or None, "종류_바꿈": switched_kind or None,
                                "조건에_맞는_매물_수": len(ranked),
                                "매물": [brief(s.listing, s) for s in shown]}
         if not ranked:

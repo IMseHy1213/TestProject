@@ -213,3 +213,35 @@ def test_web_pages_show_factory_cards(tmp_path, monkeypatch):
     html = c.post("/search", data={"q": "진천군 공장 매매", "csrf": token("/")},
                   follow_redirects=True).get_data(as_text=True)
     assert "공장(매매" in html and "건물면적" in html and "010-5101" not in html
+
+
+@pytest.mark.parametrize("runner_cls", [ToolAgent, MultiAgent])
+def test_switch_from_sale_to_lease_factory(agent, runner_cls):
+    """'음성군에 매매 공장' → '음성군 말고 다른 지역은?' → '매매 공장 말고 임대 공장은 없어?' 는 임대(매매/임대 포함)만."""
+    t, h = runner_cls(agent, ctx=AgentContext(), log_dir=""), None
+    no = lambda r: {agent.find_listing(i).office_no for i in r.listing_ids}
+    r, h = t.run("음성군에 매매 공장 찾아줘", h)
+    assert no(r) == {"F-1", "F-3"}
+    r, h = t.run("음성군 말고 다른 지역은 없어?", h)
+    assert no(r) == {"F-2"}
+    r, h = t.run("매매 공장 말고 임대 공장은 없어?", h)
+    assert no(r) == {"F-6"} and all(agent.find_listing(i).for_lease for i in r.listing_ids)
+    assert r.answer.startswith("매매 말고 임대(매매/임대 포함) 매물로 다시 찾았습니다.")
+    r, h = t.run("임대 말고 매매는?", h)
+    assert no(r) == {"F-2"}
+    r, h = t.run("공장 말고 땅은 없어?", h)  # 앞 조건(음성군 제외) 그대로 토지로: 이 장부의 토지는 음성군뿐
+    search = [s for s in r.steps if s.tool == "search_listings"][0]
+    assert search.args.get("property_type") == "토지" and not r.listing_ids
+    r, h = t.run("음성군에는?", h)
+    assert no(r) == {"L-1", "L-2"}
+
+
+@pytest.mark.parametrize("q, types, deal", [
+    ("매매 공장 말고 임대 공장은 없어?", ["공장"], "임대"),
+    ("임대 말고 매매로 된 공장", ["공장"], "매매"),
+    ("공장 말고 땅은?", ["토지"], ""),
+    ("음성군 공장 매매", ["공장"], "매매"),
+])
+def test_parser_reads_excluded_deal_and_kind(q, types, deal):
+    r = RequirementParser(None, ["음성군"], []).parse(q)
+    assert (r.property_types, r.deal) == (types, deal) and not set(r.excluded_keywords) & {"공장", "매매", "임대"}
