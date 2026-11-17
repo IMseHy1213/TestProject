@@ -692,6 +692,9 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="폴더 감시 + 선제 알림")
     w.add_argument("--interval", type=int, help="초 단위 (기본 600)")
 
+    mb = sub.add_parser("mobile", help="휴대폰에서도 쓰기: 같은 와이파이에 웹 서비스를 열고 휴대폰 주소·QR 코드를 보여줌")
+    mb.add_argument("--port", type=int, default=8000)
+    mb.add_argument("--no-browser", action="store_true", help="PC 브라우저를 열지 않음")
     wb = sub.add_parser("web", help="웹 서비스 실행 (브라우저로 사용, 기본 명령)")
     wb.add_argument("--host", default="127.0.0.1", help="0.0.0.0 이면 같은 와이파이의 다른 기기에서도 접속")
     wb.add_argument("--port", type=int, default=8000)
@@ -785,6 +788,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 1
         print(f"JSON API: http://{args.host}:{args.port}/docs  (끄려면 Ctrl+C)")
         uvicorn.run(create_api(settings, start_realtime=True), host=args.host, port=args.port, log_level="warning")
+        return 0
+    if cmd == "mobile":  # 휴대폰에서도: 같은 와이파이에 열기 (0.0.0.0) + 휴대폰 주소·QR 코드
+        from .web import run
+
+        run(host="0.0.0.0", port=args.port, open_browser=not args.no_browser, settings=settings)
         return 0
     if cmd == "web":
         from .web import run

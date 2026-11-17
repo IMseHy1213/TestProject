@@ -21,11 +21,11 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "🌐 웹 서비스 - 같은 와이파이의 휴대폰에서도 접속",
+      "name": "📱 휴대폰에서도 쓰기 (같은 와이파이, 휴대폰 주소·QR 코드 표시)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
-      "args": ["web", "--host", "0.0.0.0"],
+      "args": ["mobile"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal"
     },

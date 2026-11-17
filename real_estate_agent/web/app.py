@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hmac
 import io
+import json
 import logging
 import os
 import re
@@ -826,8 +827,14 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         from ..folder_layout import make_plan
 
         layout_moves = 0 if app.config.get("SAMPLE_MODE") else len(make_plan(settings.data_dir).moves)
+        from ..mobile import phone_urls, qr_svg
+
+        phone = {"open": app.config.get("BIND_HOST") == "0.0.0.0", "urls": [], "qr": ""}
+        if phone["open"]:
+            phone["urls"] = phone_urls(app.config.get("BIND_PORT", 8000))
+            phone["qr"] = qr_svg(phone["urls"][0]) if phone["urls"] else ""
         return render_template("admin.html", data=data, data_dir=str(settings.data_dir), realtime=realtime_view(),
-                               layout_moves=layout_moves,
+                               layout_moves=layout_moves, phone=phone,
                                ready=readiness(agent, lock, app.config.get("REALTIME"), agent_service),
                                llm_status=agent.llm.status(), sync_error=state["sync_error"],
                                message=session.pop("admin_msg", ""), pw_source=auth.source,
@@ -1135,6 +1142,24 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             return redirect(url_for("admin_listings", q=added[0].listing_id))
         return go_back()
 
+    @app.get("/manifest.webmanifest")
+    def web_manifest():
+        """휴대폰 '홈 화면에 추가' 용: 앱 이름·아이콘·전체 화면."""
+        icon = lambda name: url_for("static", filename=f"icons/{name}")
+        body = {
+            "name": "토지·공장 매물 추천", "short_name": "매물 추천", "lang": "ko",
+            "description": "토지·공장 매물을 찾고 AI 상담을 받는 사무실 매물 추천",
+            "start_url": url_for("index"), "scope": "/", "display": "standalone",
+            "background_color": "#f3efe4", "theme_color": "#1f5f4a",
+            "icons": [{"src": icon("icon-192.png"), "sizes": "192x192", "type": "image/png"},
+                      {"src": icon("icon-512.png"), "sizes": "512x512", "type": "image/png"},
+                      {"src": icon("icon-maskable-512.png"), "sizes": "512x512", "type": "image/png", "purpose": "maskable"}],
+            "shortcuts": [{"name": "AI 상담", "url": url_for("agent_page")}],
+        }
+        resp = app.response_class(json.dumps(body, ensure_ascii=False), mimetype="application/manifest+json")
+        resp.headers["Cache-Control"] = "public, max-age=3600"
+        return resp
+
     @app.get("/healthz")
     def healthz():
         return jsonify(status="ok")
@@ -1164,8 +1189,11 @@ def run(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True, se
         print("     → 프로젝트 폴더의 my_api_key.py 를 열어 OPENAI_API_KEY = \"sk-...\" 에 키를 붙여넣고 저장하세요.")
     else:
         print(f"   🤖 {llm.status()}")
+    app.config["BIND_HOST"], app.config["BIND_PORT"] = host, port  # 관리자 화면의 '📱 휴대폰으로 보기'
     if host == "0.0.0.0":
-        print("   같은 와이파이의 다른 기기에서는 http://<이 PC의 IP 주소>:%d 로 접속하세요." % port)
+        from ..mobile import print_phone_help
+
+        print_phone_help(port)
     if not os.getenv("REA_ADMIN_PASSWORD"):
         print("   ※ 관리자 화면을 쓰려면 .env 에 REA_ADMIN_PASSWORD=비밀번호 를 넣으세요.")
     if open_browser:

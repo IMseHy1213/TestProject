@@ -28,7 +28,7 @@
 <p class="meta">{{ total }}건{% if pages > 1 %} · {{ page }}/{{ pages }} 쪽{% endif %}</p>
 
 {% if rows %}
-<div class="table-wrap">
+<div class="table-wrap listings-wrap">
 <table class="listings">
   <thead><tr><th>매물번호</th><th>소재지</th><th>지목</th><th class="num">면적</th><th class="num">매매가</th><th>상태</th><th></th></tr></thead>
   <tbody>
@@ -41,10 +41,10 @@
         {% if r.hidden %}<span class="tag warn">숨김</span>{% endif %}
         {% if r.web %}<span class="tag">웹 추가</span>{% endif %}
         <br><small class="muted">{{ r.file }}</small></td>
-      <td>{% if r.kind != "토지" %}<span class="tag kind">{{ r.kind }}</span> {% endif %}{{ r.jimok }}</td>
-      <td class="num">{{ r.pyeong }}평</td>
-      <td class="num">{{ r.price }}</td>
-      <td>{{ r.status }}</td>
+      <td data-label="지목">{% if r.kind != "토지" %}<span class="tag kind">{{ r.kind }}</span> {% endif %}{{ r.jimok }}</td>
+      <td class="num" data-label="면적">{{ r.pyeong }}평</td>
+      <td class="num" data-label="가격">{{ r.price }}</td>
+      <td data-label="상태">{{ r.status }}</td>
       <td><a class="btn small" href="{{ url_for('admin_listing_edit', id=r.id) }}">수정</a></td>
     </tr>
   {% endfor %}

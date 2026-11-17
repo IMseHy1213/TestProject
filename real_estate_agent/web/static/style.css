@@ -429,3 +429,19 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
   .price .pl { white-space: normal; }
   .facts .price-box.wide2 { grid-column: 1 / -1; }
 }
+
+/* 📱 휴대폰으로 보기 (관리자) */
+.phone-qr { width: 200px; max-width: 70%; background: #fff; padding: 8px; border-radius: 10px; margin: 8px 0; }
+.phone-qr svg { width: 100%; height: auto; display: block; }
+.phone-url code { font-size: 1.05rem; }
+
+/* 관리자 매물 목록: 휴대폰에서는 줄마다 카드로 (옆으로 밀지 않아도 되게) */
+@media (max-width: 640px) {
+  .listings-wrap { overflow: visible; }
+  table.listings, table.listings tbody, table.listings tr, table.listings td { display: block; width: 100%; }
+  table.listings thead { display: none; }
+  table.listings tr { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; background: var(--surface); }
+  table.listings td { border: 0; padding: 3px 0; min-width: 0 !important; white-space: normal !important; text-align: left !important; }
+  table.listings td[data-label]::before { content: attr(data-label); display: inline-block; min-width: 4.5em; color: var(--muted); font-size: .8rem; }
+  table.listings td:last-child { padding-top: 8px; }
+}

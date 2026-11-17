@@ -14,3 +14,4 @@ httpx>=0.27          # API 테스트용
 mcp>=1.10            # v0.6 MCP 서버/클라이언트 (python main.py mcp)
 langgraph>=1.0       # v0.5 Framework (선택: python main.py agent --framework langgraph)
 pytest>=8.0
+qrcode>=7.4            # 휴대폰 접속용 QR 코드 (python main.py mobile)
