@@ -83,22 +83,54 @@ class OpenAILLM(LLMClient):
     name = "openai"
 
     def __init__(self, model: str, client: Any = None):
-        try:
-            import openai
-        except ImportError as e:
-            raise LLMUnavailable("openai 패키지가 없습니다 (pip install openai)") from e
-        self._openai = openai
-        if client is not None:
-            self.client = client
-        else:
-            try:
-                self.client = openai.OpenAI(timeout=90.0, max_retries=1)
-            except Exception as e:  # OPENAI_API_KEY 없음
-                raise LLMUnavailable("OPENAI_API_KEY 가 설정되지 않았습니다 (.env 확인)", permanent=True) from e
+        """openai 패키지는 무거워서(불러오는 데 1~3초) 키가 있을 때만, 처음 쓸 때(또는 뒤에서 미리) 불러옴."""
+        import importlib.util
+        import os
+        import threading
+
+        if client is None:
+            if importlib.util.find_spec("openai") is None:
+                raise LLMUnavailable("openai 패키지가 없습니다 (pip install openai)")
+            if not os.getenv("OPENAI_API_KEY"):
+                raise LLMUnavailable("OPENAI_API_KEY 가 설정되지 않았습니다 (.env 확인)", permanent=True)
+        self._client = client
+        self._sdk = None
+        self._load_lock = threading.Lock()
         self.model = model
         self.requested_model = model
         self._use_reasoning = True
         self._model_resolved = False
+
+    # ------------------------------------------------------------------ 패키지는 필요할 때 불러옴
+    @property
+    def _openai(self):
+        if self._sdk is None:
+            with self._load_lock:
+                if self._sdk is None:
+                    import openai
+
+                    self._sdk = openai
+        return self._sdk
+
+    @property
+    def client(self):
+        if self._client is None:
+            sdk = self._openai
+            with self._load_lock:
+                if self._client is None:
+                    try:
+                        self._client = sdk.OpenAI(timeout=90.0, max_retries=1)
+                    except Exception as e:  # 키가 잘못된 형식 등
+                        raise LLMUnavailable(f"OpenAI 클라이언트 생성 실패: {e}", permanent=True) from e
+        return self._client
+
+    @client.setter
+    def client(self, value) -> None:
+        self._client = value
+
+    def warm_up(self) -> None:
+        """웹 화면을 먼저 띄우고 뒤에서 미리 불러 둠 (첫 질문이 느리지 않게)."""
+        self.client  # noqa: B018
 
     # ------------------------------------------------------------------ 공개 API
     def complete(self, system: str, user: str, max_tokens: int = 2000) -> str:

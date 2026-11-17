@@ -57,6 +57,19 @@ class LLMRouter:
         self._turn = 0  # 사용량이 같을 때 번갈아 고르기 위한 순번
         self.usage: dict[str, int] = {}  # 이번 실행에서 LLM 별로 성공한 횟수 (관리자 화면 표시)
 
+    def warm_up_background(self) -> None:
+        """AI 패키지(openai·anthropic)를 뒤에서 미리 불러 둠 - 프로그램은 바로 뜨고, 첫 질문도 느리지 않게."""
+        import threading
+
+        def go():
+            for c in list(self.clients):
+                try:
+                    getattr(c, "warm_up", lambda: None)()
+                except Exception as e:  # noqa: BLE001 - 미리 불러오기 실패는 실제로 쓸 때 다시 처리
+                    log.info("AI 미리 불러오기 실패 (%s): %s", getattr(c, "name", "?"), e)
+
+        threading.Thread(target=go, name="llm-warmup", daemon=True).start()
+
     @property
     def available(self) -> bool:
         """설정된 LLM 이 있는지 (잠깐 쉬는 중인 것 포함). 키 오류 등으로 완전히 빠진 것은 제외."""

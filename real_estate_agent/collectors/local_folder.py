@@ -79,8 +79,11 @@ def detect_source(path: Path, root: Path) -> str:
 class LocalFolderCollector(Collector):
     name = "local_folder"
 
-    def __init__(self, data_dir: Path | str):
+    def __init__(self, data_dir: Path | str, cache_path: Optional[Path] = None):
+        from .excel_cache import SheetCache
+
         self.data_dir = Path(data_dir)
+        self.cache = SheetCache(cache_path)  # 바뀌지 않은 엑셀은 다시 읽지 않음 (시작이 빨라짐)
         self.errors: list[str] = []
         self.files_read: list[str] = []
 
@@ -115,7 +118,8 @@ class LocalFolderCollector(Collector):
         records: list[RawRecord] = []
         units: dict[Path, list[Path]] = {}
         ledger_files: list[Path] = []
-        for path in self.iter_files():
+        files_now = self.iter_files()
+        for path in files_now:
             unit = self.listing_unit(path)
             if unit is None:
                 ledger_files.append(path)
@@ -127,7 +131,7 @@ class LocalFolderCollector(Collector):
             grids = []
             for f in files:
                 try:
-                    grids.extend(read_grids(f))
+                    grids.extend(read_grids(f, self.cache))
                     self.files_read.append(str(f))
                 except Exception as e:
                     self.errors.append(f"{f.name}: 읽기 실패 ({e})")
@@ -147,7 +151,7 @@ class LocalFolderCollector(Collector):
         for path in ledger_files:
             source = detect_source(path, self.data_dir)
             try:
-                rows = read_file(path)
+                rows = read_file(path, self.cache)
                 if not rows and path.suffix.lower() in GRID_FORMATS:
                     rows = self._as_single_listing(path)  # 표가 아니면 '항목 | 값' 정보지로 다시 읽기
             except Exception as e:  # 파일 하나가 깨져도 전체 수집은 계속
@@ -159,10 +163,12 @@ class LocalFolderCollector(Collector):
                 self.errors.append(f"{path.relative_to(self.data_dir)}: 매물 정보를 찾지 못했습니다 (항목 이름 확인 필요)")
             records.extend(RawRecord(data=_tag_kind(r, path, self.data_dir), source=source, source_file=str(path))
                            for r in rows)
+        self.cache.forget_missing({str(p.resolve()) for p in files_now})
+        self.cache.save()  # 다음 시작 때는 바뀐 파일만 다시 읽음
         return records
 
     def _as_single_listing(self, path: Path) -> list[dict]:
-        grids = read_grids(path)
+        grids = read_grids(path, self.cache)
         record, _ = build_listing_record(path.stem, list(path.relative_to(self.data_dir).parts[:-1]), grids,
                                          file_modified_date(path))
         has_core = (record.get("소재지") and (record.get("면적(㎡)") or record.get("건물면적(㎡)") or record.get("건물면적(평)"))
@@ -184,10 +190,10 @@ class LocalFolderCollector(Collector):
         return counts
 
 
-def read_file(path: Path) -> list[dict[str, Any]]:
+def read_file(path: Path, cache=None) -> list[dict[str, Any]]:
     ext = path.suffix.lower()
     if ext in {".xlsx", ".xlsm", ".xls"}:
-        return _read_excel(path)
+        return _read_excel(path, cache)
     if ext == ".csv":
         return _read_csv(path)
     if ext == ".json":
@@ -219,13 +225,11 @@ def _rows_to_dicts(rows: list[list[Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _read_excel(path: Path) -> list[dict[str, Any]]:
-    import pandas as pd
+def _read_excel(path: Path, cache=None) -> list[dict[str, Any]]:
+    from .excel_cache import read_sheets
 
-    sheets = pd.read_excel(path, sheet_name=None, header=None, dtype=object)
     out: list[dict[str, Any]] = []
-    for sheet_name, df in sheets.items():
-        rows = df.where(df.notna(), None).values.tolist()
+    for sheet_name, rows in read_sheets(path, cache):
         for r in _rows_to_dicts(rows):
             r.setdefault("_sheet", sheet_name)
             out.append(r)

@@ -17,21 +17,50 @@ class AnthropicLLM(LLMClient):
     name = "anthropic"
 
     def __init__(self, model: str = "claude-sonnet-5"):
-        try:
-            import anthropic
-        except ImportError as e:
-            raise LLMUnavailable("anthropic 패키지가 없습니다 (pip install anthropic)") from e
-        self._anthropic = anthropic
+        """anthropic 패키지는 무거워서(불러오는 데 2~5초) 키가 있을 때만, 처음 쓸 때(또는 뒤에서 미리) 불러옴."""
+        import importlib.util
         import os
+        import threading
 
+        if importlib.util.find_spec("anthropic") is None:
+            raise LLMUnavailable("anthropic 패키지가 없습니다 (pip install anthropic)")
         if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")):
             raise LLMUnavailable("ANTHROPIC_API_KEY 가 없습니다 (my_api_key.py 또는 관리자 화면에서 Claude 키 입력)",
                                  permanent=True)
-        try:
-            self.client = anthropic.Anthropic(timeout=90.0, max_retries=1)
-        except Exception as e:  # 자격 증명 없음
-            raise LLMUnavailable(f"Anthropic 클라이언트 생성 실패: {e}") from e
+        self._client = None
+        self._sdk = None
+        self._load_lock = threading.Lock()
         self.model = model
+
+    @property
+    def _anthropic(self):
+        if self._sdk is None:
+            with self._load_lock:
+                if self._sdk is None:
+                    import anthropic
+
+                    self._sdk = anthropic
+        return self._sdk
+
+    @property
+    def client(self):
+        if self._client is None:
+            sdk = self._anthropic
+            with self._load_lock:
+                if self._client is None:
+                    try:
+                        self._client = sdk.Anthropic(timeout=90.0, max_retries=1)
+                    except Exception as e:  # 자격 증명 없음
+                        raise LLMUnavailable(f"Anthropic 클라이언트 생성 실패: {e}") from e
+        return self._client
+
+    @client.setter
+    def client(self, value) -> None:
+        self._client = value
+
+    def warm_up(self) -> None:
+        """웹 화면을 먼저 띄우고 뒤에서 미리 불러 둠 (첫 질문이 느리지 않게)."""
+        self.client  # noqa: B018
 
     def complete(self, system: str, user: str, max_tokens: int = 2000) -> str:
         resp = self._create(system=system, max_tokens=max_tokens, messages=[{"role": "user", "content": user}])

@@ -76,7 +76,9 @@ class RealEstateAgent:
         self.storage = storage or Storage(settings.db_path)
         self.llm = llm if llm is not None else LLMRouter(settings.llm_providers, settings.anthropic_model,
                                                          settings.openai_model)
-        self.collector = LocalFolderCollector(settings.data_dir)
+        # 읽은 엑셀 기억 (DB 옆 '…_filecache.json'): 바뀌지 않은 매물 파일은 다시 읽지 않아 시작이 빠름
+        cache = Path(settings.db_path).with_name(Path(settings.db_path).stem + "_filecache.json")
+        self.collector = LocalFolderCollector(settings.data_dir, cache_path=cache)
         self.market_client = LandTradePriceClient(settings.data_go_kr_key)
         self.geocoder = VWorldGeocoder(settings.vworld_key)
         self.market_price: dict[str, dict[str, float]] = {}

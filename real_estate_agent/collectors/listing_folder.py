@@ -62,14 +62,13 @@ def split_name(name: str) -> tuple[str, list[str]]:
 
 
 # ---------------------------------------------------------------- 엑셀/CSV -> 셀 격자
-def read_grids(path: Path) -> list[list[list[Any]]]:
-    """시트마다 2차원 셀 목록."""
+def read_grids(path: Path, cache=None) -> list[list[list[Any]]]:
+    """시트마다 2차원 셀 목록. 엑셀은 빠른 읽기 + 바뀌지 않은 파일은 기억해 둔 결과 (excel_cache)."""
     ext = path.suffix.lower()
     if ext in {".xlsx", ".xlsm", ".xls"}:
-        import pandas as pd
+        from .excel_cache import read_sheets
 
-        sheets = pd.read_excel(path, sheet_name=None, header=None, dtype=object)
-        return [df.where(df.notna(), None).values.tolist() for df in sheets.values()]
+        return [grid for _, grid in read_sheets(path, cache)]
     if ext == ".csv":
         for enc in ("utf-8-sig", "cp949", "euc-kr"):
             try:

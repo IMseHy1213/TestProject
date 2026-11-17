@@ -1181,6 +1181,7 @@ def run(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True, se
     from waitress import serve
 
     app = create_app(settings)
+    app.config["AGENT"].llm.warm_up_background()  # AI 패키지는 화면을 띄운 뒤 뒤에서 불러옴
     url = f"http://{'localhost' if host in {'127.0.0.1', '0.0.0.0'} else host}:{port}"
     print(f"\n🌐 웹 서비스 시작: {url}   (종료: Ctrl+C)")
     llm = app.config["AGENT"].llm
