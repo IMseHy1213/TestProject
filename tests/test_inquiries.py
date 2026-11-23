@@ -14,7 +14,7 @@ from real_estate_agent.config import Settings
 from real_estate_agent.web.app import create_app
 
 SAMPLE_LAND = Path(__file__).resolve().parent.parent / "sample_data" / "토지"
-GOOD = {"kind": "공장", "name": "홍길동", "phone": "010 2468 1357", "agree": "1",
+GOOD = {"purpose": "찾아요", "kind": "공장", "name": "홍길동", "phone": "010 2468 1357", "agree": "1",
         "message": "음성군 대소면 쪽 임대 공장 200평 정도 찾습니다"}
 
 
@@ -92,13 +92,13 @@ def test_submit_saves_and_texts_the_office(web):
     assert call["url"] == inquiries.SOLAPI_URL
     msg = call["json"]["message"]
     assert (msg["to"], msg["from"]) == ("01099990000", "0438775242")
-    assert "[매물 접수] 공장" in msg["text"] and "홍길동" in msg["text"] and "010-2468-1357" in msg["text"]
+    assert "[매물 접수 - 찾아요] 공장" in msg["text"] and "홍길동" in msg["text"] and "010-2468-1357" in msg["text"]
     assert "200평" in msg["text"]
     assert call["headers"]["Authorization"].startswith("HMAC-SHA256 apiKey=NCSTESTKEY1234, date=")
 
 
 @pytest.mark.parametrize("bad, err", [
-    ({"kind": ""}, "매물 종류"), ({"name": ""}, "이름"), ({"phone": "123"}, "전화번호"),
+    ({"kind": ""}, "매물 종류"), ({"purpose": ""}, "내놓으시는지"), ({"name": ""}, "이름"), ({"phone": "123"}, "전화번호"),
     ({"message": ""}, "문의 사항"), ({"agree": ""}, "동의"), ({"message": "가" * 501}, "500자"),
 ])
 def test_validation(web, bad, err):
@@ -189,3 +189,29 @@ def test_auth_header_and_phone_format():
     assert inquiries.normalize_phone("0438775242") == "043-877-5242"
     assert inquiries.normalize_phone("02-123-4567") == "02-123-4567"
     assert inquiries.normalize_phone("1234") == ""
+
+
+def test_owner_can_list_own_property(web):
+    """'매물을 내놓아요': 자기 부동산을 사무실에 내놓는 손님도 접수, 문자와 관리자 목록에 구분이 보임."""
+    app, c, fake = web
+    page = c.get("/").get_data(as_text=True)
+    assert 'name="purpose" value="내놓아요"' in page and "찾는(내놓는) 매물 종류" in page
+    submit(c, {**GOOD, "purpose": "내놓아요", "kind": "아파트", "message": "진천읍 아파트 32평 매매로 내놓고 싶어요"})
+    rows = wait_sent(app)
+    assert rows[0]["purpose"] == "내놓아요" and rows[0]["kind"] == "아파트"
+    assert fake.calls[0]["json"]["message"]["text"].startswith("[매물 접수 - 내놓아요] 아파트")
+    c.post("/admin/login", data={"password": "pw1234", "csrf": token(c, "/admin")})
+    assert "내놓아요" in c.get("/admin/inquiries").get_data(as_text=True)
+
+
+def test_old_inquiry_table_gets_purpose_column(tmp_path):
+    import sqlite3
+
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE inquiries (id INTEGER PRIMARY KEY AUTOINCREMENT, created TEXT NOT NULL, kind TEXT NOT NULL,"
+                 " name TEXT NOT NULL, phone TEXT NOT NULL, message TEXT NOT NULL, sms_status TEXT NOT NULL DEFAULT 'pending',"
+                 " sms_detail TEXT NOT NULL DEFAULT '', handled INTEGER NOT NULL DEFAULT 0)")
+    conn.execute("INSERT INTO inquiries (created, kind, name, phone, message) VALUES ('2026-11-20T10:00:00','토지','김','010-1111-2222','x')")
+    rows = inquiries.recent(conn)
+    assert rows[0]["purpose"] == "찾아요"

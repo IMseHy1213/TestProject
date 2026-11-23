@@ -30,6 +30,7 @@ from typing import Any, Optional
 log = logging.getLogger(__name__)
 
 KINDS = ["토지", "공장", "창고", "아파트", "빌라·다세대", "단독·전원주택", "상가", "사무실", "기타"]
+PURPOSES = ["찾아요", "내놓아요"]  # 매물을 찾는 손님 / 자기 매물을 우리 사무실에 내놓는 손님
 MAX_NAME, MAX_MESSAGE = 20, 500
 SOLAPI_URL = "https://api.solapi.com/messages/v4/send"
 
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS inquiries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created TEXT NOT NULL,
     kind TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT '찾아요',    -- 찾아요 / 내놓아요
     name TEXT NOT NULL,
     phone TEXT NOT NULL,
     message TEXT NOT NULL,
@@ -71,14 +73,18 @@ class InquiryForm:
 
 
 def parse_form(form) -> InquiryForm:
-    raw = {k: (form.get(k) or "").strip() for k in ("kind", "kind_other", "name", "phone", "message", "agree", "website")}
-    out = InquiryForm(values={k: raw[k] for k in ("kind", "kind_other", "name", "phone", "message")})
+    raw = {k: (form.get(k) or "").strip()
+           for k in ("purpose", "kind", "kind_other", "name", "phone", "message", "agree", "website")}
+    out = InquiryForm(values={k: raw[k] for k in ("purpose", "kind", "kind_other", "name", "phone", "message")})
     if raw["website"]:  # 사람에게는 보이지 않는 칸 - 채워져 있으면 자동 입력 프로그램
         out.spam = True
         return out
+    purpose = raw["purpose"] if raw["purpose"] in PURPOSES else ""
+    if not purpose:
+        out.errors.append("매물을 찾으시는지, 내놓으시는지 골라 주세요.")
     kind = raw["kind"] if raw["kind"] in KINDS else ""
     if not kind:
-        out.errors.append("찾으시는 매물 종류를 골라 주세요.")
+        out.errors.append("찾으시는(내놓으시는) 매물 종류를 골라 주세요.")
     elif kind == "기타" and raw["kind_other"]:
         kind = f"기타({raw['kind_other'][:20]})"
     name = re.sub(r"\s+", " ", raw["name"])
@@ -91,12 +97,13 @@ def parse_form(form) -> InquiryForm:
         out.errors.append("연락받으실 전화번호를 정확히 적어 주세요. (예: 010-1234-5678)")
     message = raw["message"].replace("\r\n", "\n").strip()
     if not message:
-        out.errors.append("찾으시는 매물이나 문의 사항을 적어 주세요. (지역·예산·면적 등)")
+        out.errors.append("문의 사항을 적어 주세요. (지역·예산·면적, 내놓으실 매물의 위치·면적·희망 가격 등)")
     elif len(message) > MAX_MESSAGE:
         out.errors.append(f"문의 사항은 {MAX_MESSAGE}자 안으로 적어 주세요.")
     if raw["agree"] != "1":
         out.errors.append("연락을 위해 이름·전화번호를 받는 것(개인정보 수집·이용)에 동의해 주세요.")
-    out.values.update(kind=kind or raw["kind"], name=name, phone=phone or raw["phone"], message=message)
+    out.values.update(purpose=purpose or raw["purpose"], kind=kind or raw["kind"], name=name,
+                      phone=phone or raw["phone"], message=message)
     return out
 
 
@@ -123,14 +130,17 @@ class RateLimit:
 # ---------------------------------------------------------------------- 저장
 def ensure_table(conn) -> None:
     conn.executescript(SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(inquiries)")}
+    if "purpose" not in cols:  # 예전에 만든 표에 '찾아요/내놓아요' 칸 추가
+        conn.execute("ALTER TABLE inquiries ADD COLUMN purpose TEXT NOT NULL DEFAULT '찾아요'")
     conn.commit()
 
 
 def save(conn, values: dict[str, str]) -> int:
     ensure_table(conn)
-    cur = conn.execute("INSERT INTO inquiries (created, kind, name, phone, message) VALUES (?,?,?,?,?)",
-                       (datetime.now().isoformat(timespec="seconds"), values["kind"], values["name"],
-                        values["phone"], values["message"]))
+    cur = conn.execute("INSERT INTO inquiries (created, purpose, kind, name, phone, message) VALUES (?,?,?,?,?,?)",
+                       (datetime.now().isoformat(timespec="seconds"), values.get("purpose") or "찾아요",
+                        values["kind"], values["name"], values["phone"], values["message"]))
     conn.commit()
     return int(cur.lastrowid)
 
@@ -165,7 +175,8 @@ def delete(conn, inquiry_id: int) -> None:
 def sms_text(row: dict) -> str:
     """문자 내용 (길면 장문 문자로 자동 전환)."""
     when = (row.get("created") or "")[:16].replace("T", " ")
-    return (f"[매물 접수] {row['kind']}\n이름: {row['name']}\n전화: {row['phone']}\n"
+    purpose = row.get("purpose") or "찾아요"
+    return (f"[매물 접수 - {purpose}] {row['kind']}\n이름: {row['name']}\n전화: {row['phone']}\n"
             f"문의: {row['message']}\n({when} 홈페이지 접수)")
 
 

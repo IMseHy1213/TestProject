@@ -14,7 +14,7 @@
   {% for r in rows %}
     <tr class="{% if r.handled %}is-hidden{% endif %}">
       <td data-label="접수">{{ r.created[:16] | replace('T', ' ') }}</td>
-      <td data-label="종류"><span class="tag kind">{{ r.kind }}</span></td>
+      <td data-label="종류"><span class="tag{% if r.purpose == "내놓아요" %} warn{% endif %}">{{ r.purpose or "찾아요" }}</span> <span class="tag kind">{{ r.kind }}</span></td>
       <td data-label="손님">{{ r.name }}<br><a href="tel:{{ r.phone | replace('-', '') }}">{{ r.phone }}</a></td>
       <td data-label="문의" class="inq-msg">{{ r.message }}</td>
       <td data-label="문자">

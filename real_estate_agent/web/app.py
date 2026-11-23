@@ -57,6 +57,7 @@ OFFICE_INFO = {
     "hours": [("월~토", "10:00 ~ 21:00"), ("일요일", "10:00 ~ 18:00")],
 }
 from ..inquiries import KINDS as INQUIRY_KINDS  # noqa: E402
+from ..inquiries import PURPOSES as INQUIRY_PURPOSES  # noqa: E402
 from ..inquiries import RateLimit as InquiryRateLimit  # noqa: E402
 
 QUICK_REASONS = ["너무 비싸요", "너무 좁아요", "위치가 별로예요", "도로가 별로예요", "채광이 별로예요"]
@@ -309,7 +310,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                llm_wait=agent.llm.seconds_until_retry(), llm_reason=agent.llm.off_reason(),
                                llm_cool_reason=agent.llm.cooling_reason(),
                                llm_names=agent.llm.names(), no_data=count == 0,
-                               inquiry_kinds=INQUIRY_KINDS, inquiry=session.pop("inquiry", None))
+                               inquiry_kinds=INQUIRY_KINDS, inquiry_purposes=INQUIRY_PURPOSES,
+                               inquiry=session.pop("inquiry", None))
 
     # ------------------------------------------------------------ 매물 접수 (첫 화면 아래 폼 → 저장 + 문자)
     inquiry_limit = InquiryRateLimit(limit=3, per_sec=600)  # 같은 곳에서 10분에 3건까지 (문자비·장난 방지)
