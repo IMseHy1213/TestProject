@@ -18,7 +18,9 @@ LEGACY_DATA_DIRS = {r"E:\부동산매물백업\매물폴더\토지", "E:/부동�
 
 KEY_FILE = PROJECT_ROOT / "my_api_key.py"  # 코드에 직접 넣는 API 키 (GitHub 에 올라가지 않음)
 KEY_FILE_EXAMPLE = PROJECT_ROOT / "my_api_key.example.py"
-KEY_NAMES = ("OPENAI_API_KEY", "OPENAI_MODEL", "ANTHROPIC_API_KEY")
+KEY_NAMES = ("OPENAI_API_KEY", "OPENAI_MODEL", "ANTHROPIC_API_KEY",
+             # 매물 접수 문자 알림 (솔라피) - inquiries.py
+             "SMS_TO", "SMS_FROM", "SOLAPI_API_KEY", "SOLAPI_API_SECRET")
 
 
 def load_keys() -> list[str]:

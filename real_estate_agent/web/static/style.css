@@ -445,3 +445,31 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
   table.listings td[data-label]::before { content: attr(data-label); display: inline-block; min-width: 4.5em; color: var(--muted); font-size: .8rem; }
   table.listings td:last-child { padding-top: 8px; }
 }
+
+/* 📝 매물 접수 (첫 화면, 사무실 안내 바로 아래) */
+.inquiry { max-width: 720px; margin: 22px auto 0; text-align: left; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; padding: 18px 20px; }
+.inquiry h2 { margin: 0 0 4px; font-size: 1.2rem; }
+.inquiry-form label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: .92rem; }
+.inquiry-form input:not([type=radio]):not([type=checkbox]), .inquiry-form textarea { width: 100%; box-sizing: border-box; }
+.inquiry-form .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.inquiry-form .kinds { border: 0; padding: 0; margin: 10px 0 0; }
+.inquiry-form .kinds legend { font-weight: 600; font-size: .92rem; margin-bottom: 6px; }
+.inquiry-form .kind-chip { display: inline-block; margin: 0 6px 6px 0; font-weight: 500; }
+.inquiry-form .kind-chip input { position: absolute; opacity: 0; }
+.inquiry-form .kind-chip span { display: inline-block; padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); cursor: pointer; }
+.inquiry-form .kind-chip input:checked + span { background: var(--brand); color: #fff; border-color: var(--brand); }
+.inquiry-form .kind-chip input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 2px; }
+.inquiry-form .agree { font-weight: 400; display: flex; gap: 8px; align-items: flex-start; }
+.inquiry-form .agree input { margin-top: 4px; }
+.inquiry-form button { margin-top: 12px; width: 100%; }
+.inquiry .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.notice.ok { background: var(--brand-soft); color: var(--brand); }
+@media (max-width: 480px) { .inquiry-form .two { grid-template-columns: 1fr; } .inquiry { padding: 14px; } }
+.inq-msg { white-space: pre-wrap; min-width: 220px; }
+.inquiry-form input:not([type=radio]):not([type=checkbox]), .inquiry-form textarea {
+  font: inherit; padding: 11px 12px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink); }
+.inquiry-form input:focus, .inquiry-form textarea:focus { outline: none; border-color: var(--brand); }
+.inquiry-form textarea { resize: vertical; }
+.inquiry-form .kind-chip span:hover { border-color: var(--brand); }
+.inquiry-form .kinds input[name=kind_other] { margin-top: 4px; }

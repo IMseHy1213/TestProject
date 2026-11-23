@@ -95,6 +95,41 @@ def llm_check(agent) -> int:
     return 0 if ok else 1
 
 
+def save_sms_settings(to: str = "", sender: str = "", api_key: str = "", api_secret: str = "") -> None:
+    """관리자 화면의 '매물 접수 문자 설정' -> my_api_key.py (GitHub 에 올라가지 않는 파일). 비워 둔 칸은 바꾸지 않음."""
+    import os
+    import re as _re
+
+    from .config import KEY_FILE, KEY_FILE_EXAMPLE
+    from .inquiries import normalize_phone
+
+    values = {}
+    for name, raw, label in (("SMS_TO", to, "받는 번호"), ("SMS_FROM", sender, "보내는 번호")):
+        if raw.strip():
+            phone = normalize_phone(raw)
+            if not phone:
+                raise ValueError(f"{label} 형식이 아닙니다 (예: 010-1234-5678)")
+            values[name] = phone
+    for name, raw, label in (("SOLAPI_API_KEY", api_key, "API Key"), ("SOLAPI_API_SECRET", api_secret, "API Secret")):
+        raw = raw.strip()
+        if raw:
+            if not _re.fullmatch(r"[A-Za-z0-9_\-]{10,80}", raw):
+                raise ValueError(f"솔라피 {label} 형식이 아닙니다 (영문·숫자 10자 이상)")
+            values[name] = raw
+    if not values:
+        raise ValueError("저장할 값이 없습니다")
+    text = (KEY_FILE.read_text(encoding="utf-8") if KEY_FILE.exists()
+            else KEY_FILE_EXAMPLE.read_text(encoding="utf-8") if KEY_FILE_EXAMPLE.exists() else "")
+    for name, value in values.items():
+        line = f'{name} = "{value}"'
+        if _re.search(rf"^\s*{name}\s*=.*$", text, _re.M):
+            text = _re.sub(rf"^\s*{name}\s*=.*$", lambda _m: line, text, count=1, flags=_re.M)
+        else:
+            text += f"\n{line}\n"
+        os.environ[name] = value  # 다시 켜지 않아도 바로 적용
+    KEY_FILE.write_text(text, encoding="utf-8")
+
+
 def save_key_to_code_file(key: str = "", model: str = "", anthropic_key: str = "") -> None:
     """관리자 화면에서 입력한 GPT/Claude 키를 my_api_key.py 에 저장 (GitHub 에 올라가지 않는 파일).
     비워 둔 키는 바꾸지 않음."""

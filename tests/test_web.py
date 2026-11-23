@@ -48,7 +48,7 @@ def act(client, act, text=""):
 def test_index_has_search_and_no_name_field(make_client):
     html = make_client().get("/").get_data(as_text=True)
     assert 'name="q"' in html and "찾아보기" in html
-    assert "이름" not in html  # 손님 이름 입력 없음
+    assert "이름" not in html[:html.index('id="inquiry"')]  # 검색에는 손님 이름 입력 없음 (이름은 아래 '매물 접수' 폼에만)
     assert "보유 매물(토지·공장) <strong>22</strong>건" in html
 
 

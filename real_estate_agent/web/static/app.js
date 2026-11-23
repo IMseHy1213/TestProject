@@ -147,3 +147,10 @@ document.querySelectorAll("form").forEach(function (f) {
   if (deal) deal.addEventListener("change", update);
   update();
 })();
+
+// data-confirm 이 있는 버튼: 누르기 전에 한 번 더 확인 (예: 접수 내용 지우기)
+document.querySelectorAll("button[data-confirm]").forEach(function (btn) {
+  btn.addEventListener("click", function (ev) {
+    if (!window.confirm(btn.getAttribute("data-confirm"))) ev.preventDefault();
+  });
+});

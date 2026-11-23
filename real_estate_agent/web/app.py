@@ -56,6 +56,9 @@ OFFICE_INFO = {
     "phone": "043-877-5242",
     "hours": [("월~토", "10:00 ~ 21:00"), ("일요일", "10:00 ~ 18:00")],
 }
+from ..inquiries import KINDS as INQUIRY_KINDS  # noqa: E402
+from ..inquiries import RateLimit as InquiryRateLimit  # noqa: E402
+
 QUICK_REASONS = ["너무 비싸요", "너무 좁아요", "위치가 별로예요", "도로가 별로예요", "채광이 별로예요"]
 EXAMPLES = ["음성군 채광이 좋은 2억원대 땅", "양평 전원주택 지을 땅 200평 정도 3억 이하",
             "여주에 창고 지을 땅 500평 이상", "귀농용 논이나 밭 1000평 2억 안쪽"]
@@ -305,7 +308,88 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                llm_on=agent.llm.available, llm_mode=agent.llm.mode(),
                                llm_wait=agent.llm.seconds_until_retry(), llm_reason=agent.llm.off_reason(),
                                llm_cool_reason=agent.llm.cooling_reason(),
-                               llm_names=agent.llm.names(), no_data=count == 0)
+                               llm_names=agent.llm.names(), no_data=count == 0,
+                               inquiry_kinds=INQUIRY_KINDS, inquiry=session.pop("inquiry", None))
+
+    # ------------------------------------------------------------ 매물 접수 (첫 화면 아래 폼 → 저장 + 문자)
+    inquiry_limit = InquiryRateLimit(limit=3, per_sec=600)  # 같은 곳에서 10분에 3건까지 (문자비·장난 방지)
+
+    @app.post("/inquiry")
+    def inquiry_submit():
+        from .. import inquiries
+
+        form = inquiries.parse_form(request.form)
+        if form.spam:  # 자동 입력 프로그램: 접수된 것처럼 보이고 저장·문자는 하지 않음
+            session["inquiry"] = {"ok": True}
+            return redirect(url_for("index") + "#inquiry")
+        if form.errors:
+            session["inquiry"] = {"errors": form.errors, "values": form.values}
+            return redirect(url_for("index") + "#inquiry")
+        if not inquiry_limit.allow(request.remote_addr or "?"):
+            session["inquiry"] = {"errors": ["접수가 너무 잦습니다. 잠시 뒤에 다시 보내 주시거나 전화로 문의해 주세요."],
+                                  "values": form.values}
+            return redirect(url_for("index") + "#inquiry")
+        with lock:
+            inquiry_id = inquiries.save(agent.storage.conn, form.values)
+        inquiries.notify_background(lambda: agent.storage.conn, inquiry_id,
+                                    practice=bool(app.config.get("SAMPLE_MODE")), lock=lock)
+        session["inquiry"] = {"ok": True}
+        return redirect(url_for("index") + "#inquiry")
+
+    @app.get("/admin/inquiries")
+    def admin_inquiries():
+        from .. import inquiries
+
+        if not is_admin():
+            return login_page()
+        with lock:
+            rows = inquiries.recent(agent.storage.conn, 100)
+        cfg = inquiries.SmsConfig.from_env()
+        return render_template("inquiries.html", rows=rows, sms_ready=cfg.ready, sms_missing=cfg.missing(),
+                               sms_to=cfg.to, sms_from=cfg.sender, has_key=bool(cfg.api_key),
+                               message=session.pop("admin_msg", ""))
+
+    @app.post("/admin/inquiries/action")
+    def admin_inquiry_action():
+        from .. import inquiries
+
+        if not is_admin():
+            abort(403)
+        op = request.form.get("op", "")
+        if op == "settings":
+            from ..setup_tools import save_sms_settings
+
+            try:
+                save_sms_settings(request.form.get("sms_to", ""), request.form.get("sms_from", ""),
+                                  request.form.get("api_key", ""), request.form.get("api_secret", ""))
+                session["admin_msg"] = "✅ 문자 설정을 저장했습니다 (my_api_key.py). '시험 문자 보내기' 로 확인해 보세요."
+            except ValueError as e:
+                session["admin_msg"] = f"❌ {e}"
+        elif op == "test":
+            try:
+                status = inquiries.send_sms("[매물 추천] 매물 접수 문자 알림 시험입니다.")
+                session["admin_msg"] = f"✅ 시험 문자를 보냈습니다 ({status}). 휴대폰을 확인하세요."
+            except inquiries.SmsError as e:
+                session["admin_msg"] = f"❌ {e}"
+        else:
+            try:
+                inquiry_id = int(request.form.get("id", ""))
+            except ValueError:
+                abort(400)
+            if op == "resend":
+                status = inquiries.notify(lambda: agent.storage.conn, inquiry_id, lock=lock)
+                session["admin_msg"] = {"sent": "✅ 문자를 다시 보냈습니다.", "off": "❌ 문자 설정이 없어 보내지 못했습니다.",
+                                        "failed": "❌ 문자 발송에 실패했습니다. 아래 표의 '문자' 칸을 확인하세요."}.get(status, status)
+            elif op in {"done", "undone"}:
+                with lock:
+                    inquiries.set_handled(agent.storage.conn, inquiry_id, op == "done")
+            elif op == "delete":
+                with lock:
+                    inquiries.delete(agent.storage.conn, inquiry_id)
+                session["admin_msg"] = "🗑 접수 내용(이름·전화번호 포함)을 지웠습니다."
+            else:
+                abort(400)
+        return redirect(url_for("admin_inquiries"))
 
     @app.post("/search")
     def search():
@@ -827,6 +911,11 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         from ..folder_layout import make_plan
 
         layout_moves = 0 if app.config.get("SAMPLE_MODE") else len(make_plan(settings.data_dir).moves)
+        from .. import inquiries as _inq
+
+        with lock:
+            _inq.ensure_table(agent.storage.conn)
+            inquiry_open = agent.storage.conn.execute("SELECT COUNT(*) FROM inquiries WHERE handled=0").fetchone()[0]
         from ..mobile import phone_urls, qr_svg
 
         phone = {"open": app.config.get("BIND_HOST") == "0.0.0.0", "urls": [], "qr": ""}
@@ -834,7 +923,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             phone["urls"] = phone_urls(app.config.get("BIND_PORT", 8000))
             phone["qr"] = qr_svg(phone["urls"][0]) if phone["urls"] else ""
         return render_template("admin.html", data=data, data_dir=str(settings.data_dir), realtime=realtime_view(),
-                               layout_moves=layout_moves, phone=phone,
+                               layout_moves=layout_moves, phone=phone, inquiry_open=inquiry_open,
                                ready=readiness(agent, lock, app.config.get("REALTIME"), agent_service),
                                llm_status=agent.llm.status(), sync_error=state["sync_error"],
                                message=session.pop("admin_msg", ""), pw_source=auth.source,

@@ -17,3 +17,13 @@ OPENAI_MODEL = ""
 
 # (선택) Claude 도 쓰려면 Anthropic 키
 ANTHROPIC_API_KEY = ""
+
+# (선택) 첫 화면 '매물 접수' 를 문자로 받기 - 문자 서비스 '솔라피(solapi.com)' 가입 후
+#   SMS_TO   : 문자를 받을 번호 (예: 사무실 휴대폰 010-0000-0000)
+#   SMS_FROM : 보내는 번호 - 솔라피에 '발신번호'로 등록(본인 인증)한 번호
+#   SOLAPI_API_KEY / SOLAPI_API_SECRET : 솔라피 > 개발/연동 > API Key 관리 에서 만든 키
+# 관리자 화면의 '📨 매물 접수 문자 설정' 에서 넣어도 이 파일에 저장됩니다.
+SMS_TO = ""
+SMS_FROM = ""
+SOLAPI_API_KEY = ""
+SOLAPI_API_SECRET = ""
