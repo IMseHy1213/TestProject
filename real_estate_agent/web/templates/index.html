@@ -41,54 +41,5 @@
 </section>
 {% endblock %}
 
-{% block after_office %}
-<section class="inquiry" id="inquiry" aria-labelledby="inquiry-title">
-  <h2 id="inquiry-title">📝 매물 접수</h2>
-  <p class="meta">보여드린 매물이 마음에 들지 않거나 따로 찾으시는 매물이 있으면, 또는 <strong>가지고 계신 부동산을
-    저희 사무실에 내놓으시려면</strong> 남겨 주세요. 확인하고 연락드리겠습니다.</p>
-  {% if inquiry and inquiry.ok %}
-    <p class="notice ok" role="status">✅ 접수되었습니다. 확인하는 대로 남겨 주신 번호로 연락드리겠습니다.
-      급하시면 <a href="tel:{{ office.phone | replace('-', '') }}">{{ office.phone }}</a> 로 전화 주세요.</p>
-  {% else %}
-    {% if inquiry and inquiry.errors %}
-      <div class="notice warn" role="alert"><ul>{% for e in inquiry.errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
-    {% endif %}
-    {% set v = (inquiry.values if inquiry and inquiry.values else {}) %}
-    <form method="post" action="{{ url_for('inquiry_submit') }}" class="inquiry-form">
-      <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-      <div class="hp" aria-hidden="true"><label>홈페이지<input name="website" tabindex="-1" autocomplete="off"></label></div>
-      <fieldset class="kinds purposes">
-        <legend>접수 구분 <span class="req">필수</span></legend>
-        {% for p in inquiry_purposes %}
-          <label class="kind-chip"><input type="radio" name="purpose" value="{{ p }}" required {% if (v.purpose or '찾아요') == p %}checked{% endif %}><span>{{ '🔍 매물을 찾아요' if p == '찾아요' else '🏠 매물을 내놓아요' }}</span></label>
-        {% endfor %}
-      </fieldset>
-      <fieldset class="kinds">
-        <legend>찾는(내놓는) 매물 종류 <span class="req">필수</span></legend>
-        {% for k in inquiry_kinds %}
-          <label class="kind-chip"><input type="radio" name="kind" value="{{ k }}" required {% if v.kind == k or (v.kind or '').startswith(k ~ '(') %}checked{% endif %}><span>{{ k }}</span></label>
-        {% endfor %}
-        <input name="kind_other" maxlength="20" placeholder="기타를 고르셨다면 (예: 축사, 펜션)" value="{{ v.kind_other or '' }}" aria-label="기타 매물 종류">
-      </fieldset>
-      <div class="two">
-        <div>
-          <label for="iq-name">이름 <span class="req">필수</span></label>
-          <input id="iq-name" name="name" required maxlength="20" autocomplete="name" value="{{ v.name or '' }}" placeholder="홍길동">
-        </div>
-        <div>
-          <label for="iq-phone">전화번호 <span class="req">필수</span></label>
-          <input id="iq-phone" name="phone" required maxlength="20" inputmode="tel" autocomplete="tel" value="{{ v.phone or '' }}" placeholder="010-1234-5678">
-        </div>
-      </div>
-      <label for="iq-message">문의 사항 <span class="req">필수</span></label>
-      <textarea id="iq-message" name="message" required maxlength="500" rows="4"
-                placeholder="예) 음성군 대소면 쪽 창고 지을 땅 500평 정도, 3억 이하로 찾습니다 / 진천군 공장 매매로 내놓고 싶어요">{{ v.message or '' }}</textarea>
-      <label class="check agree"><input type="checkbox" name="agree" value="1" required>
-        연락을 위해 <strong>이름·전화번호·문의 내용</strong>을 받는 것에 동의합니다
-        <small class="muted">(상담 목적으로만 쓰고, 상담이 끝나면 지웁니다)</small></label>
-      <button class="btn primary">제출하기</button>
-    </form>
-  {% endif %}
-</section>
-{% endblock %}
+
 {% block scripts %}<script src="{{ url_for('static', filename='app.js') }}"></script>{% endblock %}

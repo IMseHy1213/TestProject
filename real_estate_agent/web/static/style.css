@@ -473,3 +473,9 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 .inquiry-form textarea { resize: vertical; }
 .inquiry-form .kind-chip span:hover { border-color: var(--brand); }
 .inquiry-form .kinds input[name=kind_other] { margin-top: 4px; }
+
+/* 📝 매물 접수로 바로 가기 (위쪽 메뉴, PC·휴대폰) */
+.nav-inquiry { background: var(--brand); color: #fff !important; padding: 6px 12px; border-radius: 999px; text-decoration: none; font-weight: 600; white-space: nowrap; }
+.nav-inquiry:hover { opacity: .9; }
+#inquiry { scroll-margin-top: 12px; }
+@media (max-width: 480px) { .nav-inquiry { padding: 5px 10px; font-size: .9rem; } }

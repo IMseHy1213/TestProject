@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, send_file, session, url_for
 
 from ..admin_auth import MIN_LENGTH as MIN_PASSWORD_LEN
 from ..admin_auth import AdminAuth, auth_file
@@ -268,6 +268,25 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         return _json.dumps(value, ensure_ascii=False, default=str)
 
     @app.context_processor
+    def inject_inquiry():
+        """📝 매물 접수 폼: 관리자 화면이 아닌 모든 손님 화면(첫 화면·AI 상담·검색 결과)에 넣음."""
+        if request.path.startswith("/admin") or request.endpoint in {"admin", "web_manifest"}:
+            return {"show_inquiry": False}
+        if "_inquiry_state" not in g:
+            g._inquiry_state = session.pop("inquiry", None)  # 제출 결과(접수됨/오류)는 한 번만 보여줌
+        return {"show_inquiry": True, "inquiry_kinds": INQUIRY_KINDS, "inquiry_purposes": INQUIRY_PURPOSES,
+                "inquiry": g._inquiry_state}
+
+    @app.url_defaults
+    def static_version(endpoint, values):
+        """style.css·app.js 주소 끝에 수정 시각을 붙임 -> 프로그램을 고치면 브라우저가 옛 파일을 쓰지 않음."""
+        if endpoint == "static" and "filename" in values and "v" not in values:
+            try:
+                values["v"] = int((Path(app.static_folder) / values["filename"]).stat().st_mtime)
+            except OSError:
+                pass
+
+    @app.context_processor
     def inject():
         return {"csrf_token": csrf_token, "is_admin": is_admin(), "format_price": format_price,
                 "upload_folders": lambda: destination_folders(settings.data_dir),
@@ -309,11 +328,15 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                llm_on=agent.llm.available, llm_mode=agent.llm.mode(),
                                llm_wait=agent.llm.seconds_until_retry(), llm_reason=agent.llm.off_reason(),
                                llm_cool_reason=agent.llm.cooling_reason(),
-                               llm_names=agent.llm.names(), no_data=count == 0,
-                               inquiry_kinds=INQUIRY_KINDS, inquiry_purposes=INQUIRY_PURPOSES,
-                               inquiry=session.pop("inquiry", None))
+                               llm_names=agent.llm.names(), no_data=count == 0)
 
     # ------------------------------------------------------------ 매물 접수 (첫 화면 아래 폼 → 저장 + 문자)
+    def inquiry_back() -> str:
+        """제출 뒤 폼을 보낸 화면(첫 화면·AI 상담·검색 결과)으로 돌아가 폼 위치에서 결과를 보여줌."""
+        back = request.form.get("back", "")
+        safe = back.startswith("/") and not back.startswith("//") and not back.startswith("/admin") and len(back) < 100
+        return (back if safe else url_for("index")) + "#inquiry"
+
     inquiry_limit = InquiryRateLimit(limit=3, per_sec=600)  # 같은 곳에서 10분에 3건까지 (문자비·장난 방지)
 
     @app.post("/inquiry")
@@ -323,20 +346,20 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         form = inquiries.parse_form(request.form)
         if form.spam:  # 자동 입력 프로그램: 접수된 것처럼 보이고 저장·문자는 하지 않음
             session["inquiry"] = {"ok": True}
-            return redirect(url_for("index") + "#inquiry")
+            return redirect(inquiry_back())
         if form.errors:
             session["inquiry"] = {"errors": form.errors, "values": form.values}
-            return redirect(url_for("index") + "#inquiry")
+            return redirect(inquiry_back())
         if not inquiry_limit.allow(request.remote_addr or "?"):
             session["inquiry"] = {"errors": ["접수가 너무 잦습니다. 잠시 뒤에 다시 보내 주시거나 전화로 문의해 주세요."],
                                   "values": form.values}
-            return redirect(url_for("index") + "#inquiry")
+            return redirect(inquiry_back())
         with lock:
             inquiry_id = inquiries.save(agent.storage.conn, form.values)
         inquiries.notify_background(lambda: agent.storage.conn, inquiry_id,
                                     practice=bool(app.config.get("SAMPLE_MODE")), lock=lock)
         session["inquiry"] = {"ok": True}
-        return redirect(url_for("index") + "#inquiry")
+        return redirect(inquiry_back())
 
     @app.get("/admin/inquiries")
     def admin_inquiries():

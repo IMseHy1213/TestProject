@@ -29,6 +29,7 @@
           <button class="link">로그아웃</button>
         </form>
       {% else %}
+        {% if show_inquiry %}<a href="#inquiry" class="nav-inquiry">📝 매물 접수</a>{% endif %}
         <a href="{{ url_for('admin') }}" class="muted">관리자</a>
       {% endif %}
     </nav>
@@ -53,7 +54,7 @@
         <span class="office-value">{% for day, time in office.hours %}<span class="office-hours">{{ day }} {{ time }}</span>{% endfor %}</span>
       </div>
     </section>
-    {% block after_office %}{% endblock %}
+    {% block after_office %}{% if show_inquiry %}{% include "_inquiry_form.html" %}{% endif %}{% endblock %}
   </footer>
   <div id="toasts" class="toasts" aria-live="polite" aria-label="실시간 알림"></div>
   {% block scripts %}{% endblock %}

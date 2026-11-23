@@ -79,7 +79,38 @@ def test_form_is_on_first_page_right_below_office_info(web):
     for k in ("토지", "공장", "아파트"):
         assert f'value="{k}"' in html
     assert 'name="name"' in html and 'name="phone"' in html and 'name="message"' in html and "제출하기" in html
-    assert 'id="inquiry"' not in c.get("/agent").get_data(as_text=True)  # 첫 화면에만
+    assert 'href="#inquiry" class="nav-inquiry"' in html  # 위쪽 '📝 매물 접수' 버튼으로 바로 이동
+
+
+def test_form_on_every_customer_page_not_admin(web):
+    """첫 화면뿐 아니라 AI 상담·검색 결과에도 (위치·문의 전화·영업 시간 바로 아래), 관리자 화면에는 없음."""
+    app, c, fake = web
+    for path in ("/", "/agent"):
+        html = c.get(path).get_data(as_text=True)
+        office, form = html.index('aria-label="사무실 안내"'), html.index('id="inquiry"')
+        assert office < form and 'class="inquiry-form"' in html, path
+    tok = token(c)
+    html = c.post("/search", data={"q": "음성군 땅", "csrf": tok}, follow_redirects=True).get_data(as_text=True)
+    assert 'class="inquiry-form"' in html
+    c.post("/admin/login", data={"password": "pw1234", "csrf": token(c, "/admin")})
+    assert 'id="inquiry"' not in c.get("/admin").get_data(as_text=True)
+    assert 'id="inquiry"' not in c.get("/admin/inquiries").get_data(as_text=True)
+
+
+def test_submit_from_ai_consult_returns_there(web):
+    app, c, fake = web
+    tok = token(c, "/agent")
+    r = c.post("/inquiry", data={**GOOD, "csrf": tok, "back": "/agent"})
+    assert r.status_code == 302 and r.headers["Location"].endswith("/agent#inquiry")
+    assert "접수되었습니다" in c.get("/agent").get_data(as_text=True)
+    r = c.post("/inquiry", data={**GOOD, "csrf": token(c), "back": "//evil.example/x"})
+    assert r.headers["Location"].endswith("/#inquiry")  # 바깥 주소로는 돌려보내지 않음
+
+
+def test_static_files_have_version(web):
+    _, c, _ = web
+    html = c.get("/").get_data(as_text=True)
+    assert re.search(r'style\.css\?v=\d+', html)  # 고친 뒤 브라우저가 옛 화면 파일을 쓰지 않게
 
 
 def test_submit_saves_and_texts_the_office(web):

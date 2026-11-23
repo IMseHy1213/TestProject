@@ -175,7 +175,7 @@ def test_admin_change_reaches_customer_stream(web):
     assert [t for t, _ in seen_by_admin] == ["listing.added", "alert.match"]           # 관리자는 전체 흐름
     html = admin.get("/admin").get_data(as_text=True)
     assert "실시간 이벤트" in html and "listing.added" in html and "맞춤 알림 1건" in html
-    assert 'src="/static/realtime.js"' in customer.get("/").get_data(as_text=True)
+    assert 'src="/static/realtime.js' in customer.get("/").get_data(as_text=True)  # 뒤에 ?v=수정시각
 
 
 def test_alert_link_prefills_agent_question(web):
