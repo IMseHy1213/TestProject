@@ -14,7 +14,7 @@ from real_estate_agent.config import Settings
 from real_estate_agent.web.app import create_app
 
 SAMPLE_LAND = Path(__file__).resolve().parent.parent / "sample_data" / "토지"
-GOOD = {"purpose": "찾아요", "kind": "공장", "name": "홍길동", "phone": "010 2468 1357", "agree": "1",
+GOOD = {"purpose": "찾아요", "kind": "공장/창고", "name": "홍길동", "phone": "010 2468 1357", "agree": "1",
         "message": "음성군 대소면 쪽 임대 공장 200평 정도 찾습니다"}
 
 
@@ -76,8 +76,8 @@ def test_form_is_on_first_page_right_below_office_info(web):
     html = c.get("/").get_data(as_text=True)
     office, form = html.index('aria-label="사무실 안내"'), html.index('id="inquiry"')
     assert office < form and "영업 시간" in html[office:form]
-    for k in ("토지", "공장", "아파트"):
-        assert f'value="{k}"' in html
+    kinds = re.findall(r'name="kind" value="([^"]+)"', html)
+    assert kinds == ["토지", "아파트", "공장/창고", "상가", "다가구/다세대", "원/투룸", "전원(단독)주택", "목장", "기타"]
     assert 'name="name"' in html and 'name="phone"' in html and 'name="message"' in html and "제출하기" in html
     assert 'href="#inquiry" class="nav-inquiry"' in html  # 위쪽 '📝 매물 접수' 버튼으로 바로 이동
 
@@ -123,7 +123,7 @@ def test_submit_saves_and_texts_the_office(web):
     assert call["url"] == inquiries.SOLAPI_URL
     msg = call["json"]["message"]
     assert (msg["to"], msg["from"]) == ("01099990000", "0438775242")
-    assert "[매물 접수 - 찾아요] 공장" in msg["text"] and "홍길동" in msg["text"] and "010-2468-1357" in msg["text"]
+    assert "[매물 접수 - 찾아요] 공장/창고" in msg["text"] and "홍길동" in msg["text"] and "010-2468-1357" in msg["text"]
     assert "200평" in msg["text"]
     assert call["headers"]["Authorization"].startswith("HMAC-SHA256 apiKey=NCSTESTKEY1234, date=")
 
@@ -138,7 +138,9 @@ def test_validation(web, bad, err):
     assert err in html and "접수되었습니다" not in html
     assert inquiries.recent(app.config["AGENT"].storage.conn) == [] and not fake.calls
     if bad.get("name") is None:
-        assert "홍길동" in html  # 다시 쓰지 않아도 되게 적은 내용은 남겨 둠
+        assert 'value="홍길동"' in html  # 적은 내용을 남겨 둠
+        if "kind" not in bad:
+            assert 'value="공장/창고" required checked' in html  # 고른 종류도 그대로
 
 
 def test_spam_and_rate_limit(web):
@@ -246,3 +248,12 @@ def test_old_inquiry_table_gets_purpose_column(tmp_path):
     conn.execute("INSERT INTO inquiries (created, kind, name, phone, message) VALUES ('2026-11-20T10:00:00','토지','김','010-1111-2222','x')")
     rows = inquiries.recent(conn)
     assert rows[0]["purpose"] == "찾아요"
+
+
+@pytest.mark.parametrize("kind", ["원/투룸", "전원(단독)주택", "목장", "다가구/다세대"])
+def test_new_kinds_are_accepted_and_reshown(web, kind):
+    app, c, fake = web
+    html = submit(c, {**GOOD, "kind": kind, "name": ""})  # 이름을 빠뜨려 다시 보여 줄 때 고른 종류가 그대로
+    assert f'value="{kind}" required checked' in html
+    submit(c, {**GOOD, "kind": kind})
+    assert wait_sent(app)[0]["kind"] == kind

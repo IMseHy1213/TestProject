@@ -10,7 +10,7 @@
     {% if inquiry and inquiry.errors %}
       <div class="notice warn" role="alert"><ul>{% for e in inquiry.errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
     {% endif %}
-    {% set v = (inquiry.values if inquiry and inquiry.values else {}) %}
+    {% set v = (inquiry['values'] if inquiry and inquiry['values'] else {}) %}
     <form method="post" action="{{ url_for('inquiry_submit') }}" class="inquiry-form">
       <input type="hidden" name="csrf" value="{{ csrf_token() }}">
       <input type="hidden" name="back" value="{{ request.path }}">

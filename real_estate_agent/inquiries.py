@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 
-KINDS = ["토지", "공장", "창고", "아파트", "빌라·다세대", "단독·전원주택", "상가", "사무실", "기타"]
+KINDS = ["토지", "아파트", "공장/창고", "상가", "다가구/다세대", "원/투룸", "전원(단독)주택", "목장", "기타"]
 PURPOSES = ["찾아요", "내놓아요"]  # 매물을 찾는 손님 / 자기 매물을 우리 사무실에 내놓는 손님
 MAX_NAME, MAX_MESSAGE = 20, 500
 SOLAPI_URL = "https://api.solapi.com/messages/v4/send"
