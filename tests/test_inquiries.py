@@ -257,3 +257,25 @@ def test_new_kinds_are_accepted_and_reshown(web, kind):
     assert f'value="{kind}" required checked' in html
     submit(c, {**GOOD, "kind": kind})
     assert wait_sent(app)[0]["kind"] == kind
+
+
+def test_admin_dashboard_shows_inquiries(web):
+    """관리자 첫 화면에 최근 매물 접수 내역 (처리 안 된 것 먼저, 이름·전화·문의)과 전체 보기 링크."""
+    app, c, fake = web
+    submit(c, {**GOOD, "name": "김철수", "kind": "목장", "message": "괴산 쪽 목장 부지 찾아요"})
+    submit(c, {**GOOD, "purpose": "내놓아요", "name": "이영희", "kind": "아파트", "message": "진천 아파트 내놓아요"})
+    wait_sent(app)
+    c.post("/admin/login", data={"password": "pw1234", "csrf": token(c, "/admin")})
+    html = c.get("/admin").get_data(as_text=True)
+    panel = html[html.index("📝 매물 접수 내역"):]
+    assert "새 접수 2건" in panel and "전체 보기 (2건)" in panel
+    assert panel.index("이영희") < panel.index("김철수")  # 최근 것 먼저
+    assert "010-2468-1357" in panel and "괴산 쪽 목장 부지 찾아요" in panel and "내놓아요" in panel
+    assert html.index("📝 매물 접수 내역") < html.index("매물 현황")  # 관리자 화면 맨 위쪽
+
+
+def test_consent_sentence():
+    html = (Path(__file__).resolve().parent.parent / "real_estate_agent" / "web" / "templates" / "_inquiry_form.html").read_text(encoding="utf-8")
+    text = re.sub(r"<[^>]+>", "", html[html.index('name="agree"'):html.index("</label>", html.index('name="agree"'))])
+    assert " ".join(text.split()).endswith("연락을 위해 이름·전화번호·문의 내용을 받는 것에 동의합니다.")
+    assert "상담이 끝나면" not in html

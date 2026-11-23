@@ -941,6 +941,9 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         with lock:
             _inq.ensure_table(agent.storage.conn)
             inquiry_open = agent.storage.conn.execute("SELECT COUNT(*) FROM inquiries WHERE handled=0").fetchone()[0]
+            inquiry_total = agent.storage.conn.execute("SELECT COUNT(*) FROM inquiries").fetchone()[0]
+            inquiry_rows = [dict(r) for r in agent.storage.conn.execute(  # 처리 안 된 것 먼저, 최근 순
+                "SELECT * FROM inquiries ORDER BY handled, id DESC LIMIT 5")]
         from ..mobile import phone_urls, qr_svg
 
         phone = {"open": app.config.get("BIND_HOST") == "0.0.0.0", "urls": [], "qr": ""}
@@ -951,6 +954,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                layout_moves=layout_moves, phone=phone,
                                code_version=app.config.get("VERSION") or __import__(
                                    "real_estate_agent.updater", fromlist=["version_text"]).version_text(), inquiry_open=inquiry_open,
+                               inquiry_total=inquiry_total, inquiry_rows=inquiry_rows,
                                ready=readiness(agent, lock, app.config.get("REALTIME"), agent_service),
                                llm_status=agent.llm.status(), sync_error=state["sync_error"],
                                message=session.pop("admin_msg", ""), pw_source=auth.source,

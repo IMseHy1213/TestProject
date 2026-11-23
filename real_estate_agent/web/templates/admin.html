@@ -5,6 +5,33 @@
 {% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
 {% if sync_error %}<p class="notice warn">{{ sync_error }}</p>{% endif %}
 
+<section class="panel inquiry-panel" aria-labelledby="inq-title">
+  <div class="row between">
+    <h2 id="inq-title">📝 매물 접수 내역{% if inquiry_open %} <span class="tag warn">새 접수 {{ inquiry_open }}건</span>{% endif %}</h2>
+    <a class="btn" href="{{ url_for('admin_inquiries') }}">전체 보기 ({{ inquiry_total }}건) · 처리·문자 설정</a>
+  </div>
+  {% if inquiry_rows %}
+  <ul class="inq-list">
+    {% for r in inquiry_rows %}
+    <li class="{% if r.handled %}is-done{% endif %}">
+      <div class="inq-head">
+        <span class="tag{% if r.purpose == '내놓아요' %} warn{% endif %}">{{ r.purpose or '찾아요' }}</span>
+        <span class="tag kind">{{ r.kind }}</span>
+        <strong>{{ r.name }}</strong>
+        <a href="tel:{{ r.phone | replace('-', '') }}">{{ r.phone }}</a>
+        <small class="muted">{{ r.created[:16] | replace('T', ' ') }}
+          · 문자 {% if r.sms_status == 'sent' %}✅{% elif r.sms_status == 'pending' %}⏳{% elif r.sms_status == 'practice' %}연습{% elif r.sms_status == 'off' %}⚠ 설정 없음{% else %}❌ 실패{% endif %}
+          {% if r.handled %}· 처리 완료{% endif %}</small>
+      </div>
+      <p class="inq-msg">{{ r.message }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="meta">아직 접수된 문의가 없습니다. 손님 화면(첫 화면·AI 상담) 아래의 '📝 매물 접수' 로 들어온 문의가 여기에 나옵니다.</p>
+  {% endif %}
+</section>
+
 <section class="grid">
   <div class="panel">
     <h2>매물 추가·수정</h2>

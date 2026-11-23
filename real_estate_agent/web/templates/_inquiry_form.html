@@ -42,8 +42,7 @@
       <textarea id="iq-message" name="message" required maxlength="500" rows="4"
                 placeholder="예) 음성군 대소면 쪽 창고 지을 땅 500평 정도, 3억 이하로 찾습니다 / 진천군 공장 매매로 내놓고 싶어요">{{ v.message or '' }}</textarea>
       <label class="check agree"><input type="checkbox" name="agree" value="1" required>
-        연락을 위해 <strong>이름·전화번호·문의 내용</strong>을 받는 것에 동의합니다
-        <small class="muted">(상담 목적으로만 쓰고, 상담이 끝나면 지웁니다)</small></label>
+        <span>연락을 위해 <strong>이름·전화번호·문의 내용</strong>을 받는 것에 동의합니다.</span></label>
       <button class="btn primary">제출하기</button>
     </form>
   {% endif %}
