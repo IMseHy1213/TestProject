@@ -659,6 +659,18 @@ Claude 키는 https://console.anthropic.com 에서 발급합니다. (GPT 와 별
 - 반드시 **https** 로 공개하고 `.env` 에 `REA_COOKIE_SECURE=1` 을 넣고, **공개하기 전에** 서버 PC 에서 충분히 긴 관리자 비밀번호를 정해 두세요.
 - 공개 전에 손님에게 보여줘도 되는 정보인지(지번 가림, 연락처 숨김) 한 번 더 확인하세요.
 
+### 최신 코드 받기 — `python main.py update`
+
+`git pull` 이 `Your local changes to the following files would be overwritten by merge … Aborting` 으로 멈추면
+**파일이 하나도 바뀌지 않아** 예전 프로그램이 그대로 실행됩니다 (화면에 새 기능이 안 보임).
+`python main.py update` (VS Code 실행 목록 **🔄 최신 코드 받기**) 는:
+1. GitHub 에서 최신 코드를 받고, 2. 이 PC 에서 바뀐 파일이 있으면 목록을 보여 주고 허락받아 **보관함(git stash)** 에 옮긴 뒤
+3. 최신 코드로 바꾸고, 4. 무엇이 바뀌었는지와 `pip install` 이 필요한지 알려 줍니다.
+(`my_api_key.py`, `.env`, `매물/`, `data/`, `logs/` 는 건드리지 않음. 보관한 파일은 `git stash pop` 으로 되살림)
+
+- 프로그램을 켤 때 터미널에 **코드 버전**(예: `76c0ccc (2026-11-23)`)이 나오고, 관리자 화면에도 나옵니다. `python main.py version` 으로도 확인.
+- 예전에 켜 둔 프로그램이 아직 8000번 포트를 쓰고 있으면, 새로 켤 때 그 사실을 알려 주고 멈춥니다 (그대로 두면 브라우저에 예전 화면이 보임).
+
 ### 시작이 느릴 때
 
 - 매물 엑셀은 **바뀐 파일만** 다시 읽습니다. 읽은 결과는 `data/agent_filecache.json` 에 기억합니다

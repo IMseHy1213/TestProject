@@ -209,6 +209,15 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "🔄 최신 코드 받기 (update: git pull 이 멈출 때도 처리)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "args": ["update"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "⓪ 관리자 비밀번호 정하기 / 바꾸기",
       "type": "debugpy",
       "request": "launch",

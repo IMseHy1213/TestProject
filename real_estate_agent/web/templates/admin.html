@@ -23,7 +23,8 @@
       (<a href="{{ url_for('admin_listings') }}">매물 관리</a>에서 확인 · 엑셀에 매물번호를 적으면 나옵니다).</p>{% endif %}
     {% if layout_moves %}<p class="notice warn">매물 폴더가 아직 '매물 종류 → 지역' 순서가 아닙니다 (토지로 옮길 것 {{ layout_moves }}개).
       <a href="{{ url_for('admin_organize_folders') }}">📂 종류별로 정리하기</a></p>{% endif %}
-    <p class="meta">매물 폴더: {{ data_dir }}<br>마지막으로 읽은 시각: {{ data.synced_at }}</p>
+    <p class="meta">매물 폴더: {{ data_dir }}<br>마지막으로 읽은 시각: {{ data.synced_at }}<br>
+      코드 버전: <code>{{ code_version }}</code> <small class="muted">(최신 코드 받기: <code>python main.py update</code> 후 프로그램 다시 켜기)</small></p>
     <div class="row left">
       <form method="post" action="{{ url_for('admin_sync') }}" class="inline">
         <input type="hidden" name="csrf" value="{{ csrf_token() }}">

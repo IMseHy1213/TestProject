@@ -692,6 +692,9 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("watch", help="폴더 감시 + 선제 알림")
     w.add_argument("--interval", type=int, help="초 단위 (기본 600)")
 
+    up = sub.add_parser("update", help="GitHub 에서 최신 코드 받기 (git pull 이 멈출 때도: 바뀐 파일은 보관함에 옮겨 둠)")
+    up.add_argument("--yes", action="store_true", help="묻지 않고 진행")
+    sub.add_parser("version", help="지금 폴더의 코드 버전 보기")
     mb = sub.add_parser("mobile", help="휴대폰에서도 쓰기: 같은 와이파이에 웹 서비스를 열고 휴대폰 주소·QR 코드를 보여줌")
     mb.add_argument("--port", type=int, default=8000)
     mb.add_argument("--no-browser", action="store_true", help="PC 브라우저를 열지 않음")
@@ -788,6 +791,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 1
         print(f"JSON API: http://{args.host}:{args.port}/docs  (끄려면 Ctrl+C)")
         uvicorn.run(create_api(settings, start_realtime=True), host=args.host, port=args.port, log_level="warning")
+        return 0
+    if cmd == "update":
+        from .updater import run_update
+
+        return run_update(yes=args.yes)
+    if cmd == "version":
+        from .updater import version
+
+        v = version()
+        print(f"코드 버전: {v['commit'] or '알 수 없음'}  {v['date']}  {v['subject']}")
         return 0
     if cmd == "mobile":  # 휴대폰에서도: 같은 와이파이에 열기 (0.0.0.0) + 휴대폰 주소·QR 코드
         from .web import run
