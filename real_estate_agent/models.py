@@ -212,12 +212,12 @@ class CustomerRequirement:
         if self.zoning:
             parts.append("용도지역=" + ",".join(self.zoning))
         if self.budget_min or self.budget_max:
-            lo = format_price(self.budget_min) if self.budget_min else "-"
-            hi = format_price(self.budget_max) if self.budget_max else "-"
-            parts.append(f"예산={lo}~{hi}")
+            lo = format_price(self.budget_min) if self.budget_min else ""
+            hi = format_price(self.budget_max) if self.budget_max else ""
+            parts.append(f"예산={lo}~{hi}")  # '~3억원'(이하) / '1억원~'(이상)
         if self.area_min_m2 or self.area_max_m2:
-            lo = f"{self.area_min_m2 / PYEONG_M2:,.0f}평" if self.area_min_m2 else "-"
-            hi = f"{self.area_max_m2 / PYEONG_M2:,.0f}평" if self.area_max_m2 else "-"
+            lo = f"{self.area_min_m2 / PYEONG_M2:,.0f}평" if self.area_min_m2 else ""
+            hi = f"{self.area_max_m2 / PYEONG_M2:,.0f}평" if self.area_max_m2 else ""
             parts.append(f"면적={lo}~{hi}")
         if self.purpose:
             parts.append("목적=" + self.purpose)

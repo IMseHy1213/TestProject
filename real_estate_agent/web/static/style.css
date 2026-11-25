@@ -325,7 +325,8 @@ table.listings td:nth-child(2) { min-width: 240px; }
 
 /* 사무실 안내 (모든 화면 아래) - 글씨는 안내문(1rem)과 제목(약 2.2rem)의 중간 */
 .foot p { margin: 0 0 16px; }
-.office { max-width: 860px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+.office { max-width: 828px;  /* 본문(.wrap 860 - 양옆 16) 과 같은 폭: PC 에서 칸 가장자리가 한 줄로 */
+  margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px; text-align: left; }
 .office-item { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px;
   display: flex; flex-direction: column; gap: 6px; }
@@ -447,7 +448,7 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 }
 
 /* 📝 매물 접수 (첫 화면, 사무실 안내 바로 아래) */
-.inquiry { max-width: 720px; margin: 22px auto 0; text-align: left; background: var(--surface); border: 1px solid var(--line);
+.inquiry { max-width: 828px; margin: 22px auto 0; text-align: left; background: var(--surface); border: 1px solid var(--line);
   border-radius: 14px; padding: 18px 20px; }
 .inquiry h2 { margin: 0 0 4px; font-size: 1.2rem; }
 .inquiry-form label { display: block; margin: 12px 0 4px; font-weight: 600; font-size: .92rem; }
