@@ -162,3 +162,23 @@ document.querySelectorAll("button[data-confirm]").forEach(function (btn) {
     if (!window.confirm(btn.getAttribute("data-confirm"))) ev.preventDefault();
   });
 });
+
+// AI 상담: '혹시 마음에 드시는 매물이 없으신가요? ▶' -> 매물 접수 폼으로 이동, 잠깐 강조, 이름 칸에 커서,
+// 문의 사항이 비어 있으면 방금 찾던 조건을 넣어 둠 (손님이 다시 쓰지 않아도 되게)
+document.querySelectorAll("a.no-match-btn").forEach(function (a) {
+  a.addEventListener("click", function (ev) {
+    var box = document.getElementById("inquiry");
+    if (!box) return;
+    ev.preventDefault();
+    box.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (history.replaceState) history.replaceState(null, "", "#inquiry");
+    box.classList.remove("flash"); void box.offsetWidth; box.classList.add("flash");
+    var seek = box.querySelector('input[name=purpose][value="찾아요"]');
+    if (seek && !box.querySelector("input[name=purpose]:checked")) seek.checked = true;
+    var msg = box.querySelector("textarea[name=message]");
+    var q = a.getAttribute("data-inquiry-from") || "";
+    if (msg && !msg.value.trim() && q) msg.value = "AI 상담에서 찾던 조건: " + q + "\n";
+    var name = box.querySelector("input[name=name]");
+    if (name) setTimeout(function () { name.focus({ preventScroll: true }); }, 350);
+  });
+});

@@ -28,6 +28,7 @@
         <input type="hidden" name="csrf" value="{{ csrf_token() }}">
         <input type="hidden" name="id" value="{{ r.id }}"><input type="hidden" name="back" value="admin">
         {% if r.handled %}<button class="btn small" name="op" value="undone">처리 안 됨으로</button>
+        <button class="btn small danger" name="op" value="delete" data-confirm="{{ r.name }} 님 접수의 이름·전화번호·문의 내용을 지울까요? 되돌릴 수 없습니다.">🗑 지우기</button>
         {% else %}<button class="btn small primary" name="op" value="done">✔ 처리 완료</button>{% endif %}
       </form>
     </li>

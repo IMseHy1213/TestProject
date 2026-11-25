@@ -491,3 +491,12 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 .inq-list .inq-msg { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .inq-actions { display: block; margin-top: 6px; }
 #inq-title { scroll-margin-top: 12px; }
+
+/* AI 상담 결과 밑: 혹시 마음에 드시는 매물이 없으신가요? ▶ */
+.no-match { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: 10px 2px 0; font-size: .85rem; color: var(--muted); }
+.no-match-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--brand); color: #fff !important; text-decoration: none; font-size: .78rem; line-height: 1; flex: none; }
+.no-match-btn:hover, .no-match-btn:focus-visible { opacity: .9; outline: 2px solid var(--brand); outline-offset: 2px; }
+@keyframes inquiry-flash { 0%, 60% { box-shadow: 0 0 0 4px var(--brand); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.inquiry.flash { animation: inquiry-flash 1.8s ease-out; }
+.btn.danger { color: #b3261e; border-color: #e3b4ae; }

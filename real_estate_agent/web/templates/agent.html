@@ -100,6 +100,11 @@
         {% endfor %}
       </ol>
       {% endif %}
+      {% if t.cards or '매물이 없습니다' in t.answer or '더 이상 없습니다' in t.answer %}
+      <p class="no-match">혹시 마음에 드시는 매물이 없으신가요?
+        <a href="#inquiry" class="no-match-btn" data-inquiry-from="{{ t.question }}" title="매물 접수 폼 열기"
+           aria-label="매물 접수 폼 열기">▶</a></p>
+      {% endif %}
       {% if t.id %}
       <div class="rate" aria-label="이 답변 평가">
         <span class="rate-q">{% if t.rating == 1 %}평가 감사합니다 👍{% elif t.rating == 0 %}알려 주셔서 감사합니다. 더 나아지겠습니다{% else %}이 답이 도움이 됐나요?{% endif %}</span>

@@ -299,3 +299,35 @@ def test_mark_done_from_admin_dashboard(web):
     c.post("/admin/logout", data={"csrf": token(c, "/admin")})
     assert c.post("/admin/inquiries/action", data={"id": rid, "op": "done", "back": "admin",
                                                    "csrf": token(c)}).status_code == 403  # 로그인해야만
+
+
+def test_delete_handled_inquiry_from_dashboard(web):
+    """처리 완료된 접수만 '🗑 지우기' 가 보이고, 누르면 지우고 관리자 첫 화면으로 돌아옴."""
+    app, c, fake = web
+    submit(c, GOOD)
+    rid = wait_sent(app)[0]["id"]
+    c.post("/admin/login", data={"password": "pw1234", "csrf": token(c, "/admin")})
+    assert "🗑 지우기" not in c.get("/admin").get_data(as_text=True)  # 처리 전에는 지울 수 없음
+    c.post("/admin/inquiries/action", data={"id": rid, "op": "done", "back": "admin", "csrf": token(c, "/admin")})
+    html = c.get("/admin").get_data(as_text=True)
+    assert "🗑 지우기" in html and 'data-confirm="홍길동 님 접수의' in html
+    r = c.post("/admin/inquiries/action", data={"id": rid, "op": "delete", "back": "admin", "csrf": token(c, "/admin")})
+    assert r.headers["Location"].endswith("/admin#inq-title")
+    html = c.get("/admin").get_data(as_text=True)
+    assert "지웠습니다" in html and "아직 접수된 문의가 없습니다" in html
+    assert inquiries.get(app.config["AGENT"].storage.conn, rid) is None
+
+
+def test_ai_consult_offers_inquiry_under_results(web):
+    """AI 상담 결과(매물 카드, 또는 '맞는 매물이 없습니다') 밑에 '혹시 마음에 드시는 매물이 없으신가요? ▶'."""
+    app, c, fake = web
+    tok = token(c, "/agent")
+    html = c.post("/agent/ask", data={"q": "양평 땅 2개 보여줘", "csrf": tok}, follow_redirects=True).get_data(as_text=True)
+    assert 'class="mini"' in html
+    line = html[html.index('class="no-match"'):]
+    assert "혹시 마음에 드시는 매물이 없으신가요?" in line[:200]
+    assert 'href="#inquiry" class="no-match-btn" data-inquiry-from="양평 땅 2개 보여줘"' in line and "▶" in line[:400]
+    assert html.index('class="no-match"') < html.index('id="inquiry"')  # 버튼이 가리키는 폼이 같은 화면에 있음
+    html = c.post("/agent/ask", data={"q": "제주도 땅 있어?", "csrf": token(c, "/agent")},
+                  follow_redirects=True).get_data(as_text=True)
+    assert html.count('class="no-match"') == 2  # 맞는 매물이 없다는 답 밑에도

@@ -27,7 +27,18 @@ const B = process.argv[3];
   await Promise.all([pg.waitForNavigation(), pg.locator('form button').first().click()]);
   await Promise.all([pg.waitForNavigation(), pg.locator('.inq-list li').first().locator('button[value=done]').click()]);
   const html = await pg.content();
-  console.log(JSON.stringify({ posts, url: pg.url().replace(B, ''), msg: html.includes('처리 완료로 표시했습니다') }));
+  pg.on('dialog', d => d.accept());  // '지울까요?' 확인 창
+  await Promise.all([pg.waitForNavigation(), pg.locator('.inq-list li').first().locator('button[value=delete]').click()]);
+  const deleted = (await pg.content()).includes('지웠습니다');
+  // AI 상담: 결과 밑 '▶' -> 매물 접수 폼으로, 찾던 조건이 문의 사항에 들어감
+  await pg.goto(B + '/agent'); await pg.fill('[name=q]', '양평 땅 2개 보여줘');
+  await Promise.all([pg.waitForLoadState('networkidle'), pg.locator('form.agent-ask button').first().click()]);
+  await pg.waitForTimeout(1200);
+  await pg.locator('a.no-match-btn').last().click(); await pg.waitForTimeout(900);
+  const form = await pg.evaluate(() => { const r = document.querySelector('#inquiry').getBoundingClientRect();
+    return { inView: r.top > -10 && r.top < innerHeight, msg: document.querySelector('#iq-message').value,
+             focus: document.activeElement && document.activeElement.id }; });
+  console.log(JSON.stringify({ posts, url: pg.url().replace(B, ''), msg: html.includes('처리 완료로 표시했습니다'), deleted, form }));
   await b.close();
 })();
 """
@@ -56,4 +67,7 @@ def test_named_buttons_send_their_value_in_a_real_browser(tmp_path, monkeypatch)
     res = json.loads(out.stdout.strip().splitlines()[-1])
     action = [body for url, body in res["posts"] if url == "/admin/inquiries/action"]
     assert action and "op=done" in action[0]
-    assert res["url"] == "/admin#inq-title" and res["msg"]
+    assert res["msg"] and res["deleted"]
+    assert any("op=delete" in body for url, body in res["posts"] if url == "/admin/inquiries/action")
+    f = res["form"]  # AI 상담의 '▶': 폼이 화면에 보이고, 찾던 조건이 들어가고, 이름 칸에 커서
+    assert f["inView"] and f["msg"].startswith("AI 상담에서 찾던 조건: 양평 땅 2개 보여줘") and f["focus"] == "iq-name"
