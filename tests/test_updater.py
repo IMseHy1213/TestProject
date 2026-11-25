@@ -85,15 +85,22 @@ def test_version_and_port_check(tmp_path, monkeypatch):
     assert not updater.port_in_use("127.0.0.1", port)
 
 
-def test_web_run_stops_when_old_copy_still_runs(capsys):
-    """예전에 켜 둔 프로그램이 8000번을 쓰고 있으면 새 프로그램이 그 사실을 알려 주고 멈춤 (예전 화면이 보이는 원인)."""
+def test_web_run_stops_when_old_copy_still_runs(capsys, monkeypatch):
+    """이미 켜져 있으면 새로 켜지 않고 알려 줌 + 켜져 있는 화면을 브라우저로 엶 (켜기.bat 을 두 번 눌러도 됨)."""
+    import webbrowser
+
     from real_estate_agent.web.app import run
 
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", opened.append)
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     s.listen(1)
     try:
-        run(host="127.0.0.1", port=s.getsockname()[1], open_browser=False)
+        port = s.getsockname()[1]
+        assert run(host="127.0.0.1", port=port, open_browser=False) is False and opened == []
+        assert run(host="0.0.0.0", port=port, open_browser=True) is False
     finally:
         s.close()
-    assert "이미 다른 프로그램이 쓰고 있습니다" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "이미 켜져 있습니다" in out and "닫거나 Ctrl+C" in out and opened == [f"http://localhost:{port}"]

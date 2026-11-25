@@ -695,6 +695,8 @@ def build_parser() -> argparse.ArgumentParser:
     up = sub.add_parser("update", help="GitHub 에서 최신 코드 받기 (git pull 이 멈출 때도: 바뀐 파일은 보관함에 옮겨 둠)")
     up.add_argument("--yes", action="store_true", help="묻지 않고 진행")
     sub.add_parser("version", help="지금 폴더의 코드 버전 보기")
+    ws = sub.add_parser("windows-setup", help="사무실 PC(윈도 10·11): 바탕화면 아이콘 + (선택) 켤 때 자동 실행 · 절전 끄기")
+    ws.add_argument("--autostart", choices=["ask", "on", "off"], default="ask")
     mb = sub.add_parser("mobile", help="휴대폰에서도 쓰기: 같은 와이파이에 웹 서비스를 열고 휴대폰 주소·QR 코드를 보여줌")
     mb.add_argument("--port", type=int, default=8000)
     mb.add_argument("--no-browser", action="store_true", help="PC 브라우저를 열지 않음")
@@ -796,6 +798,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         from .updater import run_update
 
         return run_update(yes=args.yes)
+    if cmd == "windows-setup":
+        from .windows_setup import run as windows_setup
+
+        return windows_setup(autostart=args.autostart)
     if cmd == "version":
         from .updater import version
 
@@ -805,14 +811,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     if cmd == "mobile":  # 휴대폰에서도: 같은 와이파이에 열기 (0.0.0.0) + 휴대폰 주소·QR 코드
         from .web import run
 
-        run(host="0.0.0.0", port=args.port, open_browser=not args.no_browser, settings=settings)
-        return 0
+        started = run(host="0.0.0.0", port=args.port, open_browser=not args.no_browser, settings=settings)
+        return 3 if started is False else 0  # 3 = 이미 켜져 있음 (켜기.bat 가 창을 닫음)
     if cmd == "web":
         from .web import run
 
-        run(host=getattr(args, "host", "127.0.0.1"), port=getattr(args, "port", 8000),
-            open_browser=not getattr(args, "no_browser", False), settings=settings)
-        return 0
+        started = run(host=getattr(args, "host", "127.0.0.1"), port=getattr(args, "port", 8000),
+                      open_browser=not getattr(args, "no_browser", False), settings=settings)
+        return 3 if started is False else 0
     agent = RealEstateAgent(settings)
 
     print(f"Real Estate Recommendation Agent  |  매물 폴더: {settings.data_dir}")

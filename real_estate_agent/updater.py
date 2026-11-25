@@ -11,6 +11,7 @@ git pull 이 'Your local changes … would be overwritten by merge … Aborting'
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BRANCH = "claude/real-estate-agent-dev-7stcnv"
+REPO_URL = "https://github.com/IMseHy1213/TestProject.git"
 
 
 def _git(*args: str, check: bool = False) -> subprocess.CompletedProcess:
@@ -48,8 +50,45 @@ def _changed_files() -> list[str]:
     return [line[3:] for line in r.stdout.splitlines() if line.strip()]
 
 
+def _yes(ask, question: str) -> bool:
+    try:
+        return ask(question).strip().lower() in {"y", "yes", "ㅛ", "예", "네", "응"}
+    except EOFError:
+        return False
+
+
+def connect_zip_folder(yes: bool = False, branch: str = BRANCH, ask=input) -> int:
+    """GitHub 에서 ZIP 으로 받아 압축만 푼 폴더(.git 없음)를 GitHub 저장소에 연결해, 다음부터 update 가 되게 함.
+
+    git 이 관리하는 코드 파일만 GitHub 최신으로 바뀌고, 매물/ · data/ · my_api_key.py · .env 는 그대로 둠.
+    """
+    print("이 폴더는 압축 파일(ZIP)로 받은 폴더라 아직 GitHub 와 연결되어 있지 않습니다.")
+    print("연결하면 프로그램 코드가 GitHub 최신으로 바뀌고, 다음부터는 아이콘만 눌러 최신으로 바꿀 수 있습니다.")
+    print("(매물 폴더 · data · my_api_key.py · .env 는 건드리지 않습니다)")
+    if not yes and not _yes(ask, "연결할까요? (y/N) "):
+        print("취소했습니다. 아무것도 바꾸지 않았습니다.")
+        return 1
+    for step in (("init", "-q"), ("remote", "add", "origin", REPO_URL), ("fetch", "origin", branch),
+                 ("checkout", "-f", "-B", branch, "--track", f"origin/{branch}")):
+        r = _git(*step)
+        if r.returncode != 0 and step[0] != "remote":  # origin 이 이미 있으면 그대로 씀
+            print("❌ GitHub 연결 실패 (인터넷 연결이나 GitHub 로그인 확인):\n" + (r.stderr.strip() or r.stdout.strip()))
+            return 1
+    v = version()
+    print(f"✅ GitHub 와 연결하고 최신 코드로 바꿨습니다: {v['commit']} ({v['date']}) {v['subject']}")
+    print("   켜져 있는 프로그램을 끄고 다시 켜세요.")
+    return 0
+
+
 def run_update(yes: bool = False, branch: str = BRANCH, ask=input) -> int:
+    if shutil.which("git") is None:
+        print("❌ 이 PC 에 Git 이 설치되어 있지 않아 최신 코드를 받을 수 없습니다.")
+        print("   프로젝트 폴더의 '설치하기.bat' 을 다시 실행하면 Git 설치를 도와줍니다.")
+        print("   (직접 설치: https://git-scm.com → Download for Windows → 기본값으로 Next)")
+        return 1
     if _git("rev-parse", "--is-inside-work-tree").returncode != 0:
+        if (PROJECT_ROOT / "main.py").exists() and not (PROJECT_ROOT / ".git").exists():
+            return connect_zip_folder(yes=yes, branch=branch, ask=ask)
         print("❌ 이 폴더는 git 폴더가 아닙니다. GitHub 에서 받은(clone) 프로젝트 폴더에서 실행하세요.")
         return 1
     before = version()
@@ -77,7 +116,7 @@ def run_update(yes: bool = False, branch: str = BRANCH, ask=input) -> int:
             print(f"     · {name}")
         print("   이 파일들을 '보관함(git stash)' 에 옮겨 두고 최신 코드로 바꿉니다. 지우지 않으니 나중에 되살릴 수 있습니다.")
         print("   (my_api_key.py · .env · 매물 폴더 · data · logs 는 해당 없음 - 그대로 남습니다)")
-        if not yes and ask("   진행할까요? (y/N) ").strip().lower() not in {"y", "yes", "ㅛ", "예", "네"}:
+        if not yes and not _yes(ask, "   진행할까요? (y/N) "):
             print("취소했습니다. 아무것도 바꾸지 않았습니다.")
             return 1
         s = _git("stash", "push", "-m", "update 전 자동 보관 (python main.py update)")

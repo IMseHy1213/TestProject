@@ -1305,16 +1305,19 @@ def run(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True, se
 
     from ..updater import port_in_use, version_text
 
+    url = f"http://{'localhost' if host in {'127.0.0.1', '0.0.0.0'} else host}:{port}"
     if port_in_use(host, port):  # 예전에 켜 둔 프로그램이 아직 돌고 있으면 새 코드가 아니라 그 화면이 보임
-        print(f"\n❌ {port}번 포트를 이미 다른 프로그램이 쓰고 있습니다 - 아마 예전에 켜 둔 이 프로그램입니다.")
-        print("   그대로 두면 브라우저에는 예전 프로그램 화면이 나옵니다. 예전 터미널에서 Ctrl+C 로 끄거나,")
-        print("   VS Code 아래 터미널 목록의 휴지통 아이콘으로 닫은 뒤 다시 실행하세요.")
+        print(f"\n⚠ 프로그램이 이미 켜져 있습니다 ({port}번 포트 사용 중). 켜져 있는 화면을 브라우저로 엽니다.")
+        print("   최신 코드로 바꾼 직후라면: 켜져 있는 창(검은 창·VS Code 터미널)을 닫거나 Ctrl+C 로 끈 뒤 다시 켜세요.")
         print(f"   (다른 포트로 켜려면: python main.py web --port {port + 1})")
-        return
+        if open_browser:
+            import webbrowser
+
+            webbrowser.open(url)
+        return False
     app = create_app(settings)
     app.config["VERSION"] = version_text()
     app.config["AGENT"].llm.warm_up_background()  # AI 패키지는 화면을 띄운 뒤 뒤에서 불러옴
-    url = f"http://{'localhost' if host in {'127.0.0.1', '0.0.0.0'} else host}:{port}"
     print(f"\n🌐 웹 서비스 시작: {url}   (종료: Ctrl+C)")
     print(f"   코드 버전: {app.config['VERSION']}   (최신 코드 받기: python main.py update)")
     llm = app.config["AGENT"].llm
@@ -1328,8 +1331,10 @@ def run(host: str = "127.0.0.1", port: int = 8000, open_browser: bool = True, se
         from ..mobile import print_phone_help
 
         print_phone_help(port)
-    if not os.getenv("REA_ADMIN_PASSWORD"):
-        print("   ※ 관리자 화면을 쓰려면 .env 에 REA_ADMIN_PASSWORD=비밀번호 를 넣으세요.")
+    from ..admin_auth import auth_file
+
+    if not os.getenv("REA_ADMIN_PASSWORD") and not auth_file(app.config["AGENT"].settings).exists():
+        print(f"   ※ 관리자 비밀번호가 아직 없습니다. {url}/admin 에 들어가면 처음 한 번 정하라고 나옵니다.")
     if open_browser:
         import webbrowser
 
