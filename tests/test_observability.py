@@ -267,6 +267,7 @@ def test_web_observe_pages_and_metrics(web):
     c.post("/admin/login", data={"password": "office-pass-1", "csrf": _csrf(c, "/admin")})
     html = c.get("/admin/observe").get_data(as_text=True)
     assert "양평 땅 2개 비교해줘" in html and "search_listings" in html
+    assert "AI 를 쓰지 않아 요금 없음" in html and "비용: REA_LLM_PRICES 설정 시" not in html  # AI 토큰 칸 안내
     trace_id = re.search(r"/admin/traces/([0-9a-f]{32})", html).group(1)
     page = c.get(f"/admin/traces/{trace_id}").get_data(as_text=True)
     assert "agent.run" in page and "tool.compare_listings" in page and "<rect" in page

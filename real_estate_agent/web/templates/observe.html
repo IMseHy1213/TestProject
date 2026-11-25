@@ -12,7 +12,7 @@
   <div class="kpi"><span>성공률</span><strong>{{ s.success_rate if s.success_rate is not none else "-" }}{% if s.success_rate is not none %}%{% endif %}</strong></div>
   <div class="kpi"><span>응답 시간 p50 / p95</span><strong>{{ s.p50_ms if s.p50_ms is not none else "-" }} / {{ s.p95_ms if s.p95_ms is not none else "-" }}<small>ms</small></strong></div>
   <div class="kpi"><span>AI 가 답한 비율</span><strong>{{ s.ai_share if s.ai_share is not none else "-" }}{% if s.ai_share is not none %}%{% endif %}</strong><small>나머지는 규칙 기반</small></div>
-  <div class="kpi"><span>AI 토큰</span><strong>{{ "{:,}".format(s.tokens) }}</strong>{% if s.cost_usd %}<small>추정 ${{ s.cost_usd }}</small>{% else %}<small>비용: REA_LLM_PRICES 설정 시</small>{% endif %}</div>
+  <div class="kpi"><span>AI 토큰</span><strong>{{ "{:,}".format(s.tokens) }}</strong>{% if s.cost_usd %}<small>추정 ${{ s.cost_usd }}</small>{% elif not s.tokens %}<small>AI 를 쓰지 않아 요금 없음</small>{% else %}<small title=".env 파일에 REA_LLM_PRICES=openai:2.5/10 처럼 단가(달러/100만 토큰)를 적으면 계산됩니다">예상 요금: 단가를 넣으면 표시</small>{% endif %}</div>
   <div class="kpi"><span>도구 오류율</span><strong>{{ s.tool_error_rate if s.tool_error_rate is not none else "-" }}{% if s.tool_error_rate is not none %}%{% endif %}</strong></div>
 </section>
 
