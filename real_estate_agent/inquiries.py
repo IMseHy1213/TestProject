@@ -151,9 +151,10 @@ def get(conn, inquiry_id: int) -> Optional[dict]:
     return dict(r) if r else None
 
 
-def recent(conn, limit: int = 50) -> list[dict]:
+def recent(conn, limit: Optional[int] = 50) -> list[dict]:
+    """최근 접수부터. limit=None 이면 전부."""
     ensure_table(conn)
-    return [dict(r) for r in conn.execute("SELECT * FROM inquiries ORDER BY id DESC LIMIT ?", (limit,))]
+    return [dict(r) for r in conn.execute("SELECT * FROM inquiries ORDER BY id DESC LIMIT ?", (-1 if limit is None else limit,))]
 
 
 def set_status(conn, inquiry_id: int, status: str, detail: str = "") -> None:

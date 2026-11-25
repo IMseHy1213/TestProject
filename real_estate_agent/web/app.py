@@ -368,7 +368,7 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
         if not is_admin():
             return login_page()
         with lock:
-            rows = inquiries.recent(agent.storage.conn, 100)
+            rows = inquiries.recent(agent.storage.conn, None)  # 전체 보기: 모든 접수
         cfg = inquiries.SmsConfig.from_env()
         return render_template("inquiries.html", rows=rows, sms_ready=cfg.ready, sms_missing=cfg.missing(),
                                sms_to=cfg.to, sms_from=cfg.sender, has_key=bool(cfg.api_key),
@@ -945,8 +945,8 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             _inq.ensure_table(agent.storage.conn)
             inquiry_open = agent.storage.conn.execute("SELECT COUNT(*) FROM inquiries WHERE handled=0").fetchone()[0]
             inquiry_total = agent.storage.conn.execute("SELECT COUNT(*) FROM inquiries").fetchone()[0]
-            inquiry_rows = [dict(r) for r in agent.storage.conn.execute(  # 처리 안 된 것 먼저, 최근 순
-                "SELECT * FROM inquiries ORDER BY handled, id DESC LIMIT 5")]
+            inquiry_rows = [dict(r) for r in agent.storage.conn.execute(  # 관리자 첫 화면: 최근 접수 3건만
+                "SELECT * FROM inquiries ORDER BY id DESC LIMIT 3")]
         from ..mobile import phone_urls, qr_svg
 
         phone = {"open": app.config.get("BIND_HOST") == "0.0.0.0", "urls": [], "qr": ""}

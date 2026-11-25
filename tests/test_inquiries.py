@@ -271,8 +271,10 @@ def test_admin_dashboard_shows_inquiries(web):
     assert "새 접수 2건" in panel and "전체 보기 (2건)" in panel
     assert panel.index("이영희") < panel.index("김철수")  # 최근 것 먼저
     assert "010-2468-1357" in panel and "괴산 쪽 목장 부지 찾아요" in panel and "내놓아요" in panel
-    stack = html[html.index('class="col-stack"'):]
-    assert stack.index("📱 휴대폰으로 보기") < stack.index("📝 매물 접수 내역")  # 휴대폰으로 보기 칸 바로 밑, 같은 칸
+    grid = html[html.index('<section class="grid">'):]
+    order = ["<h2>매물 현황</h2>", "📝 매물 접수 내역", "<h2>매물 추가·수정</h2>", "<h2>매물 파일·폴더 올리기</h2>",
+             "<h2>관리자 비밀번호 바꾸기</h2>", "<h2>AI 연결</h2>"]
+    assert [grid.index(h) for h in order] == sorted(grid.index(h) for h in order)  # 왼쪽부터 이 순서
 
 
 def test_consent_sentence():
@@ -332,3 +334,20 @@ def test_ai_consult_offers_inquiry_under_results(web):
     html = c.post("/agent/ask", data={"q": "제주도 땅 있어?", "csrf": token(c, "/agent")},
                   follow_redirects=True).get_data(as_text=True)
     assert html.count('class="no-match"') == 2  # 맞는 매물이 없다는 답 밑에도
+
+
+def test_dashboard_shows_latest_three_and_full_view_shows_all(web):
+    app, c, fake = web
+    conn = app.config["AGENT"].storage.conn
+    for i in range(5):  # 손님 화면은 같은 곳에서 10분에 3건 제한 -> 저장 함수로 직접 5건
+        inquiries.save(conn, {"purpose": "찾아요", "kind": "토지", "name": f"손님{i}", "phone": "010-2468-1357",
+                              "message": f"문의 {i}"})
+    names = [r["name"] for r in inquiries.recent(conn, None)]
+    assert names == ["손님4", "손님3", "손님2", "손님1", "손님0"]
+    c.post("/admin/login", data={"password": "pw1234", "csrf": token(c, "/admin")})
+    html = c.get("/admin").get_data(as_text=True)
+    panel = html[html.index("📝 매물 접수 내역"):html.index("<h2>매물 추가·수정</h2>")]
+    assert [n for n in names if f"<strong>{n}</strong>" in panel] == ["손님4", "손님3", "손님2"]  # 최근 3건만
+    assert "전체 보기 (5건)" in panel and "최근 3건만 보입니다" in panel
+    full = c.get("/admin/inquiries").get_data(as_text=True)
+    assert all(n in full for n in names) and "전체 매물 접수 내역" in full and "(5건)" in full

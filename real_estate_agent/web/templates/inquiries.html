@@ -2,7 +2,7 @@
 {% block title %}매물 접수{% endblock %}
 {% block content %}
 <p class="meta"><a href="{{ url_for('admin') }}">← 관리자</a></p>
-<h1>📝 매물 접수</h1>
+<h1>📝 전체 매물 접수 내역 <small class="muted">({{ rows|length }}건)</small></h1>
 {% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
 <p class="meta">첫 화면 아래 '매물 접수' 로 손님이 남긴 문의입니다. 이름·전화번호는 관리자 화면에만 보입니다.</p>
 
