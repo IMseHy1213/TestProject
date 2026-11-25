@@ -271,7 +271,8 @@ def test_admin_dashboard_shows_inquiries(web):
     assert "새 접수 2건" in panel and "전체 보기 (2건)" in panel
     assert panel.index("이영희") < panel.index("김철수")  # 최근 것 먼저
     assert "010-2468-1357" in panel and "괴산 쪽 목장 부지 찾아요" in panel and "내놓아요" in panel
-    assert html.index("📝 매물 접수 내역") < html.index("매물 현황")  # 관리자 화면 맨 위쪽
+    stack = html[html.index('class="col-stack"'):]
+    assert stack.index("📱 휴대폰으로 보기") < stack.index("📝 매물 접수 내역")  # 휴대폰으로 보기 칸 바로 밑, 같은 칸
 
 
 def test_consent_sentence():

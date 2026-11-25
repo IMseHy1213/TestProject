@@ -5,40 +5,6 @@
 {% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
 {% if sync_error %}<p class="notice warn">{{ sync_error }}</p>{% endif %}
 
-<section class="panel inquiry-panel" aria-labelledby="inq-title">
-  <div class="row between">
-    <h2 id="inq-title">📝 매물 접수 내역{% if inquiry_open %} <span class="tag warn">새 접수 {{ inquiry_open }}건</span>{% endif %}</h2>
-    <a class="btn" href="{{ url_for('admin_inquiries') }}">전체 보기 ({{ inquiry_total }}건) · 처리·문자 설정</a>
-  </div>
-  {% if inquiry_rows %}
-  <ul class="inq-list">
-    {% for r in inquiry_rows %}
-    <li class="{% if r.handled %}is-done{% endif %}">
-      <div class="inq-head">
-        <span class="tag{% if r.purpose == '내놓아요' %} warn{% endif %}">{{ r.purpose or '찾아요' }}</span>
-        <span class="tag kind">{{ r.kind }}</span>
-        <strong>{{ r.name }}</strong>
-        <a href="tel:{{ r.phone | replace('-', '') }}">{{ r.phone }}</a>
-        <small class="muted">{{ r.created[:16] | replace('T', ' ') }}
-          · 문자 {% if r.sms_status == 'sent' %}✅{% elif r.sms_status == 'pending' %}⏳{% elif r.sms_status == 'practice' %}연습{% elif r.sms_status == 'off' %}⚠ 설정 없음{% else %}❌ 실패{% endif %}
-          {% if r.handled %}· 처리 완료{% endif %}</small>
-      </div>
-      <p class="inq-msg">{{ r.message }}</p>
-      <form method="post" action="{{ url_for('admin_inquiry_action') }}" class="inline inq-actions">
-        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
-        <input type="hidden" name="id" value="{{ r.id }}"><input type="hidden" name="back" value="admin">
-        {% if r.handled %}<button class="btn small" name="op" value="undone">처리 안 됨으로</button>
-        <button class="btn small danger" name="op" value="delete" data-confirm="{{ r.name }} 님 접수의 이름·전화번호·문의 내용을 지울까요? 되돌릴 수 없습니다.">🗑 지우기</button>
-        {% else %}<button class="btn small primary" name="op" value="done">✔ 처리 완료</button>{% endif %}
-      </form>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="meta">아직 접수된 문의가 없습니다. 손님 화면(첫 화면·AI 상담) 아래의 '📝 매물 접수' 로 들어온 문의가 여기에 나옵니다.</p>
-  {% endif %}
-</section>
-
 <section class="grid">
   <div class="panel">
     <h2>매물 추가·수정</h2>
@@ -71,21 +37,57 @@
     </div>
   </div>
 
-  <div class="panel phone-panel">
-    <h2>📱 휴대폰으로 보기</h2>
-    {% if phone.open and phone.urls %}
-      <p class="meta">휴대폰을 이 PC 와 <strong>같은 와이파이</strong>에 연결하고, 카메라로 QR 코드를 비추거나 주소를 입력하세요.</p>
-      <div class="phone-qr">{{ phone.qr | safe }}</div>
-      <p class="phone-url"><code>{{ phone.urls[0] }}</code></p>
-      {% if phone.urls | length > 1 %}<p class="meta small-note">안 열리면: {% for u in phone.urls[1:] %}<code>{{ u }}</code> {% endfor %}</p>{% endif %}
-      <p class="meta small-note">휴대폰 브라우저 메뉴의 <strong>'홈 화면에 추가'</strong>를 누르면 앱처럼 아이콘이 생깁니다.</p>
-    {% elif phone.open %}
-      <p class="notice warn">이 PC 의 와이파이 주소를 찾지 못했습니다. 와이파이에 연결되어 있는지 확인하세요.</p>
-    {% else %}
-      <p class="meta">지금은 이 PC 에서만 열립니다. 휴대폰에서도 쓰려면 프로그램을 끄고 VS Code 터미널에서
-        <code>python main.py mobile</code> 로 실행하세요 (또는 실행 목록의 '📱 휴대폰에서도 쓰기').
-        그러면 여기에 휴대폰용 QR 코드가 나옵니다.</p>
-    {% endif %}
+  <div class="col-stack">  {# 휴대폰으로 보기 + 매물 접수 내역을 한 칸에 위아래로 (옆의 긴 '파일 올리기' 칸 옆 빈자리를 씀) #}
+    <div class="panel phone-panel">
+      <h2>📱 휴대폰으로 보기</h2>
+      {% if phone.open and phone.urls %}
+        <p class="meta">휴대폰을 이 PC 와 <strong>같은 와이파이</strong>에 연결하고, 카메라로 QR 코드를 비추거나 주소를 입력하세요.</p>
+        <div class="phone-qr">{{ phone.qr | safe }}</div>
+        <p class="phone-url"><code>{{ phone.urls[0] }}</code></p>
+        {% if phone.urls | length > 1 %}<p class="meta small-note">안 열리면: {% for u in phone.urls[1:] %}<code>{{ u }}</code> {% endfor %}</p>{% endif %}
+        <p class="meta small-note">휴대폰 브라우저 메뉴의 <strong>'홈 화면에 추가'</strong>를 누르면 앱처럼 아이콘이 생깁니다.</p>
+      {% elif phone.open %}
+        <p class="notice warn">이 PC 의 와이파이 주소를 찾지 못했습니다. 와이파이에 연결되어 있는지 확인하세요.</p>
+      {% else %}
+        <p class="meta">지금은 이 PC 에서만 열립니다. 휴대폰에서도 쓰려면 프로그램을 끄고 VS Code 터미널에서
+          <code>python main.py mobile</code> 로 실행하세요 (또는 실행 목록의 '📱 휴대폰에서도 쓰기').
+          그러면 여기에 휴대폰용 QR 코드가 나옵니다.</p>
+      {% endif %}
+    </div>
+
+    <div class="panel inquiry-panel" aria-labelledby="inq-title">
+      <div class="row between">
+        <h2 id="inq-title">📝 매물 접수 내역{% if inquiry_open %} <span class="tag warn">새 접수 {{ inquiry_open }}건</span>{% endif %}</h2>
+        <a class="btn" href="{{ url_for('admin_inquiries') }}">전체 보기 ({{ inquiry_total }}건) · 처리·문자 설정</a>
+      </div>
+      {% if inquiry_rows %}
+      <ul class="inq-list">
+        {% for r in inquiry_rows %}
+        <li class="{% if r.handled %}is-done{% endif %}">
+          <div class="inq-head">
+            <span class="tag{% if r.purpose == '내놓아요' %} warn{% endif %}">{{ r.purpose or '찾아요' }}</span>
+            <span class="tag kind">{{ r.kind }}</span>
+            <strong>{{ r.name }}</strong>
+            <a href="tel:{{ r.phone | replace('-', '') }}">{{ r.phone }}</a>
+            <small class="muted">{{ r.created[:16] | replace('T', ' ') }}
+              · 문자 {% if r.sms_status == 'sent' %}✅{% elif r.sms_status == 'pending' %}⏳{% elif r.sms_status == 'practice' %}연습{% elif r.sms_status == 'off' %}⚠ 설정 없음{% else %}❌ 실패{% endif %}
+              {% if r.handled %}· 처리 완료{% endif %}</small>
+          </div>
+          <p class="inq-msg">{{ r.message }}</p>
+          <form method="post" action="{{ url_for('admin_inquiry_action') }}" class="inline inq-actions">
+            <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="id" value="{{ r.id }}"><input type="hidden" name="back" value="admin">
+            {% if r.handled %}<button class="btn small" name="op" value="undone">처리 안 됨으로</button>
+            <button class="btn small danger" name="op" value="delete" data-confirm="{{ r.name }} 님 접수의 이름·전화번호·문의 내용을 지울까요? 되돌릴 수 없습니다.">🗑 지우기</button>
+            {% else %}<button class="btn small primary" name="op" value="done">✔ 처리 완료</button>{% endif %}
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="meta">아직 접수된 문의가 없습니다. 손님 화면(첫 화면·AI 상담) 아래의 '📝 매물 접수' 로 들어온 문의가 여기에 나옵니다.</p>
+      {% endif %}
+    </div>
   </div>
 
   <div class="panel">

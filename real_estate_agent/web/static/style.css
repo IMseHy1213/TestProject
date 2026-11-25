@@ -481,7 +481,7 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 @media (max-width: 480px) { .nav-inquiry { padding: 5px 10px; font-size: .9rem; } }
 
 /* 관리자 첫 화면: 📝 매물 접수 내역 */
-.inquiry-panel { margin-bottom: 16px; }
+.inquiry-panel { margin-bottom: 0; }
 .inquiry-panel .row.between { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .inquiry-panel h2 { margin: 0; }
 .inq-list { list-style: none; margin: 10px 0 0; padding: 0; }
@@ -500,3 +500,22 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 @keyframes inquiry-flash { 0%, 60% { box-shadow: 0 0 0 4px var(--brand); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .inquiry.flash { animation: inquiry-flash 1.8s ease-out; }
 .btn.danger { color: #b3261e; border-color: #e3b4ae; }
+
+/* 관리자: '휴대폰으로 보기' 와 '매물 접수 내역' 을 한 칸에 위아래로 */
+.col-stack { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.col-stack > .panel { min-width: 0; }
+.phone-panel .phone-qr { width: 150px; }
+
+/* 관리자 '매물 접수' 전체 목록 (PC): 매물 관리 표와 다른 칸 너비, 버튼은 세로로 쌓아 오른쪽이 잘리지 않게 */
+table.listings.inq-table td:nth-child(2) { min-width: 0; }
+table.listings.inq-table td:nth-child(3) { white-space: nowrap; }
+table.listings.inq-table td:nth-child(4) { min-width: 12em; }
+table.listings.inq-table td:nth-child(5) { min-width: 6em; white-space: normal; }
+table.listings.inq-table td.inq-actions-cell { white-space: nowrap; width: 1%; }
+table.listings.inq-table td.inq-actions-cell form { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+table.listings.inq-table td.inq-actions-cell .btn { margin: 0; }
+@media (max-width: 640px) {
+  table.listings.inq-table td.inq-actions-cell { width: auto; }
+  table.listings.inq-table td.inq-actions-cell form { flex-direction: row; flex-wrap: wrap; }
+  table.listings.inq-table td:nth-child(3), table.listings.inq-table td:nth-child(4) { white-space: normal !important; min-width: 0; }
+}

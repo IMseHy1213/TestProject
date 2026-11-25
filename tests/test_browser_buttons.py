@@ -27,6 +27,12 @@ const B = process.argv[3];
   await Promise.all([pg.waitForNavigation(), pg.locator('form button').first().click()]);
   await Promise.all([pg.waitForNavigation(), pg.locator('.inq-list li').first().locator('button[value=done]').click()]);
   const html = await pg.content();
+  // 전체 목록 (PC 폭): 표가 옆으로 넘치지 않고 '🗑 지우기' 가 칸 안에 보임
+  await pg.setViewportSize({ width: 1280, height: 900 }); await pg.goto(B + '/admin/inquiries');
+  const fullList = await pg.evaluate(() => { const w = document.querySelector('.table-wrap'), d = document.querySelector('button[value=delete]');
+    const db = d.getBoundingClientRect(), wb = w.getBoundingClientRect();
+    return { scroll: w.scrollWidth - w.clientWidth, deleteInside: db.width > 0 && db.right <= wb.right + 1 }; });
+  await pg.goto(B + '/admin');
   pg.on('dialog', d => d.accept());  // '지울까요?' 확인 창
   await Promise.all([pg.waitForNavigation(), pg.locator('.inq-list li').first().locator('button[value=delete]').click()]);
   const deleted = (await pg.content()).includes('지웠습니다');
@@ -38,7 +44,7 @@ const B = process.argv[3];
   const form = await pg.evaluate(() => { const r = document.querySelector('#inquiry').getBoundingClientRect();
     return { inView: r.top > -10 && r.top < innerHeight, msg: document.querySelector('#iq-message').value,
              focus: document.activeElement && document.activeElement.id }; });
-  console.log(JSON.stringify({ posts, url: pg.url().replace(B, ''), msg: html.includes('처리 완료로 표시했습니다'), deleted, form }));
+  console.log(JSON.stringify({ posts, url: pg.url().replace(B, ''), msg: html.includes('처리 완료로 표시했습니다'), deleted, form, fullList }));
   await b.close();
 })();
 """
@@ -68,6 +74,7 @@ def test_named_buttons_send_their_value_in_a_real_browser(tmp_path, monkeypatch)
     action = [body for url, body in res["posts"] if url == "/admin/inquiries/action"]
     assert action and "op=done" in action[0]
     assert res["msg"] and res["deleted"]
+    assert res["fullList"] == {"scroll": 0, "deleteInside": True}  # 전체 목록에서도 지우기 버튼이 잘리지 않음
     assert any("op=delete" in body for url, body in res["posts"] if url == "/admin/inquiries/action")
     f = res["form"]  # AI 상담의 '▶': 폼이 화면에 보이고, 찾던 조건이 들어가고, 이름 칸에 커서
     assert f["inView"] and f["msg"].startswith("AI 상담에서 찾던 조건: 양평 땅 2개 보여줘") and f["focus"] == "iq-name"
