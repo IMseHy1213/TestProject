@@ -36,6 +36,11 @@ const B = process.argv[3];
   // 관리자 첫 화면: 칸마다 내용 밑 빈 여백이 똑같이 작음 (옆 칸에 맞춰 늘어나지 않음)
   const blanks = await pg.$$eval('.admin-cols .panel', ps => ps.map(p => { const k = p.lastElementChild.getBoundingClientRect();
     return Math.round(p.getBoundingClientRect().bottom - k.bottom); }));
+  // 휴대폰 폭(390px): 관리자 화면이 옆으로 넘치지 않고, 위쪽 메뉴 버튼도 누르기 쉬운 크기
+  await pg.setViewportSize({ width: 390, height: 844 }); await pg.goto(B + '/admin');
+  const phone = await pg.evaluate(() => ({ over: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    navMin: Math.min(...[...document.querySelectorAll('.topbar nav a, .topbar nav button')].map(e => e.getBoundingClientRect().height)) }));
+  await pg.setViewportSize({ width: 1280, height: 900 }); await pg.goto(B + '/admin');
   pg.on('dialog', d => d.accept());  // '지울까요?' 확인 창
   await Promise.all([pg.waitForNavigation(), pg.locator('.inq-list li').first().locator('button[value=delete]').click()]);
   const deleted = (await pg.content()).includes('지웠습니다');
@@ -47,7 +52,7 @@ const B = process.argv[3];
   const form = await pg.evaluate(() => { const r = document.querySelector('#inquiry').getBoundingClientRect();
     return { inView: r.top > -10 && r.top < innerHeight, msg: document.querySelector('#iq-message').value,
              focus: document.activeElement && document.activeElement.id }; });
-  console.log(JSON.stringify({ posts, url: pg.url().replace(B, ''), msg: html.includes('처리 완료로 표시했습니다'), deleted, form, fullList, blanks }));
+  console.log(JSON.stringify({ posts, url: pg.url().replace(B, ''), msg: html.includes('처리 완료로 표시했습니다'), deleted, form, fullList, blanks, phone }));
   await b.close();
 })();
 """
@@ -78,6 +83,7 @@ def test_named_buttons_send_their_value_in_a_real_browser(tmp_path, monkeypatch)
     assert action and "op=done" in action[0]
     assert res["msg"] and res["deleted"]
     assert res["fullList"] == {"scroll": 0, "deleteInside": True}
+    assert res["phone"]["over"] == 0 and res["phone"]["navMin"] >= 40  # 휴대폰: 넘침 없음, 로그아웃 등 누르기 쉬움
     assert res["blanks"] and max(res["blanks"]) <= 40  # '매물 추가·수정' 처럼 옆 칸 때문에 생기던 큰 빈 여백 없음  # 전체 목록에서도 지우기 버튼이 잘리지 않음
     assert any("op=delete" in body for url, body in res["posts"] if url == "/admin/inquiries/action")
     f = res["form"]  # AI 상담의 '▶': 폼이 화면에 보이고, 찾던 조건이 들어가고, 이름 칸에 커서
