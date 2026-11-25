@@ -24,6 +24,12 @@
           {% if r.handled %}· 처리 완료{% endif %}</small>
       </div>
       <p class="inq-msg">{{ r.message }}</p>
+      <form method="post" action="{{ url_for('admin_inquiry_action') }}" class="inline inq-actions">
+        <input type="hidden" name="csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="id" value="{{ r.id }}"><input type="hidden" name="back" value="admin">
+        {% if r.handled %}<button class="btn small" name="op" value="undone">처리 안 됨으로</button>
+        {% else %}<button class="btn small primary" name="op" value="done">✔ 처리 완료</button>{% endif %}
+      </form>
     </li>
     {% endfor %}
   </ul>

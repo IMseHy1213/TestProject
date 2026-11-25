@@ -279,3 +279,23 @@ def test_consent_sentence():
     text = re.sub(r"<[^>]+>", "", html[html.index('name="agree"'):html.index("</label>", html.index('name="agree"'))])
     assert " ".join(text.split()).endswith("연락을 위해 이름·전화번호·문의 내용을 받는 것에 동의합니다.")
     assert "상담이 끝나면" not in html
+
+
+def test_mark_done_from_admin_dashboard(web):
+    """관리자 첫 화면의 '매물 접수 내역' 에서 바로 처리 완료 / 되돌리기 -> 첫 화면으로 돌아옴."""
+    app, c, fake = web
+    submit(c, GOOD)
+    rid = wait_sent(app)[0]["id"]
+    c.post("/admin/login", data={"password": "pw1234", "csrf": token(c, "/admin")})
+    html = c.get("/admin").get_data(as_text=True)
+    assert "✔ 처리 완료" in html and "새 접수 1건" in html
+    r = c.post("/admin/inquiries/action", data={"id": rid, "op": "done", "back": "admin", "csrf": token(c, "/admin")})
+    assert r.status_code == 302 and r.headers["Location"].endswith("/admin#inq-title")
+    html = c.get("/admin").get_data(as_text=True)
+    assert "처리 완료로 표시했습니다" in html and "새 접수" not in html and "처리 안 됨으로" in html
+    assert inquiries.get(app.config["AGENT"].storage.conn, rid)["handled"] == 1
+    c.post("/admin/inquiries/action", data={"id": rid, "op": "undone", "back": "admin", "csrf": token(c, "/admin")})
+    assert inquiries.get(app.config["AGENT"].storage.conn, rid)["handled"] == 0
+    c.post("/admin/logout", data={"csrf": token(c, "/admin")})
+    assert c.post("/admin/inquiries/action", data={"id": rid, "op": "done", "back": "admin",
+                                                   "csrf": token(c)}).status_code == 403  # 로그인해야만

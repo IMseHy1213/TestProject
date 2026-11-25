@@ -489,3 +489,5 @@ ul.plain li { padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 
 .inq-list li.is-done { opacity: .6; }
 .inq-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .inq-list .inq-msg { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inq-actions { display: block; margin-top: 6px; }
+#inq-title { scroll-margin-top: 12px; }

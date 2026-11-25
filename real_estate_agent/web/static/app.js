@@ -120,10 +120,18 @@ document.querySelectorAll("form.js-stream").forEach(function (f) {
 });
 
 // 버튼 두 번 눌림 방지
+// 누른 버튼의 이름·값(예: op=done '처리 완료')은 버튼을 막기 전에 숨은 칸으로 옮겨 둠
+// (막힌 버튼의 값은 서버로 가지 않아, 버튼이 여러 개인 폼에서 어떤 버튼을 눌렀는지 모르게 되던 문제)
 document.querySelectorAll("form").forEach(function (f) {
   f.addEventListener("submit", function (ev) {
     if (ev.defaultPrevented) return;
-    f.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+    var b = ev.submitter;
+    if (b && b.name && !f.querySelector('input[type=hidden][data-submitter][name="' + b.name + '"]')) {
+      var h = document.createElement("input");
+      h.type = "hidden"; h.name = b.name; h.value = b.value; h.setAttribute("data-submitter", "1");
+      f.appendChild(h);
+    }
+    f.querySelectorAll("button").forEach(function (x) { x.disabled = true; });
   });
 });
 

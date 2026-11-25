@@ -408,12 +408,15 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
             elif op in {"done", "undone"}:
                 with lock:
                     inquiries.set_handled(agent.storage.conn, inquiry_id, op == "done")
+                session["admin_msg"] = "✅ 처리 완료로 표시했습니다." if op == "done" else "↩ 처리 안 됨으로 되돌렸습니다."
             elif op == "delete":
                 with lock:
                     inquiries.delete(agent.storage.conn, inquiry_id)
                 session["admin_msg"] = "🗑 접수 내용(이름·전화번호 포함)을 지웠습니다."
             else:
                 abort(400)
+        if request.form.get("back") == "admin":  # 관리자 첫 화면의 '매물 접수 내역' 에서 누른 경우 그 자리로
+            return redirect(url_for("admin") + "#inq-title")
         return redirect(url_for("admin_inquiries"))
 
     @app.post("/search")
