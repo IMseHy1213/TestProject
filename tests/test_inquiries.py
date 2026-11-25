@@ -271,10 +271,11 @@ def test_admin_dashboard_shows_inquiries(web):
     assert "새 접수 2건" in panel and "전체 보기 (2건)" in panel
     assert panel.index("이영희") < panel.index("김철수")  # 최근 것 먼저
     assert "010-2468-1357" in panel and "괴산 쪽 목장 부지 찾아요" in panel and "내놓아요" in panel
-    grid = html[html.index('<section class="grid">'):]
     order = ["<h2>매물 현황</h2>", "📝 매물 접수 내역", "<h2>매물 추가·수정</h2>", "<h2>매물 파일·폴더 올리기</h2>",
              "<h2>관리자 비밀번호 바꾸기</h2>", "<h2>AI 연결</h2>"]
-    assert [grid.index(h) for h in order] == sorted(grid.index(h) for h in order)  # 왼쪽부터 이 순서
+    for n, h in enumerate(order, 1):  # 칸마다 순서 번호(o1~o6): PC 는 왼쪽·오른쪽 번갈아, 휴대폰은 한 줄로 이 순서
+        start = html.index(f'class="panel o{n}')
+        assert h in html[start:start + 300], (n, h)
 
 
 def test_consent_sentence():
@@ -346,7 +347,7 @@ def test_dashboard_shows_latest_three_and_full_view_shows_all(web):
     assert names == ["손님4", "손님3", "손님2", "손님1", "손님0"]
     c.post("/admin/login", data={"password": "pw1234", "csrf": token(c, "/admin")})
     html = c.get("/admin").get_data(as_text=True)
-    panel = html[html.index("📝 매물 접수 내역"):html.index("<h2>매물 추가·수정</h2>")]
+    panel = html[html.index("📝 매물 접수 내역"):html.index('class="panel o4')]
     assert [n for n in names if f"<strong>{n}</strong>" in panel] == ["손님4", "손님3", "손님2"]  # 최근 3건만
     assert "전체 보기 (5건)" in panel and "최근 3건만 보입니다" in panel
     full = c.get("/admin/inquiries").get_data(as_text=True)

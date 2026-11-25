@@ -519,3 +519,15 @@ table.listings.inq-table td.inq-actions-cell .btn { margin: 0; }
   table.listings.inq-table td.inq-actions-cell form { flex-direction: row; flex-wrap: wrap; }
   table.listings.inq-table td:nth-child(3), table.listings.inq-table td:nth-child(4) { white-space: normal !important; min-width: 0; }
 }
+
+/* 관리자 첫 화면: 칸마다 내용 높이만큼만 (옆 칸에 맞춰 늘어나 빈 여백이 생기지 않게) */
+.admin-cols { display: flex; flex-direction: column; gap: 14px; margin-bottom: 14px; }
+.admin-col { display: contents; }  /* 휴대폰: 두 줄기를 풀어 o1, o2, o3 … 순서로 한 줄 */
+.admin-cols .o1 { order: 1; } .admin-cols .o2 { order: 2; } .admin-cols .o3 { order: 3; } .admin-cols .o4 { order: 4; }
+.admin-cols .o5 { order: 5; } .admin-cols .o6 { order: 6; } .admin-cols .o7 { order: 7; } .admin-cols .o8 { order: 8; }
+.admin-cols .panel { min-width: 0; margin: 0; }
+@media (min-width: 760px) {
+  .admin-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .admin-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+}
+.admin-cols .panel > :last-child, .admin-cols .panel > :last-child > :last-child { margin-bottom: 0; }

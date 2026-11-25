@@ -33,6 +33,9 @@ const B = process.argv[3];
     const db = d.getBoundingClientRect(), wb = w.getBoundingClientRect();
     return { scroll: w.scrollWidth - w.clientWidth, deleteInside: db.width > 0 && db.right <= wb.right + 1 }; });
   await pg.goto(B + '/admin');
+  // 관리자 첫 화면: 칸마다 내용 밑 빈 여백이 똑같이 작음 (옆 칸에 맞춰 늘어나지 않음)
+  const blanks = await pg.$$eval('.admin-cols .panel', ps => ps.map(p => { const k = p.lastElementChild.getBoundingClientRect();
+    return Math.round(p.getBoundingClientRect().bottom - k.bottom); }));
   pg.on('dialog', d => d.accept());  // '지울까요?' 확인 창
   await Promise.all([pg.waitForNavigation(), pg.locator('.inq-list li').first().locator('button[value=delete]').click()]);
   const deleted = (await pg.content()).includes('지웠습니다');
@@ -44,7 +47,7 @@ const B = process.argv[3];
   const form = await pg.evaluate(() => { const r = document.querySelector('#inquiry').getBoundingClientRect();
     return { inView: r.top > -10 && r.top < innerHeight, msg: document.querySelector('#iq-message').value,
              focus: document.activeElement && document.activeElement.id }; });
-  console.log(JSON.stringify({ posts, url: pg.url().replace(B, ''), msg: html.includes('처리 완료로 표시했습니다'), deleted, form, fullList }));
+  console.log(JSON.stringify({ posts, url: pg.url().replace(B, ''), msg: html.includes('처리 완료로 표시했습니다'), deleted, form, fullList, blanks }));
   await b.close();
 })();
 """
@@ -74,7 +77,8 @@ def test_named_buttons_send_their_value_in_a_real_browser(tmp_path, monkeypatch)
     action = [body for url, body in res["posts"] if url == "/admin/inquiries/action"]
     assert action and "op=done" in action[0]
     assert res["msg"] and res["deleted"]
-    assert res["fullList"] == {"scroll": 0, "deleteInside": True}  # 전체 목록에서도 지우기 버튼이 잘리지 않음
+    assert res["fullList"] == {"scroll": 0, "deleteInside": True}
+    assert res["blanks"] and max(res["blanks"]) <= 40  # '매물 추가·수정' 처럼 옆 칸 때문에 생기던 큰 빈 여백 없음  # 전체 목록에서도 지우기 버튼이 잘리지 않음
     assert any("op=delete" in body for url, body in res["posts"] if url == "/admin/inquiries/action")
     f = res["form"]  # AI 상담의 '▶': 폼이 화면에 보이고, 찾던 조건이 들어가고, 이름 칸에 커서
     assert f["inView"] and f["msg"].startswith("AI 상담에서 찾던 조건: 양평 땅 2개 보여줘") and f["focus"] == "iq-name"
