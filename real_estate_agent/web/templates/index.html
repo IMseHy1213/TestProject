@@ -18,19 +18,15 @@
     {% endfor %}
   </div>
   <div class="agent-cta">
+    <p class="meta">여러 조건을 한 번에 묻거나 매물끼리 비교하고 싶을 때는</p>
     <a class="btn primary cta" href="{{ url_for('agent_page') }}">🤖 AI 상담 시작하기</a>
-    <p class="meta">여러 조건을 한 번에 묻거나 매물끼리 비교하고 싶을 때</p>
   </div>
 
   {% if no_data %}
     <p class="notice warn">아직 등록된 매물이 없습니다. 관리자 화면에서 매물 파일을 올려주세요.</p>
-  {% else %}
-    <p class="meta">보유 매물(토지·공장) <strong>{{ count }}</strong>건 ·
-      {% if llm_mode == "ai" %}AI({{ llm_names }})가 문장을 이해합니다
-      {% elif llm_mode == "cooling" %}AI 잠시 쉬는 중 - 규칙 기반으로 이해합니다 (약 {{ llm_wait }}초 뒤 자동으로 다시 연결)
-      {% else %}AI 미연결 - 규칙 기반으로 이해합니다{% endif %}</p>
-    {% if llm_mode == "cooling" %}<p class="meta small-note">이유: {{ llm_cool_reason }}</p>{% endif %}
-    {% if llm_mode == "off" %}<p class="meta small-note">AI 미연결 이유: {{ llm_reason }}{% if is_admin %} · <a href="{{ url_for('admin') }}">관리자 화면에서 GPT 키 넣기</a>{% endif %}</p>{% endif %}
+  {% elif llm_mode == "cooling" %}
+    {# 손님에게는 짧게만. 이유(크레딧 부족 등)와 매물 수는 관리자 화면 'AI 연결' 칸에 #}
+    <p class="meta">AI 잠시 쉬는 중 (약 {{ llm_wait }}초 뒤 자동으로 다시 연결)</p>
   {% endif %}
 </section>
 

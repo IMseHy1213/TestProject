@@ -74,18 +74,20 @@ def test_admin_key_form_and_reason(tmp_path, key_file, monkeypatch):
     agent = app.config["AGENT"]
     c = app.test_client()
     html = c.get("/").get_data(as_text=True)
-    assert "AI 미연결" in html and "OPENAI_API_KEY" in html  # 이유 표시
+    assert "AI 미연결" not in html and "OPENAI_API_KEY" not in html  # 손님 첫 화면에는 이유를 안 보임
 
     def tok(path="/"):
         return re.search(r'name="csrf" value="([^"]+)"', c.get(path).get_data(as_text=True)).group(1)
 
     c.post("/admin/login", data={"password": "pw", "csrf": tok("/admin")})
+    admin = c.get("/admin").get_data(as_text=True)
+    assert "AI 미연결 - 규칙 기반으로 답합니다" in admin and "OPENAI_API_KEY" in admin  # 이유는 관리자 화면에
     monkeypatch.setattr(type(agent), "test_llm_each", lambda self: [(True, "GPT(gpt-test) 연결 성공: 확인")])
     r = c.post("/admin/ai-key", data={"key": FAKE_KEY, "model": "", "csrf": tok("/admin")}, follow_redirects=True)
     assert "연결 성공" in r.get_data(as_text=True)
     assert agent.llm.available and agent.llm.mode() == "ai"  # 재시작 없이 연결됨
     assert FAKE_KEY in key_file.read_text(encoding="utf-8")
-    assert "AI(GPT)가 문장을 이해합니다" in c.get("/").get_data(as_text=True)
+    assert "AI 미연결" not in c.get("/admin").get_data(as_text=True)
     r = c.post("/admin/ai-key", data={"key": "wrong", "csrf": tok("/admin")}, follow_redirects=True)
     assert "저장하지 못했습니다" in r.get_data(as_text=True)
 

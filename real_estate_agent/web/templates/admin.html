@@ -63,6 +63,8 @@
 
     <div class="panel o6">
       <h2>AI 연결</h2>
+      {% if llm_mode == "cooling" %}<p class="notice warn">AI 잠시 쉬는 중 (약 {{ llm_wait }}초 뒤 자동으로 다시 연결) · 그동안 규칙 기반으로 답합니다<br>이유: {{ llm_cool_reason }}</p>
+      {% elif llm_mode == "off" %}<p class="notice warn">AI 미연결 - 규칙 기반으로 답합니다<br>이유: {{ llm_reason }}</p>{% endif %}
       <p class="meta">{{ llm_status }}</p>
       <form method="post" action="{{ url_for('admin_ai_key') }}" class="stack">
         <input type="hidden" name="csrf" value="{{ csrf_token() }}">

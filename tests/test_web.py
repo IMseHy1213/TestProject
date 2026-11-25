@@ -49,7 +49,28 @@ def test_index_has_search_and_no_name_field(make_client):
     html = make_client().get("/").get_data(as_text=True)
     assert 'name="q"' in html and "찾아보기" in html
     assert "이름" not in html[:html.index('id="inquiry"')]  # 검색에는 손님 이름 입력 없음 (이름은 아래 '매물 접수' 폼에만)
-    assert "보유 매물(토지·공장) <strong>22</strong>건" in html
+    assert "보유 매물(토지·공장)" not in html and "AI 미연결" not in html  # 손님 첫 화면에는 매물 수·AI 상태 설명을 안 보임
+    cta = html.index("여러 조건을 한 번에 묻거나 매물끼리 비교하고 싶을 때는")
+    assert cta < html.index("AI 상담 시작하기")  # 안내 문장이 버튼 위
+
+
+def test_ai_pause_short_for_customer_reason_only_for_admin(make_client, monkeypatch):
+    """크레딧 부족 등으로 AI 가 쉬면 손님에게는 '잠시 쉬는 중 (약 N초 …)' 만, 이유는 관리자 화면에만."""
+    import re
+
+    from real_estate_agent.llm.router import LLMRouter
+
+    monkeypatch.setattr(LLMRouter, "mode", lambda self: "cooling")
+    monkeypatch.setattr(LLMRouter, "seconds_until_retry", lambda self: 49)
+    monkeypatch.setattr(LLMRouter, "cooling_reason", lambda self: "OpenAI 크레딧(잔액)이 부족합니다")
+    c = make_client("office-pass-1")
+    html = c.get("/").get_data(as_text=True)
+    assert "AI 잠시 쉬는 중 (약 49초 뒤 자동으로 다시 연결)" in html
+    assert "크레딧" not in html and "규칙 기반으로 이해합니다" not in html and "보유 매물(토지·공장)" not in html
+    tok = re.search(r'name="csrf" value="([^"]+)"', c.get("/admin").get_data(as_text=True)).group(1)
+    c.post("/admin/login", data={"password": "office-pass-1", "csrf": tok})
+    admin = c.get("/admin").get_data(as_text=True)
+    assert "이유: OpenAI 크레딧(잔액)이 부족합니다" in admin and "약 49초 뒤" in admin
 
 
 def test_search_shows_first_then_next(make_client):
@@ -168,7 +189,7 @@ def test_admin_login_upload_and_full_info(make_client):
                                        "file": (io.BytesIO(csv.encode("utf-8-sig")), "신규매물.csv")},
                content_type="multipart/form-data", follow_redirects=True)
     assert "업로드" in r.get_data(as_text=True)
-    assert "<strong>23</strong>" in c.get("/").get_data(as_text=True)
+    assert '<p class="big-num">23<small>건</small>' in c.get("/admin").get_data(as_text=True)  # 매물 수는 관리자 화면에
 
     r = c.post("/admin/upload", data={"csrf": csrf(c, "/admin"), "file": (io.BytesIO(b"x"), "virus.exe")},
                content_type="multipart/form-data", follow_redirects=True)
@@ -242,7 +263,7 @@ def test_rate_limit_shows_reason_and_explain_is_cached(tmp_path, monkeypatch):
     c = app.test_client()
     search(c, "음성군 2억원대 땅")  # 조건 추출에서 429 -> 30초 쉼
     html = c.get("/").get_data(as_text=True)
-    assert "AI 잠시 쉬는 중" in html and "분당 사용 한도" in html
+    assert "AI 잠시 쉬는 중 (약" in html and "분당 사용 한도" not in html  # 이유는 관리자 화면에만
 
     agent.llm.cooldown_until.clear()
     first = c.get("/api/explain").get_json()

@@ -959,7 +959,9 @@ def create_app(settings: Optional[Settings] = None, agent: Optional[RealEstateAg
                                    "real_estate_agent.updater", fromlist=["version_text"]).version_text(), inquiry_open=inquiry_open,
                                inquiry_total=inquiry_total, inquiry_rows=inquiry_rows,
                                ready=readiness(agent, lock, app.config.get("REALTIME"), agent_service),
-                               llm_status=agent.llm.status(), sync_error=state["sync_error"],
+                               llm_status=agent.llm.status(), llm_mode=agent.llm.mode(),
+                               llm_wait=agent.llm.seconds_until_retry(), llm_reason=agent.llm.off_reason(),
+                               llm_cool_reason=agent.llm.cooling_reason(), sync_error=state["sync_error"],
                                message=session.pop("admin_msg", ""), pw_source=auth.source,
                                min_len=MIN_PASSWORD_LEN)
 
