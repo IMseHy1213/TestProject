@@ -352,3 +352,12 @@ def test_dashboard_shows_latest_three_and_full_view_shows_all(web):
     assert "전체 보기 (5건)" in panel and "최근 3건만 보입니다" in panel
     full = c.get("/admin/inquiries").get_data(as_text=True)
     assert all(n in full for n in names) and "전체 매물 접수 내역" in full and "(5건)" in full
+
+
+def test_consent_kept_after_error_so_customer_can_resubmit(web):
+    """전화번호를 틀려 다시 보여 줄 때 동의 체크가 풀리면 휴대폰에서 '제출하기' 가 아무 반응이 없었음."""
+    app, c, fake = web
+    html = submit(c, {**GOOD, "phone": "123"})
+    assert 'name="agree" value="1" required checked' in html
+    html = submit(c, {**GOOD, "phone": "123", "agree": ""})
+    assert 'name="agree" value="1" required checked' not in html  # 동의 안 한 손님은 그대로 안 한 상태

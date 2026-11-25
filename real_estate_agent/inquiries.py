@@ -103,7 +103,8 @@ def parse_form(form) -> InquiryForm:
     if raw["agree"] != "1":
         out.errors.append("연락을 위해 이름·전화번호를 받는 것(개인정보 수집·이용)에 동의해 주세요.")
     out.values.update(purpose=purpose or raw["purpose"], kind=kind or raw["kind"], name=name,
-                      phone=phone or raw["phone"], message=message)
+                      phone=phone or raw["phone"], message=message,
+                      agree="1" if raw["agree"] == "1" else "")  # 오류로 다시 보여 줄 때 동의 체크도 그대로
     return out
 
 
