@@ -538,6 +538,9 @@ table.listings.inq-table td.inq-actions-cell .btn { margin: 0; }
   .topbar nav a, .topbar nav button.link { display: inline-flex; align-items: center; min-height: 40px; padding: 0 8px; }
   .meta code, .small-note code, small code { font-size: 12px; }
 }
+@media (min-width: 641px) {
+  .meta code, .small-note code, small code { font-size: 12px; }
+}
 
 /* 휴대폰 손님 화면: 펼치기 줄(다음 후보·기억·상담 방식)과 ♡ 관심 / ✕ 별로예요 를 손가락으로 누르기 쉽게 (40px) */
 @media (max-width: 640px) {
@@ -545,4 +548,16 @@ table.listings.inq-table td.inq-actions-cell .btn { margin: 0; }
     padding: 9px 0; min-height: 40px; box-sizing: border-box; }  /* list-item 그대로: ▶ 표시 유지 */
   .no-match-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 40px; }
   .mini-btn, .rate-btn { display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; }
+}
+
+/* PC 매물 관리 목록: 표가 넓어 오른쪽(상태·수정)이 잘리고 '공장(임대)' 가 한 글자씩 세로로 쌓이던 것 */
+.page-wide .wrap { max-width: 1200px; }
+.page-wide .office, .page-wide .inquiry { max-width: 1168px; }
+table.listings .tag.kind { display: block; width: max-content; margin: 0 0 3px; white-space: nowrap; }
+table.listings td.price-cell .price-part { display: block; }   /* 매매 / 임대 보증금 / 월세 를 줄마다 */
+table.listings td:nth-child(3) { min-width: 5.5em; }
+@media (max-width: 640px) {
+  table.listings .tag.kind { display: inline-block; }
+  table.listings td.price-cell .price-part { display: inline; }
+  table.listings td.price-cell .price-part + .price-part::before { content: " · "; }
 }

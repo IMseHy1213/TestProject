@@ -388,3 +388,24 @@ def test_agent_card_price_box_is_separate_from_area_boxes(tmp_path, monkeypatch)
     assert 'class="price-box wide"' in html
     assert '<span class="pl">임대 보증금 5,000만원</span><span class="pl">월 300만원</span>' in html
     assert "<div><dt>건물면적</dt><dd>180평<small>595㎡</small></dd></div>" in html  # 보통 칸, 평 아래 작은 ㎡
+
+
+def test_admin_list_is_wide_on_pc_and_splits_sale_and_lease(tmp_path, monkeypatch):
+    """PC 매물 관리 목록: 넓은 화면 + '매매 12억원 · 임대 보증금 …' 을 줄마다 (예전엔 한 줄이라 오른쪽 칸이 잘림)."""
+    import re
+    import shutil
+
+    from real_estate_agent.web.app import create_app
+
+    monkeypatch.setenv("REA_ADMIN_PASSWORD", "office-pass-1")
+    data = tmp_path / "매물"
+    shutil.copytree(SAMPLE_DATA_DIR, data)
+    app = create_app(Settings(data_dir=data, db_path=tmp_path / "w.db", log_dir=tmp_path / "logs", llm_providers=["rule"]))
+    app.config["TESTING"] = True
+    c = app.test_client()
+    tok = re.search(r'name="csrf" value="([^"]+)"', c.get("/admin").get_data(as_text=True)).group(1)
+    c.post("/admin/login", data={"password": "office-pass-1", "csrf": tok})
+    html = c.get("/admin/listings?q=P-4201").get_data(as_text=True)
+    assert '<body class="page-wide">' in html
+    assert '<span class="price-part">매매 12억원</span><span class="price-part">임대 보증금 1억원 / 월 700만원</span>' in html
+    assert '<body class="">' in c.get("/admin").get_data(as_text=True)  # 다른 화면은 그대로
